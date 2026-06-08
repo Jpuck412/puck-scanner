@@ -3,14 +3,14 @@
 import { useEffect, useState } from "react";
 
 const gainers = [
-  { ticker: "ONCY", gain: "+127.4%", price: "$1.27", score: 97, speed: 94, volume: "18.4M", rvol: "14.8", spread: "0.23%", float: "8.2M", support: "$1.18", resistance: "$1.42", status: "YES" },
-  { ticker: "ABCD", gain: "+88.2%", price: "$0.74", score: 84, speed: 82, volume: "9.8M", rvol: "9.1", spread: "0.41%", float: "12.6M", support: "$0.69", resistance: "$0.82", status: "WAIT" },
-  { ticker: "XYZ", gain: "+42.7%", price: "$2.13", score: 61, speed: 58, volume: "5.1M", rvol: "4.4", spread: "0.88%", float: "34.1M", support: "$2.02", resistance: "$2.31", status: "NO" },
-  { ticker: "LMNO", gain: "+36.1%", price: "$0.49", score: 58, speed: 52, volume: "3.7M", rvol: "3.8", spread: "1.10%", float: "22.4M", support: "$0.44", resistance: "$0.56", status: "WATCH" },
-  { ticker: "QRST", gain: "+29.8%", price: "$1.88", score: 55, speed: 49, volume: "2.9M", rvol: "3.2", spread: "0.92%", float: "18.9M", support: "$1.72", resistance: "$2.04", status: "WATCH" }
+  ["ONCY", "+127.4%", "$1.27", "97", "YES", "18.4M", "14.8", "0.23%", "$1.18", "$1.42"],
+  ["ABCD", "+88.2%", "$0.74", "84", "WAIT", "9.8M", "9.1", "0.41%", "$0.69", "$0.82"],
+  ["XYZ", "+42.7%", "$2.13", "61", "NO", "5.1M", "4.4", "0.88%", "$2.02", "$2.31"],
+  ["LMNO", "+36.1%", "$0.49", "58", "WATCH", "3.7M", "3.8", "1.10%", "$0.44", "$0.56"],
+  ["QRST", "+29.8%", "$1.88", "55", "WATCH", "2.9M", "3.2", "0.92%", "$1.72", "$2.04"]
 ];
 
-const rules = ["Speed ↑", "Volume ↑", "Spread Tight", "Buyers Control", "Support Found", "Risk Defined", "Evidence > Prediction"];
+const phases = ["4:00 IGNITION", "7:00 INJECTION", "9:30 OPEN", "11:00 FADE", "3:00 POWER"];
 
 export default function Home() {
   const [time, setTime] = useState("");
@@ -26,7 +26,6 @@ export default function Home() {
         })
       );
     };
-
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
@@ -36,60 +35,46 @@ export default function Home() {
     <main className="page">
       <section className="hero">
         <div>
-          <p className="tag">PUCK SCANNER V3</p>
+          <p className="tag">PUCK SCANNER V4</p>
           <h1>MISSION CONTROL</h1>
           <span>Speed. Volume. Spread. Support. Proof.</span>
         </div>
 
-        <div className="heroBox">
+        <div className="clock">
           <small>ET CLOCK</small>
           <strong>{time || "LOADING"}</strong>
-          <small>Live phase engine</small>
+          <small>Live command center</small>
         </div>
       </section>
 
-      <section className="top">
-        <div><span>Market Heat</span><b>82 HOT</b></div>
-        <div><span>Phase</span><b>MIDDAY</b></div>
-        <div><span>Scanner</span><b>ACTIVE</b></div>
-        <div><span>Mission</span><b>READY</b></div>
-        <div><span>Mode</span><b>TEST</b></div>
+      <section className="phaseBar">
+        {phases.map((p, i) => (
+          <div className={i === 4 ? "phase active" : "phase"} key={p}>
+            {p}
+          </div>
+        ))}
       </section>
 
-      <section className="layout">
-        <aside className="panel elite">
-          <p className="tag">ELITE SETUP</p>
-          <h2>ONCY</h2>
-          <h3>PUCK SCORE 97</h3>
-
-          <div className="data">
-            <span>Price</span><b>$1.27</b>
-            <span>Gain</span><b className="green">+127.4%</b>
-            <span>Speed</span><b>94</b>
-            <span>Volume</span><b>18.4M</b>
-            <span>RVOL</span><b>14.8</b>
-            <span>Spread</span><b>0.23%</b>
-            <span>Float</span><b>8.2M</b>
-            <span>Market Cap</span><b>$12.4M</b>
-            <span>Support</span><b>$1.18</b>
-            <span>Resistance</span><b>$1.42</b>
-            <span>RSI</span><b>67</b>
-            <span>MFI</span><b>79</b>
-            <span>ADX</span><b>42</b>
-            <span>VWAP</span><b>ABOVE</b>
-          </div>
-
-          <div className="permission">PERMISSION: YES</div>
+      <section className="dash">
+        <aside className="panel permissionPanel">
+          <p className="tag">PERMISSION ENGINE</p>
+          <h2>YES</h2>
+          <div className="rule">🟢 Speed Up <b>PASS</b></div>
+          <div className="rule">🟢 Volume Up <b>PASS</b></div>
+          <div className="rule">🟢 Spread Tight <b>PASS</b></div>
+          <div className="rule">🟢 Buyers Control <b>PASS</b></div>
+          <div className="rule">🟢 Support Found <b>PASS</b></div>
+          <div className="rule">🟢 Risk Defined <b>PASS</b></div>
+          <div className="rule">🟢 Evidence &gt; Prediction <b>PASS</b></div>
+          <div className="final">WHAT PROVES I'M RIGHT?</div>
         </aside>
 
         <section className="center">
           <div className="panel radar">
-            <p className="tag">PUCK RADAR</p>
-            <div className="radarCircle">
-              <div>
-                <strong>97</strong>
-                <span>ELITE</span>
-              </div>
+            <p className="tag">LIVE RADAR</p>
+            <div className="circle">
+              <strong>97</strong>
+              <span>ELITE</span>
             </div>
             <div className="radarStats">
               <div>Speed <b>94</b></div>
@@ -99,65 +84,61 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="panel">
-            <p className="tag">TOP GAINERS</p>
-            <div className="cards">
-              {gainers.map((s) => (
-                <article className="card" key={s.ticker}>
-                  <div className="cardTop">
-                    <h3>{s.ticker}</h3>
-                    <strong>{s.gain}</strong>
-                  </div>
-
-                  <div className="data small">
-                    <span>Price</span><b>{s.price}</b>
-                    <span>Score</span><b>{s.score}</b>
-                    <span>Speed</span><b>{s.speed}</b>
-                    <span>Volume</span><b>{s.volume}</b>
-                    <span>RVOL</span><b>{s.rvol}</b>
-                    <span>Spread</span><b>{s.spread}</b>
-                    <span>Float</span><b>{s.float}</b>
-                    <span>Support</span><b>{s.support}</b>
-                    <span>Resist</span><b>{s.resistance}</b>
-                  </div>
-
-                  <div className={`pill ${s.status.toLowerCase()}`}>{s.status}</div>
-                </article>
-              ))}
+          <div className="panel opportunity">
+            <p className="tag">TOP OPPORTUNITY</p>
+            <h2>ONCY</h2>
+            <div className="bigData">
+              <span>Price</span><b>$1.27</b>
+              <span>Gain</span><b className="green">+127.4%</b>
+              <span>Volume</span><b>18.4M</b>
+              <span>RVOL</span><b>14.8</b>
+              <span>Spread</span><b>0.23%</b>
+              <span>Float</span><b>8.2M</b>
+              <span>Support</span><b>$1.18</b>
+              <span>Resistance</span><b>$1.42</b>
+              <span>Catalyst</span><b>Trial Results</b>
             </div>
           </div>
         </section>
 
-        <aside className="right">
-          <div className="panel">
-            <p className="tag">RULE ENGINE</p>
-            {rules.map((r) => (
-              <div className="row" key={r}>
-                <span>🟢 {r}</span>
-                <b>PASS</b>
-              </div>
-            ))}
-            <div className="verdict">FINAL: PROOF REQUIRED</div>
-          </div>
-
-          <div className="panel">
-            <p className="tag">SCANNER ENGINE</p>
-            <div className="row"><span>Stocks Scanned</span><b>5142</b></div>
-            <div className="row"><span>Passed Filters</span><b>72</b></div>
-            <div className="row"><span>Low Float</span><b>19</b></div>
-            <div className="row"><span>News Catalysts</span><b>14</b></div>
-            <div className="row"><span>Elite Setups</span><b>4</b></div>
-            <div className="row"><span>Trap Risk</span><b>5</b></div>
-          </div>
-
-          <div className="panel">
-            <p className="tag">SYSTEM STATUS</p>
-            <div className="row"><span>Polygon</span><b>READY</b></div>
-            <div className="row"><span>Supabase</span><b>READY</b></div>
-            <div className="row"><span>Anthropic</span><b>READY</b></div>
-            <div className="row"><span>Scanner</span><b>RUNNING</b></div>
-          </div>
+        <aside className="panel engine">
+          <p className="tag">SCANNER ENGINE</p>
+          <div className="stat"><span>Stocks Scanned</span><b>5142</b></div>
+          <div className="stat"><span>Passed Filters</span><b>72</b></div>
+          <div className="stat"><span>Low Float</span><b>19</b></div>
+          <div className="stat"><span>News Catalysts</span><b>14</b></div>
+          <div className="stat"><span>Elite Setups</span><b>4</b></div>
+          <div className="stat"><span>Trap Risk</span><b>5</b></div>
+          <div className="stat"><span>Polygon</span><b>READY</b></div>
+          <div className="stat"><span>Supabase</span><b>READY</b></div>
         </aside>
+      </section>
+
+      <section className="panel">
+        <p className="tag">TOP GAINERS</p>
+        <div className="cards">
+          {gainers.map((s) => (
+            <article className="card" key={s[0]}>
+              <div className="cardTop">
+                <h3>{s[0]}</h3>
+                <strong>{s[1]}</strong>
+              </div>
+
+              <div className="data">
+                <span>Price</span><b>{s[2]}</b>
+                <span>Score</span><b>{s[3]}</b>
+                <span>Status</span><b>{s[4]}</b>
+                <span>Volume</span><b>{s[5]}</b>
+                <span>RVOL</span><b>{s[6]}</b>
+                <span>Spread</span><b>{s[7]}</b>
+                <span>Support</span><b>{s[8]}</b>
+                <span>Resist</span><b>{s[9]}</b>
+              </div>
+
+              <div className={`pill ${s[4].toLowerCase()}`}>{s[4]}</div>
+            </article>
+          ))}
+        </div>
       </section>
 
       <section className="bottom">
@@ -182,7 +163,7 @@ export default function Home() {
         </div>
 
         <div className="panel">
-          <p className="tag">SETTINGS PLACEHOLDER</p>
+          <p className="tag">SETTINGS</p>
           <div className="setting">Polygon API Key</div>
           <div className="setting">Supabase URL</div>
           <div className="setting">Supabase Key</div>
@@ -204,20 +185,20 @@ export default function Home() {
           color: #f5f5f5;
           font-family: Arial, sans-serif;
           background:
-            radial-gradient(circle at top left, rgba(255,182,18,.24), transparent 32%),
-            radial-gradient(circle at bottom right, rgba(255,215,0,.12), transparent 34%),
+            radial-gradient(circle at top left, rgba(255,182,18,.25), transparent 30%),
+            radial-gradient(circle at bottom right, rgba(255,215,0,.14), transparent 35%),
             linear-gradient(135deg, #020202, #0b0b0b);
         }
 
         .hero {
           display: grid;
-          grid-template-columns: 1fr 280px;
+          grid-template-columns: 1fr 300px;
           gap: 18px;
           padding: 28px;
-          border-radius: 28px;
+          border-radius: 30px;
           border: 1px solid rgba(255,182,18,.35);
           background: linear-gradient(145deg, #111, #030303);
-          box-shadow: 0 0 45px rgba(255,182,18,.16);
+          box-shadow: 0 0 50px rgba(255,182,18,.18);
         }
 
         .tag {
@@ -231,61 +212,60 @@ export default function Home() {
           margin: 8px 0;
           color: #ffb612;
           font-size: clamp(44px, 7vw, 82px);
-          text-shadow: 0 0 25px rgba(255,182,18,.75);
+          text-shadow: 0 0 28px rgba(255,182,18,.8);
         }
 
-        .hero span {
-          color: #cfcfcf;
-        }
-
-        .heroBox,
-        .top div,
-        .panel {
-          border-radius: 22px;
+        .clock,
+        .panel,
+        .phase {
+          border-radius: 24px;
           border: 1px solid rgba(255,182,18,.25);
           background: linear-gradient(145deg, #121212, #050505);
           box-shadow: 0 18px 45px rgba(0,0,0,.7);
         }
 
-        .heroBox {
+        .clock {
           padding: 22px;
         }
 
-        .heroBox small,
-        .top span,
+        .clock small,
         .data span,
+        .bigData span,
+        .stat span,
         .row span {
           color: #999;
         }
 
-        .heroBox strong {
+        .clock strong {
           display: block;
           color: #ffd700;
           font-size: 34px;
           margin: 10px 0;
         }
 
-        .top {
+        .phaseBar {
           display: grid;
           grid-template-columns: repeat(5, 1fr);
-          gap: 14px;
+          gap: 12px;
           margin: 18px 0;
         }
 
-        .top div {
-          padding: 18px;
+        .phase {
+          padding: 16px;
+          color: #aaa;
+          text-align: center;
+          font-weight: 900;
         }
 
-        .top b {
-          display: block;
-          color: #ffd700;
-          font-size: 28px;
-          margin-top: 6px;
+        .phase.active {
+          color: #050505;
+          background: #ffb612;
+          box-shadow: 0 0 28px rgba(255,182,18,.65);
         }
 
-        .layout {
+        .dash {
           display: grid;
-          grid-template-columns: 330px 1fr 320px;
+          grid-template-columns: 320px 1fr 300px;
           gap: 18px;
         }
 
@@ -294,26 +274,118 @@ export default function Home() {
           margin-bottom: 18px;
         }
 
-        .elite {
+        .permissionPanel {
           border-color: rgba(255,182,18,.55);
-          background: linear-gradient(150deg, rgba(255,182,18,.17), #050505);
+          background: linear-gradient(150deg, rgba(255,182,18,.18), #050505);
         }
 
-        .elite h2 {
+        .permissionPanel h2 {
           margin: 0;
           color: #ffd700;
-          font-size: 64px;
-          text-shadow: 0 0 24px rgba(255,215,0,.7);
+          font-size: 96px;
+          text-shadow: 0 0 28px rgba(255,215,0,.7);
         }
 
-        .data {
+        .rule,
+        .row,
+        .stat {
+          display: flex;
+          justify-content: space-between;
+          gap: 10px;
+          padding: 10px 0;
+          border-bottom: 1px solid rgba(255,182,18,.12);
+        }
+
+        .rule b,
+        .row b,
+        .row em,
+        .stat b {
+          color: #ffb612;
+          font-style: normal;
+          font-weight: 900;
+        }
+
+        .final {
+          margin-top: 18px;
+          padding: 14px;
+          border-radius: 14px;
+          text-align: center;
+          background: rgba(255,182,18,.14);
+          color: #ffd700;
+          border: 1px solid rgba(255,182,18,.35);
+          font-weight: 900;
+        }
+
+        .center {
+          display: grid;
+          grid-template-columns: 1fr;
+          gap: 18px;
+        }
+
+        .radar {
+          display: grid;
+          grid-template-columns: 240px 1fr;
+          gap: 20px;
+          align-items: center;
+        }
+
+        .circle {
+          width: 230px;
+          height: 230px;
+          border-radius: 50%;
+          display: grid;
+          place-items: center;
+          border: 2px solid rgba(255,182,18,.65);
+          background: radial-gradient(circle, rgba(255,182,18,.26), transparent 60%), #050505;
+          box-shadow: 0 0 45px rgba(255,182,18,.3);
+        }
+
+        .circle strong {
+          display: block;
+          color: #ffd700;
+          font-size: 68px;
+          text-align: center;
+        }
+
+        .circle span {
+          color: #ffb612;
+          font-weight: 900;
+        }
+
+        .radarStats {
+          display: grid;
+          grid-template-columns: repeat(2, 1fr);
+          gap: 12px;
+        }
+
+        .radarStats div {
+          padding: 15px;
+          border-radius: 14px;
+          background: #070707;
+          border: 1px solid rgba(255,182,18,.18);
+        }
+
+        .radarStats b {
+          float: right;
+          color: #ffd700;
+        }
+
+        .opportunity h2 {
+          margin: 0;
+          color: #ffd700;
+          font-size: 58px;
+        }
+
+        .data,
+        .bigData {
           display: grid;
           grid-template-columns: 1fr auto;
           gap: 8px 12px;
           margin-top: 14px;
         }
 
-        .data b {
+        .data b,
+        .bigData b {
           color: #f5f5f5;
         }
 
@@ -321,17 +393,43 @@ export default function Home() {
           color: #00ff88 !important;
         }
 
-        .permission,
-        .verdict,
+        .cards {
+          display: grid;
+          grid-template-columns: repeat(5, 1fr);
+          gap: 14px;
+        }
+
+        .card {
+          padding: 18px;
+          border-radius: 22px;
+          border: 1px solid rgba(255,182,18,.24);
+          background: #070707;
+        }
+
+        .cardTop {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+
+        .card h3 {
+          margin: 0;
+          color: #ffb612;
+          font-size: 30px;
+        }
+
+        .cardTop strong {
+          color: #00ff88;
+        }
+
         .pill {
-          margin-top: 16px;
-          padding: 13px;
-          border-radius: 14px;
+          margin-top: 14px;
+          padding: 12px;
+          border-radius: 12px;
           text-align: center;
           font-weight: 900;
         }
 
-        .permission,
         .yes {
           background: #ffb612;
           color: #050505;
@@ -348,110 +446,6 @@ export default function Home() {
           background: rgba(255,77,77,.16);
           color: #ff4d4d;
           border: 1px solid rgba(255,77,77,.35);
-        }
-
-        .radar {
-          display: grid;
-          grid-template-columns: 220px 1fr;
-          gap: 20px;
-          align-items: center;
-        }
-
-        .radarCircle {
-          width: 210px;
-          height: 210px;
-          border-radius: 50%;
-          display: grid;
-          place-items: center;
-          border: 2px solid rgba(255,182,18,.6);
-          background:
-            radial-gradient(circle, rgba(255,182,18,.25), transparent 58%),
-            #050505;
-          box-shadow: 0 0 40px rgba(255,182,18,.25);
-        }
-
-        .radarCircle strong {
-          display: block;
-          color: #ffd700;
-          font-size: 62px;
-          text-align: center;
-        }
-
-        .radarCircle span {
-          color: #ffb612;
-          font-weight: 900;
-        }
-
-        .radarStats {
-          display: grid;
-          grid-template-columns: repeat(2, 1fr);
-          gap: 12px;
-        }
-
-        .radarStats div {
-          padding: 14px;
-          border-radius: 14px;
-          background: #070707;
-          border: 1px solid rgba(255,182,18,.18);
-        }
-
-        .radarStats b {
-          color: #ffd700;
-          float: right;
-        }
-
-        .cards {
-          display: grid;
-          grid-template-columns: repeat(3, 1fr);
-          gap: 14px;
-        }
-
-        .card {
-          padding: 18px;
-          border-radius: 20px;
-          border: 1px solid rgba(255,182,18,.24);
-          background: #070707;
-        }
-
-        .cardTop {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-        }
-
-        .card h3 {
-          margin: 0;
-          color: #ffb612;
-          font-size: 32px;
-        }
-
-        .cardTop strong {
-          color: #00ff88;
-        }
-
-        .small {
-          font-size: 14px;
-        }
-
-        .row {
-          display: flex;
-          justify-content: space-between;
-          gap: 12px;
-          padding: 10px 0;
-          border-bottom: 1px solid rgba(255,182,18,.12);
-        }
-
-        .row b,
-        .row em {
-          color: #ffb612;
-          font-style: normal;
-          font-weight: 900;
-        }
-
-        .verdict {
-          background: rgba(255,182,18,.12);
-          color: #ffd700;
-          border: 1px solid rgba(255,182,18,.3);
         }
 
         .bottom {
@@ -471,11 +465,11 @@ export default function Home() {
 
         @media (max-width: 1100px) {
           .hero,
-          .top,
-          .layout,
+          .phaseBar,
+          .dash,
+          .radar,
           .cards,
-          .bottom,
-          .radar {
+          .bottom {
             grid-template-columns: 1fr;
           }
         }
