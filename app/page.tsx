@@ -6,16 +6,16 @@ type Stock = {
   ticker: string;
   todaysChangePerc?: number;
   todaysChange?: number;
-  day?: {
-    c?: number;
-    v?: number;
-    o?: number;
-    h?: number;
-    l?: number;
-  };
-  prevDay?: {
-    c?: number;
-  };
+  day?: { c?: number; v?: number; o?: number; h?: number; l?: number };
+  prevDay?: { c?: number };
+};
+
+type Rejected = {
+  ticker: string;
+  reason: string;
+  price: number;
+  gain: number;
+  volume: number;
 };
 
 function money(n?: number) {
@@ -54,8 +54,7 @@ function puckScore(s: Stock) {
   const gain = s.todaysChangePerc || 0;
 
   let score = 0;
-
-  score += Math.min(35, Math.max(0, gain * 1.2));
+  score += Math.min(35, Math.max(0, gain * 1.15));
   score += Math.min(30, volume / 250000);
   score += price > 0 && price <= 5 ? 20 : price <= 20 ? 10 : 0;
   score += isJunkTicker(s.ticker) ? -25 : 10;
@@ -69,19 +68,46 @@ function verdict(score: number) {
   return "NO";
 }
 
+function rejectReason(
+  s: Stock,
+  minPrice: number,
+  maxPrice: number,
+  minVolume: number,
+  minGain: number,
+  removeJunk: boolean
+) {
+  const price = s.day?.c || 0;
+  const volume = s.day?.v || 0;
+  const gain = s.todaysChangePerc || 0;
+
+  if (removeJunk && isJunkTicker(s.ticker)) return "JUNK SYMBOL";
+  if (price < minPrice) return "PRICE TOO LOW";
+  if (price > maxPrice) return "PRICE TOO HIGH";
+  if (volume < minVolume) return "LOW VOLUME";
+  if (gain < minGain) return "WEAK GAIN";
+
+  return "";
+}
+
 export default function Home() {
   const [time, setTime] = useState("");
   const [stocks, setStocks] = useState<Stock[]>([]);
   const [loading, setLoading] = useState(true);
   const [apiStatus, setApiStatus] = useState("LOADING");
   const [lastScan, setLastScan] = useState("NONE");
+  const [showRejected, setShowRejected] = useState(false);
+
+  const [draftMaxPrice, setDraftMaxPrice] = useState(5);
+  const [draftMinPrice, setDraftMinPrice] = useState(0.1);
+  const [draftMinVolume, setDraftMinVolume] = useState(500000);
+  const [draftMinGain, setDraftMinGain] = useState(20);
+  const [draftRemoveJunk, setDraftRemoveJunk] = useState(true);
 
   const [maxPrice, setMaxPrice] = useState(5);
   const [minPrice, setMinPrice] = useState(0.1);
   const [minVolume, setMinVolume] = useState(500000);
   const [minGain, setMinGain] = useState(20);
   const [removeJunk, setRemoveJunk] = useState(true);
-  const [safeMode, setSafeMode] = useState(true);
 
   async function loadGainers() {
     setLoading(true);
@@ -108,6 +134,28 @@ export default function Home() {
     }
   }
 
+  function applyFilters() {
+    setMaxPrice(draftMaxPrice);
+    setMinPrice(draftMinPrice);
+    setMinVolume(draftMinVolume);
+    setMinGain(draftMinGain);
+    setRemoveJunk(draftRemoveJunk);
+  }
+
+  function resetFilters() {
+    setDraftMaxPrice(5);
+    setDraftMinPrice(0.1);
+    setDraftMinVolume(500000);
+    setDraftMinGain(20);
+    setDraftRemoveJunk(true);
+
+    setMaxPrice(5);
+    setMinPrice(0.1);
+    setMinVolume(500000);
+    setMinGain(20);
+    setRemoveJunk(true);
+  }
+
   useEffect(() => {
     const tick = () => {
       setTime(
@@ -132,34 +180,40 @@ export default function Home() {
   const filtered = useMemo(() => {
     return stocks
       .filter((s) => {
-        const price = s.day?.c || 0;
-        const volume = s.day?.v || 0;
-        const gain = s.todaysChangePerc || 0;
-
-        if (removeJunk && isJunkTicker(s.ticker)) return false;
-        if (price < minPrice) return false;
-        if (price > maxPrice) return false;
-        if (volume < minVolume) return false;
-        if (gain < minGain) return false;
-
-        return true;
+        return !rejectReason(s, minPrice, maxPrice, minVolume, minGain, removeJunk);
       })
       .sort((a, b) => puckScore(b) - puckScore(a));
-  }, [stocks, maxPrice, minPrice, minVolume, minGain, removeJunk]);
+  }, [stocks, minPrice, maxPrice, minVolume, minGain, removeJunk]);
+
+  const rejected: Rejected[] = useMemo(() => {
+    return stocks
+      .map((s) => {
+        const reason = rejectReason(s, minPrice, maxPrice, minVolume, minGain, removeJunk);
+
+        return {
+          ticker: s.ticker,
+          reason,
+          price: s.day?.c || 0,
+          gain: s.todaysChangePerc || 0,
+          volume: s.day?.v || 0
+        };
+      })
+      .filter((r) => r.reason)
+      .slice(0, 20);
+  }, [stocks, minPrice, maxPrice, minVolume, minGain, removeJunk]);
 
   const top10 = filtered.slice(0, 10);
   const top = top10[0];
   const topScore = top ? puckScore(top) : 0;
   const topVerdict = verdict(topScore);
-  const junkRemoved = stocks.filter((s) => isJunkTicker(s.ticker)).length;
 
   return (
     <main className="page">
       <section className="hero">
         <div>
-          <p className="tag">PUCK SCANNER V6 LIVE</p>
+          <p className="tag">PUCK SCANNER V7 BROKER READY</p>
           <h1>MISSION CONTROL</h1>
-          <span>Live Polygon gainers. Adjustable filters. Top 10 risk map.</span>
+          <span>Live Polygon gainers. Filters. Rejections. Order preview. IBKR later.</span>
         </div>
 
         <div className="clock">
@@ -174,7 +228,7 @@ export default function Home() {
         <div>7:00 INJECTION</div>
         <div>9:30 OPEN</div>
         <div>11:00 FADE</div>
-        <div className="active">LIVE FILTER</div>
+        <div className="active">BROKER READY</div>
       </section>
 
       <section className="dash">
@@ -186,11 +240,11 @@ export default function Home() {
           <div className="rule">🟢 Raw Gainers <b>{stocks.length}</b></div>
           <div className="rule">🟢 Filtered <b>{filtered.length}</b></div>
           <div className="rule">🟢 Top Score <b>{topScore}</b></div>
-          <div className="rule">🟡 Float Filter <b>LATER</b></div>
-          <div className="rule">🟡 News Filter <b>LATER</b></div>
+          <div className="rule">🟡 IBKR Orders <b>LOCKED</b></div>
+          <div className="rule">🟡 Live Trading <b>OFF</b></div>
 
           <button className="refresh" onClick={loadGainers}>
-            REFRESH SCAN
+            NEW SCAN
           </button>
 
           <div className="final">WHAT PROVES I'M RIGHT?</div>
@@ -203,42 +257,40 @@ export default function Home() {
             <div className="filterGrid">
               <label>
                 Max Price
-                <input value={maxPrice} onChange={(e) => setMaxPrice(Number(e.target.value))} type="number" step="0.1" />
+                <input value={draftMaxPrice} onChange={(e) => setDraftMaxPrice(Number(e.target.value))} type="number" step="0.1" />
               </label>
 
               <label>
                 Min Price
-                <input value={minPrice} onChange={(e) => setMinPrice(Number(e.target.value))} type="number" step="0.01" />
+                <input value={draftMinPrice} onChange={(e) => setDraftMinPrice(Number(e.target.value))} type="number" step="0.01" />
               </label>
 
               <label>
                 Min Volume
-                <input value={minVolume} onChange={(e) => setMinVolume(Number(e.target.value))} type="number" step="10000" />
+                <input value={draftMinVolume} onChange={(e) => setDraftMinVolume(Number(e.target.value))} type="number" step="10000" />
               </label>
 
               <label>
                 Min Gain %
-                <input value={minGain} onChange={(e) => setMinGain(Number(e.target.value))} type="number" step="1" />
+                <input value={draftMinGain} onChange={(e) => setDraftMinGain(Number(e.target.value))} type="number" step="1" />
               </label>
             </div>
 
             <div className="toggles">
-              <button className={removeJunk ? "on" : ""} onClick={() => setRemoveJunk(!removeJunk)}>
-                Remove Warrants/Units: {removeJunk ? "ON" : "OFF"}
+              <button className={draftRemoveJunk ? "on" : ""} onClick={() => setDraftRemoveJunk(!draftRemoveJunk)}>
+                Remove Junk: {draftRemoveJunk ? "ON" : "OFF"}
               </button>
 
-              <button className={safeMode ? "on" : ""} onClick={() => {
-                const next = !safeMode;
-                setSafeMode(next);
-                if (next) {
-                  setMaxPrice(5);
-                  setMinPrice(0.1);
-                  setMinVolume(500000);
-                  setMinGain(20);
-                  setRemoveJunk(true);
-                }
-              }}>
-                Safe Mode: {safeMode ? "ON" : "OFF"}
+              <button onClick={applyFilters}>
+                APPLY FILTERS
+              </button>
+
+              <button onClick={resetFilters}>
+                RESET $5 SAFE
+              </button>
+
+              <button onClick={() => setShowRejected(!showRejected)}>
+                {showRejected ? "HIDE REJECTED" : "SHOW REJECTED"}
               </button>
             </div>
           </div>
@@ -257,7 +309,7 @@ export default function Home() {
               <div>Volume <b>{vol(top?.day?.v)}</b></div>
               <div>Price <b>{money(top?.day?.c)}</b></div>
               <div>Verdict <b>{topVerdict}</b></div>
-              <div>Mode <b>{safeMode ? "SAFE" : "CUSTOM"}</b></div>
+              <div>Mode <b>{maxPrice <= 5 ? "SAFE" : "CUSTOM"}</b></div>
             </div>
           </div>
         </section>
@@ -267,12 +319,27 @@ export default function Home() {
           <div className="stat"><span>API Status</span><b>{apiStatus}</b></div>
           <div className="stat"><span>Raw Count</span><b>{stocks.length}</b></div>
           <div className="stat"><span>Filtered Count</span><b>{filtered.length}</b></div>
-          <div className="stat"><span>Junk Removed</span><b>{junkRemoved}</b></div>
+          <div className="stat"><span>Rejected</span><b>{rejected.length}</b></div>
           <div className="stat"><span>Max Price</span><b>${maxPrice}</b></div>
           <div className="stat"><span>Min Volume</span><b>{vol(minVolume)}</b></div>
           <div className="stat"><span>Last Scan</span><b>{lastScan}</b></div>
         </aside>
       </section>
+
+      {showRejected && (
+        <section className="panel">
+          <p className="tag">REJECTED STOCKS</p>
+          <div className="rejectGrid">
+            {rejected.map((r) => (
+              <div className="reject" key={r.ticker}>
+                <b>{r.ticker}</b>
+                <span>{r.reason}</span>
+                <em>{money(r.price)} / {pct(r.gain)} / {vol(r.volume)}</em>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       <section className="panel">
         <p className="tag">LIVE TOP 10</p>
@@ -319,7 +386,7 @@ export default function Home() {
           <div className="head">Risk</div>
           <div className="head">Target</div>
           <div className="head">R:R</div>
-          <div className="head">Score</div>
+          <div className="head">Preview</div>
 
           {top10.map((s) => {
             const entry = s.day?.c || 0;
@@ -335,7 +402,7 @@ export default function Home() {
                 <span>{money(risk)}</span>
                 <span>{money(target)}</span>
                 <span>2.1</span>
-                <b>{puckScore(s)}</b>
+                <button className="preview">LIMIT PREVIEW</button>
               </div>
             );
           })}
@@ -344,19 +411,20 @@ export default function Home() {
 
       <section className="bottom">
         <div className="panel">
-          <p className="tag">REJECTION FLAGS</p>
-          <div className="row"><b>JUNK</b><span>Warrants / Units / Rights removed</span><em>{junkRemoved}</em></div>
-          <div className="row"><b>PRICE</b><span>Above max price removed</span><em>ON</em></div>
-          <div className="row"><b>VOLUME</b><span>Weak volume removed</span><em>ON</em></div>
-          <div className="row"><b>GAIN</b><span>Weak gain removed</span><em>ON</em></div>
+          <p className="tag">BROKER INTEGRATION PLAN</p>
+          <div className="row"><b>Stage 1</b><span>Scanner only</span><em>DONE</em></div>
+          <div className="row"><b>Stage 2</b><span>Limit order preview</span><em>NOW</em></div>
+          <div className="row"><b>Stage 3</b><span>IBKR account connection</span><em>LATER</em></div>
+          <div className="row"><b>Stage 4</b><span>Manual confirm only</span><em>LATER</em></div>
+          <div className="row"><b>Safety</b><span>No market orders / no auto-buy</span><em>LOCKED</em></div>
         </div>
 
         <div className="panel">
-          <p className="tag">SETTINGS</p>
-          <div className="setting">Polygon API: {apiStatus}</div>
-          <div className="setting">Dashboard: LIVE DATA</div>
-          <div className="setting">Safe Mode Default: $5 Max</div>
-          <div className="setting">Webhook: LATER</div>
+          <p className="tag">ORDER PREVIEW LOCK</p>
+          <div className="setting">Broker: IBKR Later</div>
+          <div className="setting">Order Type: LIMIT ONLY</div>
+          <div className="setting">Auto Buy: DISABLED</div>
+          <div className="setting">Manual Confirm: REQUIRED</div>
         </div>
       </section>
 
@@ -494,7 +562,8 @@ export default function Home() {
         }
 
         .refresh,
-        .toggles button {
+        .toggles button,
+        .preview {
           width: 100%;
           margin-top: 12px;
           padding: 13px;
@@ -507,7 +576,7 @@ export default function Home() {
 
         .toggles {
           display: grid;
-          grid-template-columns: 1fr 1fr;
+          grid-template-columns: repeat(4, 1fr);
           gap: 12px;
           margin-top: 14px;
         }
@@ -642,10 +711,6 @@ export default function Home() {
           font-size: 13px;
         }
 
-        .green {
-          color: #00ff88 !important;
-        }
-
         .pill {
           margin-top: 14px;
           padding: 12px;
@@ -701,6 +766,35 @@ export default function Home() {
           color: #ffd700;
         }
 
+        .rejectGrid {
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+          gap: 12px;
+        }
+
+        .reject {
+          padding: 14px;
+          border-radius: 14px;
+          background: rgba(255,77,77,.1);
+          border: 1px solid rgba(255,77,77,.3);
+        }
+
+        .reject b {
+          color: #ff4d4d;
+          display: block;
+        }
+
+        .reject span {
+          color: #ffd700;
+          display: block;
+          margin: 6px 0;
+        }
+
+        .reject em {
+          color: #aaa;
+          font-style: normal;
+        }
+
         .bottom {
           display: grid;
           grid-template-columns: 1fr 1fr;
@@ -728,7 +822,8 @@ export default function Home() {
           .cards,
           .bottom,
           .filterGrid,
-          .toggles {
+          .toggles,
+          .rejectGrid {
             grid-template-columns: 1fr;
           }
 
