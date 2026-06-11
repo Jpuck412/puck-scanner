@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-type Gainer = {
+type Stock = {
   ticker: string;
-  todayChangePerc: number;
-  todayChange: number;
+  todaysChangePerc?: number;
+  todaysChange?: number;
   day?: {
     c?: number;
     v?: number;
@@ -19,34 +19,94 @@ type Gainer = {
 };
 
 function money(n?: number) {
-  if (typeof n !== "number") return "N/A";
-  return "$" + n.toFixed(2);
+  if (typeof n !== "number" || Number.isNaN(n)) return "N/A";
+  return "$" + n.toFixed(n < 1 ? 4 : 2);
 }
 
 function pct(n?: number) {
-  if (typeof n !== "number") return "0.0%";
-  return "+" + n.toFixed(1) + "%";
+  if (typeof n !== "number" || Number.isNaN(n)) return "0.0%";
+  return (n >= 0 ? "+" : "") + n.toFixed(1) + "%";
 }
 
-function volume(n?: number) {
-  if (typeof n !== "number") return "N/A";
+function vol(n?: number) {
+  if (typeof n !== "number" || Number.isNaN(n)) return "N/A";
   if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
   if (n >= 1000) return (n / 1000).toFixed(1) + "K";
-  return String(n);
+  return String(Math.round(n));
 }
 
-function score(stock: Gainer) {
-  const gainScore = Math.min(50, Math.max(0, stock.todayChangePerc / 4));
-  const volumeScore = Math.min(35, ((stock.day?.v || 0) / 10000000) * 35);
-  const priceScore = stock.day?.c && stock.day.c <= 20 ? 15 : 5;
-  return Math.round(gainScore + volumeScore + priceScore);
+function isJunkTicker(ticker: string) {
+  const t = ticker.toUpperCase();
+  return (
+    t.endsWith("W") ||
+    t.endsWith("WS") ||
+    t.endsWith("U") ||
+    t.endsWith("R") ||
+    t.includes(".W") ||
+    t.includes(".U") ||
+    t.includes(".R")
+  );
+}
+
+function puckScore(s: Stock) {
+  const price = s.day?.c || 0;
+  const volume = s.day?.v || 0;
+  const gain = s.todaysChangePerc || 0;
+
+  let score = 0;
+
+  score += Math.min(35, Math.max(0, gain * 1.2));
+  score += Math.min(30, volume / 250000);
+  score += price > 0 && price <= 5 ? 20 : price <= 20 ? 10 : 0;
+  score += isJunkTicker(s.ticker) ? -25 : 10;
+
+  return Math.max(0, Math.min(100, Math.round(score)));
+}
+
+function verdict(score: number) {
+  if (score >= 80) return "YES";
+  if (score >= 60) return "WAIT";
+  return "NO";
 }
 
 export default function Home() {
   const [time, setTime] = useState("");
-  const [stocks, setStocks] = useState<Gainer[]>([]);
+  const [stocks, setStocks] = useState<Stock[]>([]);
   const [loading, setLoading] = useState(true);
   const [apiStatus, setApiStatus] = useState("LOADING");
+  const [lastScan, setLastScan] = useState("NONE");
+
+  const [maxPrice, setMaxPrice] = useState(5);
+  const [minPrice, setMinPrice] = useState(0.1);
+  const [minVolume, setMinVolume] = useState(500000);
+  const [minGain, setMinGain] = useState(20);
+  const [removeJunk, setRemoveJunk] = useState(true);
+  const [safeMode, setSafeMode] = useState(true);
+
+  async function loadGainers() {
+    setLoading(true);
+
+    try {
+      const res = await fetch("/api/gainers", { cache: "no-store" });
+      const json = await res.json();
+      const tickers = json?.data?.tickers || [];
+
+      setStocks(tickers);
+      setApiStatus("CONNECTED");
+      setLastScan(
+        new Date().toLocaleTimeString("en-US", {
+          timeZone: "America/New_York",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit"
+        })
+      );
+    } catch {
+      setApiStatus("ERROR");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
     const tick = () => {
@@ -66,42 +126,46 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    async function loadGainers() {
-      try {
-        const res = await fetch("/api/gainers", { cache: "no-store" });
-        const json = await res.json();
-
-        const tickers = json?.data?.tickers || [];
-
-        setStocks(tickers.slice(0, 12));
-        setApiStatus("CONNECTED");
-      } catch {
-        setApiStatus("ERROR");
-      } finally {
-        setLoading(false);
-      }
-    }
-
     loadGainers();
   }, []);
 
-  const top = stocks[0];
-  const topScore = top ? score(top) : 0;
-  const heat = topScore >= 80 ? "HOT" : topScore >= 60 ? "ACTIVE" : "WATCH";
+  const filtered = useMemo(() => {
+    return stocks
+      .filter((s) => {
+        const price = s.day?.c || 0;
+        const volume = s.day?.v || 0;
+        const gain = s.todaysChangePerc || 0;
+
+        if (removeJunk && isJunkTicker(s.ticker)) return false;
+        if (price < minPrice) return false;
+        if (price > maxPrice) return false;
+        if (volume < minVolume) return false;
+        if (gain < minGain) return false;
+
+        return true;
+      })
+      .sort((a, b) => puckScore(b) - puckScore(a));
+  }, [stocks, maxPrice, minPrice, minVolume, minGain, removeJunk]);
+
+  const top10 = filtered.slice(0, 10);
+  const top = top10[0];
+  const topScore = top ? puckScore(top) : 0;
+  const topVerdict = verdict(topScore);
+  const junkRemoved = stocks.filter((s) => isJunkTicker(s.ticker)).length;
 
   return (
     <main className="page">
       <section className="hero">
         <div>
-          <p className="tag">PUCK SCANNER LIVE</p>
+          <p className="tag">PUCK SCANNER V6 LIVE</p>
           <h1>MISSION CONTROL</h1>
-          <span>Real Polygon gainers. Speed. Volume. Spread. Proof.</span>
+          <span>Live Polygon gainers. Adjustable filters. Top 10 risk map.</span>
         </div>
 
         <div className="clock">
           <small>ET CLOCK</small>
           <strong>{time || "LOADING"}</strong>
-          <small>Live market scanner</small>
+          <small>Last Scan: {lastScan}</small>
         </div>
       </section>
 
@@ -110,99 +174,134 @@ export default function Home() {
         <div>7:00 INJECTION</div>
         <div>9:30 OPEN</div>
         <div>11:00 FADE</div>
-        <div className="active">LIVE DATA</div>
+        <div className="active">LIVE FILTER</div>
       </section>
 
       <section className="dash">
         <aside className="panel permission">
           <p className="tag">PERMISSION ENGINE</p>
-          <h2>{topScore >= 80 ? "YES" : topScore >= 60 ? "WAIT" : "NO"}</h2>
+          <h2>{topVerdict}</h2>
 
-          <div className="rule">🟢 Real Data <b>PASS</b></div>
           <div className="rule">🟢 Polygon Feed <b>{apiStatus}</b></div>
-          <div className="rule">🟢 Gainers Found <b>{stocks.length}</b></div>
-          <div className="rule">🟢 Evidence First <b>PASS</b></div>
-          <div className="rule">🟡 Float Filter <b>NEXT</b></div>
-          <div className="rule">🟡 News Filter <b>NEXT</b></div>
+          <div className="rule">🟢 Raw Gainers <b>{stocks.length}</b></div>
+          <div className="rule">🟢 Filtered <b>{filtered.length}</b></div>
+          <div className="rule">🟢 Top Score <b>{topScore}</b></div>
+          <div className="rule">🟡 Float Filter <b>LATER</b></div>
+          <div className="rule">🟡 News Filter <b>LATER</b></div>
+
+          <button className="refresh" onClick={loadGainers}>
+            REFRESH SCAN
+          </button>
 
           <div className="final">WHAT PROVES I'M RIGHT?</div>
         </aside>
 
         <section className="center">
+          <div className="panel filters">
+            <p className="tag">FILTER CONTROL</p>
+
+            <div className="filterGrid">
+              <label>
+                Max Price
+                <input value={maxPrice} onChange={(e) => setMaxPrice(Number(e.target.value))} type="number" step="0.1" />
+              </label>
+
+              <label>
+                Min Price
+                <input value={minPrice} onChange={(e) => setMinPrice(Number(e.target.value))} type="number" step="0.01" />
+              </label>
+
+              <label>
+                Min Volume
+                <input value={minVolume} onChange={(e) => setMinVolume(Number(e.target.value))} type="number" step="10000" />
+              </label>
+
+              <label>
+                Min Gain %
+                <input value={minGain} onChange={(e) => setMinGain(Number(e.target.value))} type="number" step="1" />
+              </label>
+            </div>
+
+            <div className="toggles">
+              <button className={removeJunk ? "on" : ""} onClick={() => setRemoveJunk(!removeJunk)}>
+                Remove Warrants/Units: {removeJunk ? "ON" : "OFF"}
+              </button>
+
+              <button className={safeMode ? "on" : ""} onClick={() => {
+                const next = !safeMode;
+                setSafeMode(next);
+                if (next) {
+                  setMaxPrice(5);
+                  setMinPrice(0.1);
+                  setMinVolume(500000);
+                  setMinGain(20);
+                  setRemoveJunk(true);
+                }
+              }}>
+                Safe Mode: {safeMode ? "ON" : "OFF"}
+              </button>
+            </div>
+          </div>
+
           <div className="panel radar">
             <p className="tag">LIVE RADAR</p>
 
             <div className="circle">
               <strong>{topScore || "--"}</strong>
-              <span>{heat}</span>
+              <span>{top?.ticker || "WAIT"}</span>
             </div>
 
             <div className="radarStats">
-              <div>Top Ticker <b>{top?.ticker || "WAIT"}</b></div>
-              <div>Gain <b>{pct(top?.todayChangePerc)}</b></div>
-              <div>Volume <b>{volume(top?.day?.v)}</b></div>
+              <div>Top <b>{top?.ticker || "NONE"}</b></div>
+              <div>Gain <b>{pct(top?.todaysChangePerc)}</b></div>
+              <div>Volume <b>{vol(top?.day?.v)}</b></div>
               <div>Price <b>{money(top?.day?.c)}</b></div>
-            </div>
-          </div>
-
-          <div className="panel opportunity">
-            <p className="tag">TOP OPPORTUNITY</p>
-            <h2>{top?.ticker || "LOADING"}</h2>
-
-            <div className="bigData">
-              <span>Price</span><b>{money(top?.day?.c)}</b>
-              <span>Gain</span><b className="green">{pct(top?.todayChangePerc)}</b>
-              <span>Change</span><b>{money(top?.todayChange)}</b>
-              <span>Volume</span><b>{volume(top?.day?.v)}</b>
-              <span>Open</span><b>{money(top?.day?.o)}</b>
-              <span>High</span><b>{money(top?.day?.h)}</b>
-              <span>Low</span><b>{money(top?.day?.l)}</b>
-              <span>Prev Close</span><b>{money(top?.prevDay?.c)}</b>
-              <span>PUCK Score</span><b>{topScore}</b>
+              <div>Verdict <b>{topVerdict}</b></div>
+              <div>Mode <b>{safeMode ? "SAFE" : "CUSTOM"}</b></div>
             </div>
           </div>
         </section>
 
         <aside className="panel engine">
-          <p className="tag">SCANNER ENGINE</p>
+          <p className="tag">DIAGNOSTICS</p>
           <div className="stat"><span>API Status</span><b>{apiStatus}</b></div>
-          <div className="stat"><span>Raw Gainers</span><b>{stocks.length}</b></div>
-          <div className="stat"><span>Mode</span><b>LIVE</b></div>
-          <div className="stat"><span>Source</span><b>POLYGON</b></div>
-          <div className="stat"><span>Filter Stage</span><b>BASIC</b></div>
-          <div className="stat"><span>Next</span><b>FLOAT</b></div>
+          <div className="stat"><span>Raw Count</span><b>{stocks.length}</b></div>
+          <div className="stat"><span>Filtered Count</span><b>{filtered.length}</b></div>
+          <div className="stat"><span>Junk Removed</span><b>{junkRemoved}</b></div>
+          <div className="stat"><span>Max Price</span><b>${maxPrice}</b></div>
+          <div className="stat"><span>Min Volume</span><b>{vol(minVolume)}</b></div>
+          <div className="stat"><span>Last Scan</span><b>{lastScan}</b></div>
         </aside>
       </section>
 
       <section className="panel">
-        <p className="tag">LIVE TOP GAINERS</p>
+        <p className="tag">LIVE TOP 10</p>
 
         {loading ? (
           <h2 className="loading">Loading Polygon gainers...</h2>
         ) : (
           <div className="cards">
-            {stocks.map((s) => {
-              const sScore = score(s);
-              const verdict = sScore >= 80 ? "YES" : sScore >= 60 ? "WAIT" : "NO";
-
+            {top10.map((s) => {
+              const sScore = puckScore(s);
+              const v = verdict(sScore);
               return (
                 <article className="card" key={s.ticker}>
                   <div className="cardTop">
                     <h3>{s.ticker}</h3>
-                    <strong>{pct(s.todayChangePerc)}</strong>
+                    <strong>{pct(s.todaysChangePerc)}</strong>
                   </div>
 
-                  <div className="bigData small">
+                  <div className="data small">
                     <span>Price</span><b>{money(s.day?.c)}</b>
                     <span>Score</span><b>{sScore}</b>
-                    <span>Change</span><b>{money(s.todayChange)}</b>
-                    <span>Volume</span><b>{volume(s.day?.v)}</b>
+                    <span>Change</span><b>{money(s.todaysChange)}</b>
+                    <span>Volume</span><b>{vol(s.day?.v)}</b>
                     <span>Open</span><b>{money(s.day?.o)}</b>
                     <span>High</span><b>{money(s.day?.h)}</b>
                     <span>Low</span><b>{money(s.day?.l)}</b>
                   </div>
 
-                  <div className={`pill ${verdict.toLowerCase()}`}>{verdict}</div>
+                  <div className={`pill ${v.toLowerCase()}`}>{v}</div>
                 </article>
               );
             })}
@@ -210,32 +309,54 @@ export default function Home() {
         )}
       </section>
 
+      <section className="panel">
+        <p className="tag">TOP 10 POSITION CALCULATOR</p>
+
+        <div className="positionTable">
+          <div className="head">Ticker</div>
+          <div className="head">Entry</div>
+          <div className="head">Stop</div>
+          <div className="head">Risk</div>
+          <div className="head">Target</div>
+          <div className="head">R:R</div>
+          <div className="head">Score</div>
+
+          {top10.map((s) => {
+            const entry = s.day?.c || 0;
+            const stop = entry * 0.93;
+            const target = entry * 1.15;
+            const risk = entry - stop;
+
+            return (
+              <div className="posRow" key={s.ticker + "pos"}>
+                <b>{s.ticker}</b>
+                <span>{money(entry)}</span>
+                <span>{money(stop)}</span>
+                <span>{money(risk)}</span>
+                <span>{money(target)}</span>
+                <span>2.1</span>
+                <b>{puckScore(s)}</b>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
       <section className="bottom">
         <div className="panel">
-          <p className="tag">NEXT FILTERS</p>
-          <div className="row"><b>Remove</b><span>Warrants / Units / Rights</span><em>NEXT</em></div>
-          <div className="row"><b>Add</b><span>Price 0.10 - 20</span><em>NEXT</em></div>
-          <div className="row"><b>Add</b><span>Volume 500K+</span><em>NEXT</em></div>
-          <div className="row"><b>Add</b><span>Float Under 50M</span><em>NEXT</em></div>
-        </div>
-
-        <div className="panel">
-          <p className="tag">POSITION CALCULATOR</p>
-          <div className="bigData">
-            <span>Entry</span><b>{money(top?.day?.c)}</b>
-            <span>Stop</span><b>{money((top?.day?.c || 0) * 0.93)}</b>
-            <span>Risk</span><b>7%</b>
-            <span>Target</span><b>{money((top?.day?.c || 0) * 1.15)}</b>
-            <span>R:R</span><b>2.1</b>
-          </div>
+          <p className="tag">REJECTION FLAGS</p>
+          <div className="row"><b>JUNK</b><span>Warrants / Units / Rights removed</span><em>{junkRemoved}</em></div>
+          <div className="row"><b>PRICE</b><span>Above max price removed</span><em>ON</em></div>
+          <div className="row"><b>VOLUME</b><span>Weak volume removed</span><em>ON</em></div>
+          <div className="row"><b>GAIN</b><span>Weak gain removed</span><em>ON</em></div>
         </div>
 
         <div className="panel">
           <p className="tag">SETTINGS</p>
           <div className="setting">Polygon API: {apiStatus}</div>
           <div className="setting">Dashboard: LIVE DATA</div>
+          <div className="setting">Safe Mode Default: $5 Max</div>
           <div className="setting">Webhook: LATER</div>
-          <div className="setting">Supabase: LATER</div>
         </div>
       </section>
 
@@ -297,7 +418,7 @@ export default function Home() {
         }
 
         .clock small,
-        .bigData span,
+        .data span,
         .stat span,
         .row span {
           color: #999;
@@ -349,7 +470,7 @@ export default function Home() {
         .permission h2 {
           margin: 0;
           color: #ffd700;
-          font-size: 96px;
+          font-size: 86px;
           text-shadow: 0 0 28px rgba(255,215,0,.7);
         }
 
@@ -372,6 +493,30 @@ export default function Home() {
           font-weight: 900;
         }
 
+        .refresh,
+        .toggles button {
+          width: 100%;
+          margin-top: 12px;
+          padding: 13px;
+          border-radius: 14px;
+          border: 1px solid rgba(255,182,18,.45);
+          background: rgba(255,182,18,.12);
+          color: #ffd700;
+          font-weight: 900;
+        }
+
+        .toggles {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 12px;
+          margin-top: 14px;
+        }
+
+        .toggles .on {
+          background: #ffb612;
+          color: #050505;
+        }
+
         .final {
           margin-top: 18px;
           padding: 14px;
@@ -380,6 +525,28 @@ export default function Home() {
           background: rgba(255,182,18,.14);
           color: #ffd700;
           border: 1px solid rgba(255,182,18,.35);
+          font-weight: 900;
+        }
+
+        .filterGrid {
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+          gap: 12px;
+        }
+
+        label {
+          color: #aaa;
+          font-size: 13px;
+        }
+
+        input {
+          width: 100%;
+          margin-top: 8px;
+          padding: 12px;
+          border-radius: 12px;
+          border: 1px solid rgba(255,182,18,.3);
+          background: #050505;
+          color: #ffd700;
           font-weight: 900;
         }
 
@@ -431,30 +598,9 @@ export default function Home() {
           color: #ffd700;
         }
 
-        .opportunity h2 {
-          margin: 0;
-          color: #ffd700;
-          font-size: 58px;
-        }
-
-        .bigData {
-          display: grid;
-          grid-template-columns: 1fr auto;
-          gap: 8px 12px;
-          margin-top: 14px;
-        }
-
-        .bigData b {
-          color: #f5f5f5;
-        }
-
-        .green {
-          color: #00ff88 !important;
-        }
-
         .cards {
           display: grid;
-          grid-template-columns: repeat(4, 1fr);
+          grid-template-columns: repeat(5, 1fr);
           gap: 14px;
         }
 
@@ -474,15 +620,30 @@ export default function Home() {
         .card h3 {
           margin: 0;
           color: #ffb612;
-          font-size: 30px;
+          font-size: 28px;
         }
 
         .cardTop strong {
           color: #00ff88;
         }
 
+        .data {
+          display: grid;
+          grid-template-columns: 1fr auto;
+          gap: 8px 12px;
+          margin-top: 14px;
+        }
+
+        .data b {
+          color: #f5f5f5;
+        }
+
         .small {
-          font-size: 14px;
+          font-size: 13px;
+        }
+
+        .green {
+          color: #00ff88 !important;
         }
 
         .pill {
@@ -510,9 +671,39 @@ export default function Home() {
           border: 1px solid rgba(255,77,77,.35);
         }
 
+        .positionTable {
+          display: grid;
+          grid-template-columns: repeat(7, 1fr);
+          gap: 8px;
+        }
+
+        .head {
+          color: #ffb612;
+          font-weight: 900;
+          padding: 10px;
+          background: #080808;
+          border-radius: 10px;
+        }
+
+        .posRow {
+          display: contents;
+        }
+
+        .posRow span,
+        .posRow b {
+          padding: 10px;
+          background: #070707;
+          border-radius: 10px;
+          border: 1px solid rgba(255,182,18,.12);
+        }
+
+        .posRow b {
+          color: #ffd700;
+        }
+
         .bottom {
           display: grid;
-          grid-template-columns: 1fr 1fr 1fr;
+          grid-template-columns: 1fr 1fr;
           gap: 18px;
         }
 
@@ -535,8 +726,25 @@ export default function Home() {
           .dash,
           .radar,
           .cards,
-          .bottom {
+          .bottom,
+          .filterGrid,
+          .toggles {
             grid-template-columns: 1fr;
+          }
+
+          .positionTable {
+            grid-template-columns: 1fr;
+          }
+
+          .head {
+            display: none;
+          }
+
+          .posRow {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+            margin-bottom: 10px;
           }
         }
       `}</style>
