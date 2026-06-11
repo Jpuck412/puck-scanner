@@ -211,9 +211,9 @@ export default function Home() {
     <main className="page">
       <section className="hero">
         <div>
-          <p className="tag">PUCK SCANNER V7 BROKER READY</p>
+          <p className="tag">PUCK SCANNER V8 ELITE MODE</p>
           <h1>MISSION CONTROL</h1>
-          <span>Live Polygon gainers. Filters. Rejections. Order preview. IBKR later.</span>
+          <span>Live Polygon gainers. Filter engine. Broker-ready previews.</span>
         </div>
 
         <div className="clock">
@@ -228,7 +228,7 @@ export default function Home() {
         <div>7:00 INJECTION</div>
         <div>9:30 OPEN</div>
         <div>11:00 FADE</div>
-        <div className="active">BROKER READY</div>
+        <div className="active">ELITE MODE</div>
       </section>
 
       <section className="dash">
@@ -359,9 +359,9 @@ export default function Home() {
                   </div>
 
                   <div className="data small">
-                    <span>Price</span><b>{money(s.day?.c)}</b>
-                    <span>Score</span><b>{sScore}</b>
-                    <span>Change</span><b>{money(s.todaysChange)}</b>
+                    <span>Current Price</span><b>{money(s.day?.c)}</b>
+                    <span>PUCK Score</span><b>{sScore}</b>
+                    <span>Day Change</span><b>{money(s.todaysChange)}</b>
                     <span>Volume</span><b>{vol(s.day?.v)}</b>
                     <span>Open</span><b>{money(s.day?.o)}</b>
                     <span>High</span><b>{money(s.day?.h)}</b>
@@ -379,15 +379,7 @@ export default function Home() {
       <section className="panel">
         <p className="tag">TOP 10 POSITION CALCULATOR</p>
 
-        <div className="positionTable">
-          <div className="head">Ticker</div>
-          <div className="head">Entry</div>
-          <div className="head">Stop</div>
-          <div className="head">Risk</div>
-          <div className="head">Target</div>
-          <div className="head">R:R</div>
-          <div className="head">Preview</div>
-
+        <div className="positionCards">
           {top10.map((s) => {
             const entry = s.day?.c || 0;
             const stop = entry * 0.93;
@@ -395,15 +387,24 @@ export default function Home() {
             const risk = entry - stop;
 
             return (
-              <div className="posRow" key={s.ticker + "pos"}>
-                <b>{s.ticker}</b>
-                <span>{money(entry)}</span>
-                <span>{money(stop)}</span>
-                <span>{money(risk)}</span>
-                <span>{money(target)}</span>
-                <span>2.1</span>
-                <button className="preview">LIMIT PREVIEW</button>
-              </div>
+              <article className="positionCard" key={s.ticker + "pos"}>
+                <h3>{s.ticker}</h3>
+
+                <div className="data">
+                  <span>Current Price</span><b>{money(entry)}</b>
+                  <span>Entry Price</span><b>{money(entry)}</b>
+                  <span>Stop Loss</span><b>{money(stop)}</b>
+                  <span>Risk Per Share</span><b>{money(risk)}</b>
+                  <span>Target Exit</span><b>{money(target)}</b>
+                  <span>Risk / Reward</span><b>2.1</b>
+                  <span>Order Type</span><b>LIMIT ONLY</b>
+                  <span>Broker Status</span><b>IBKR LOCKED</b>
+                </div>
+
+                <button className="preview">
+                  LIMIT ORDER PREVIEW
+                </button>
+              </article>
             );
           })}
         </div>
@@ -420,11 +421,20 @@ export default function Home() {
         </div>
 
         <div className="panel">
-          <p className="tag">ORDER PREVIEW LOCK</p>
-          <div className="setting">Broker: IBKR Later</div>
-          <div className="setting">Order Type: LIMIT ONLY</div>
-          <div className="setting">Auto Buy: DISABLED</div>
-          <div className="setting">Manual Confirm: REQUIRED</div>
+          <p className="tag">PRODUCT PAGES</p>
+          <div className="setting">Glossary Page: Planned</div>
+          <div className="setting">Disclaimer Page: Planned</div>
+          <div className="setting">Webhook Page: Planned</div>
+          <div className="setting">User Tokens: Future</div>
+        </div>
+
+        <div className="panel disclaimer">
+          <p className="tag">DISCLAIMER</p>
+          <span>
+            Educational and informational software only. Not financial advice.
+            No recommendation to buy or sell securities. User is responsible
+            for all trading decisions.
+          </span>
         </div>
       </section>
 
@@ -488,7 +498,8 @@ export default function Home() {
         .clock small,
         .data span,
         .stat span,
-        .row span {
+        .row span,
+        .disclaimer span {
           color: #999;
         }
 
@@ -667,13 +678,15 @@ export default function Home() {
           color: #ffd700;
         }
 
-        .cards {
+        .cards,
+        .positionCards {
           display: grid;
           grid-template-columns: repeat(5, 1fr);
           gap: 14px;
         }
 
-        .card {
+        .card,
+        .positionCard {
           padding: 18px;
           border-radius: 22px;
           border: 1px solid rgba(255,182,18,.24);
@@ -686,7 +699,8 @@ export default function Home() {
           align-items: center;
         }
 
-        .card h3 {
+        .card h3,
+        .positionCard h3 {
           margin: 0;
           color: #ffb612;
           font-size: 28px;
@@ -736,36 +750,6 @@ export default function Home() {
           border: 1px solid rgba(255,77,77,.35);
         }
 
-        .positionTable {
-          display: grid;
-          grid-template-columns: repeat(7, 1fr);
-          gap: 8px;
-        }
-
-        .head {
-          color: #ffb612;
-          font-weight: 900;
-          padding: 10px;
-          background: #080808;
-          border-radius: 10px;
-        }
-
-        .posRow {
-          display: contents;
-        }
-
-        .posRow span,
-        .posRow b {
-          padding: 10px;
-          background: #070707;
-          border-radius: 10px;
-          border: 1px solid rgba(255,182,18,.12);
-        }
-
-        .posRow b {
-          color: #ffd700;
-        }
-
         .rejectGrid {
           display: grid;
           grid-template-columns: repeat(4, 1fr);
@@ -797,7 +781,7 @@ export default function Home() {
 
         .bottom {
           display: grid;
-          grid-template-columns: 1fr 1fr;
+          grid-template-columns: 1fr 1fr 1fr;
           gap: 18px;
         }
 
@@ -820,26 +804,12 @@ export default function Home() {
           .dash,
           .radar,
           .cards,
+          .positionCards,
           .bottom,
           .filterGrid,
           .toggles,
           .rejectGrid {
             grid-template-columns: 1fr;
-          }
-
-          .positionTable {
-            grid-template-columns: 1fr;
-          }
-
-          .head {
-            display: none;
-          }
-
-          .posRow {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 8px;
-            margin-bottom: 10px;
           }
         }
       `}</style>
