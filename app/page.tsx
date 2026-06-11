@@ -2,19 +2,51 @@
 
 import { useEffect, useState } from "react";
 
-const heat = [
-  ["ONCY", 97, "YES"],
-  ["ABCD", 84, "WAIT"],
-  ["XYZ", 61, "NO"],
-  ["LMNO", 58, "WATCH"],
-  ["QRST", 55, "WATCH"],
-  ["BIOX", 78, "WAIT"],
-  ["AIMD", 73, "WATCH"],
-  ["VOLT", 66, "NO"]
-];
+type Gainer = {
+  ticker: string;
+  todayChangePerc: number;
+  todayChange: number;
+  day?: {
+    c?: number;
+    v?: number;
+    o?: number;
+    h?: number;
+    l?: number;
+  };
+  prevDay?: {
+    c?: number;
+  };
+};
+
+function money(n?: number) {
+  if (typeof n !== "number") return "N/A";
+  return "$" + n.toFixed(2);
+}
+
+function pct(n?: number) {
+  if (typeof n !== "number") return "0.0%";
+  return "+" + n.toFixed(1) + "%";
+}
+
+function volume(n?: number) {
+  if (typeof n !== "number") return "N/A";
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
+  if (n >= 1000) return (n / 1000).toFixed(1) + "K";
+  return String(n);
+}
+
+function score(stock: Gainer) {
+  const gainScore = Math.min(50, Math.max(0, stock.todayChangePerc / 4));
+  const volumeScore = Math.min(35, ((stock.day?.v || 0) / 10000000) * 35);
+  const priceScore = stock.day?.c && stock.day.c <= 20 ? 15 : 5;
+  return Math.round(gainScore + volumeScore + priceScore);
+}
 
 export default function Home() {
   const [time, setTime] = useState("");
+  const [stocks, setStocks] = useState<Gainer[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [apiStatus, setApiStatus] = useState("LOADING");
 
   useEffect(() => {
     const tick = () => {
@@ -33,19 +65,43 @@ export default function Home() {
     return () => clearInterval(id);
   }, []);
 
+  useEffect(() => {
+    async function loadGainers() {
+      try {
+        const res = await fetch("/api/gainers", { cache: "no-store" });
+        const json = await res.json();
+
+        const tickers = json?.data?.tickers || [];
+
+        setStocks(tickers.slice(0, 12));
+        setApiStatus("CONNECTED");
+      } catch {
+        setApiStatus("ERROR");
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadGainers();
+  }, []);
+
+  const top = stocks[0];
+  const topScore = top ? score(top) : 0;
+  const heat = topScore >= 80 ? "HOT" : topScore >= 60 ? "ACTIVE" : "WATCH";
+
   return (
     <main className="page">
       <section className="hero">
         <div>
-          <p className="tag">PUCK SCANNER V5</p>
+          <p className="tag">PUCK SCANNER LIVE</p>
           <h1>MISSION CONTROL</h1>
-          <span>Speed. Volume. Spread. Support. Proof.</span>
+          <span>Real Polygon gainers. Speed. Volume. Spread. Proof.</span>
         </div>
 
         <div className="clock">
           <small>ET CLOCK</small>
           <strong>{time || "LOADING"}</strong>
-          <small>Live command center</small>
+          <small>Live market scanner</small>
         </div>
       </section>
 
@@ -54,21 +110,20 @@ export default function Home() {
         <div>7:00 INJECTION</div>
         <div>9:30 OPEN</div>
         <div>11:00 FADE</div>
-        <div className="active">3:00 POWER</div>
+        <div className="active">LIVE DATA</div>
       </section>
 
       <section className="dash">
         <aside className="panel permission">
           <p className="tag">PERMISSION ENGINE</p>
-          <h2>YES</h2>
+          <h2>{topScore >= 80 ? "YES" : topScore >= 60 ? "WAIT" : "NO"}</h2>
 
-          <div className="rule">🟢 Speed Up <b>PASS</b></div>
-          <div className="rule">🟢 Volume Up <b>PASS</b></div>
-          <div className="rule">🟢 Spread Tight <b>PASS</b></div>
-          <div className="rule">🟢 Buyers Control <b>PASS</b></div>
-          <div className="rule">🟢 Support Found <b>PASS</b></div>
-          <div className="rule">🟢 Risk Defined <b>PASS</b></div>
-          <div className="rule">🟢 Evidence &gt; Prediction <b>PASS</b></div>
+          <div className="rule">🟢 Real Data <b>PASS</b></div>
+          <div className="rule">🟢 Polygon Feed <b>{apiStatus}</b></div>
+          <div className="rule">🟢 Gainers Found <b>{stocks.length}</b></div>
+          <div className="rule">🟢 Evidence First <b>PASS</b></div>
+          <div className="rule">🟡 Float Filter <b>NEXT</b></div>
+          <div className="rule">🟡 News Filter <b>NEXT</b></div>
 
           <div className="final">WHAT PROVES I'M RIGHT?</div>
         </aside>
@@ -78,140 +133,109 @@ export default function Home() {
             <p className="tag">LIVE RADAR</p>
 
             <div className="circle">
-              <strong>97</strong>
-              <span>ELITE</span>
+              <strong>{topScore || "--"}</strong>
+              <span>{heat}</span>
             </div>
 
             <div className="radarStats">
-              <div>Speed <b>94</b></div>
-              <div>Volume <b>98</b></div>
-              <div>Spread <b>91</b></div>
-              <div>Buyers <b>78%</b></div>
-              <div>Float <b>8.2M</b></div>
-              <div>Borrow Fee <b>143%</b></div>
+              <div>Top Ticker <b>{top?.ticker || "WAIT"}</b></div>
+              <div>Gain <b>{pct(top?.todayChangePerc)}</b></div>
+              <div>Volume <b>{volume(top?.day?.v)}</b></div>
+              <div>Price <b>{money(top?.day?.c)}</b></div>
             </div>
           </div>
 
           <div className="panel opportunity">
             <p className="tag">TOP OPPORTUNITY</p>
-            <h2>ONCY</h2>
+            <h2>{top?.ticker || "LOADING"}</h2>
 
             <div className="bigData">
-              <span>Price</span><b>$1.27</b>
-              <span>Gain</span><b className="green">+127.4%</b>
-              <span>Volume</span><b>18.4M</b>
-              <span>RVOL</span><b>14.8</b>
-              <span>Spread</span><b>0.23%</b>
-              <span>Float</span><b>8.2M</b>
-              <span>Market Cap</span><b>$12.4M</b>
-              <span>Short Interest</span><b>18%</b>
-              <span>Borrow Fee</span><b>143%</b>
-              <span>Support</span><b>$1.18</b>
-              <span>Resistance</span><b>$1.42</b>
-              <span>Catalyst</span><b>Trial Results</b>
+              <span>Price</span><b>{money(top?.day?.c)}</b>
+              <span>Gain</span><b className="green">{pct(top?.todayChangePerc)}</b>
+              <span>Change</span><b>{money(top?.todayChange)}</b>
+              <span>Volume</span><b>{volume(top?.day?.v)}</b>
+              <span>Open</span><b>{money(top?.day?.o)}</b>
+              <span>High</span><b>{money(top?.day?.h)}</b>
+              <span>Low</span><b>{money(top?.day?.l)}</b>
+              <span>Prev Close</span><b>{money(top?.prevDay?.c)}</b>
+              <span>PUCK Score</span><b>{topScore}</b>
             </div>
           </div>
         </section>
 
         <aside className="panel engine">
           <p className="tag">SCANNER ENGINE</p>
-          <div className="stat"><span>Stocks Scanned</span><b>5142</b></div>
-          <div className="stat"><span>Passed Filters</span><b>72</b></div>
-          <div className="stat"><span>Low Float</span><b>19</b></div>
-          <div className="stat"><span>News Catalysts</span><b>14</b></div>
-          <div className="stat"><span>Elite Setups</span><b>4</b></div>
-          <div className="stat"><span>Trap Risk</span><b>5</b></div>
-          <div className="stat"><span>Polygon</span><b>READY</b></div>
-          <div className="stat"><span>Supabase</span><b>READY</b></div>
+          <div className="stat"><span>API Status</span><b>{apiStatus}</b></div>
+          <div className="stat"><span>Raw Gainers</span><b>{stocks.length}</b></div>
+          <div className="stat"><span>Mode</span><b>LIVE</b></div>
+          <div className="stat"><span>Source</span><b>POLYGON</b></div>
+          <div className="stat"><span>Filter Stage</span><b>BASIC</b></div>
+          <div className="stat"><span>Next</span><b>FLOAT</b></div>
         </aside>
       </section>
 
-      <section className="triple">
-        <div className="panel">
-          <p className="tag">MARKET HEAT MAP</p>
+      <section className="panel">
+        <p className="tag">LIVE TOP GAINERS</p>
 
-          <div className="heatGrid">
-            {heat.map((h) => (
-              <div className={`heatTile ${h[2].toString().toLowerCase()}`} key={h[0]}>
-                <strong>{h[0]}</strong>
-                <span>{h[1]}</span>
-                <small>{h[2]}</small>
-              </div>
-            ))}
+        {loading ? (
+          <h2 className="loading">Loading Polygon gainers...</h2>
+        ) : (
+          <div className="cards">
+            {stocks.map((s) => {
+              const sScore = score(s);
+              const verdict = sScore >= 80 ? "YES" : sScore >= 60 ? "WAIT" : "NO";
+
+              return (
+                <article className="card" key={s.ticker}>
+                  <div className="cardTop">
+                    <h3>{s.ticker}</h3>
+                    <strong>{pct(s.todayChangePerc)}</strong>
+                  </div>
+
+                  <div className="bigData small">
+                    <span>Price</span><b>{money(s.day?.c)}</b>
+                    <span>Score</span><b>{sScore}</b>
+                    <span>Change</span><b>{money(s.todayChange)}</b>
+                    <span>Volume</span><b>{volume(s.day?.v)}</b>
+                    <span>Open</span><b>{money(s.day?.o)}</b>
+                    <span>High</span><b>{money(s.day?.h)}</b>
+                    <span>Low</span><b>{money(s.day?.l)}</b>
+                  </div>
+
+                  <div className={`pill ${verdict.toLowerCase()}`}>{verdict}</div>
+                </article>
+              );
+            })}
           </div>
-        </div>
-
-        <div className="panel">
-          <p className="tag">TAPE SPEED</p>
-
-          <div className="speedMeter">
-            <div className="needle" />
-            <strong>FAST</strong>
-            <span>DEAD · SLOW · ACTIVE · FAST · VIOLENT</span>
-          </div>
-
-          <div className="bar">
-            <span>Buyers 78%</span>
-            <i style={{ width: "78%" }} />
-          </div>
-
-          <div className="bar red">
-            <span>Sellers 22%</span>
-            <i style={{ width: "22%" }} />
-          </div>
-        </div>
-
-        <div className="panel">
-          <p className="tag">SUPPORT / RESISTANCE</p>
-
-          <div className="level">
-            <span>Support</span>
-            <b>$1.18</b>
-            <i style={{ width: "82%" }} />
-          </div>
-
-          <div className="level">
-            <span>Current</span>
-            <b>$1.27</b>
-            <i style={{ width: "64%" }} />
-          </div>
-
-          <div className="level">
-            <span>Resistance</span>
-            <b>$1.42</b>
-            <i style={{ width: "48%" }} />
-          </div>
-        </div>
+        )}
       </section>
 
       <section className="bottom">
         <div className="panel">
-          <p className="tag">CATALYST FEED</p>
-          <div className="row"><b>ONCY</b><span>Cancer Trial Results</span><em>HIGH</em></div>
-          <div className="row"><b>ABCD</b><span>Merger News</span><em>MED</em></div>
-          <div className="row"><b>XYZ</b><span>FDA Filing</span><em>MED</em></div>
-          <div className="row"><b>LMNO</b><span>Government Contract</span><em>HIGH</em></div>
+          <p className="tag">NEXT FILTERS</p>
+          <div className="row"><b>Remove</b><span>Warrants / Units / Rights</span><em>NEXT</em></div>
+          <div className="row"><b>Add</b><span>Price 0.10 - 20</span><em>NEXT</em></div>
+          <div className="row"><b>Add</b><span>Volume 500K+</span><em>NEXT</em></div>
+          <div className="row"><b>Add</b><span>Float Under 50M</span><em>NEXT</em></div>
         </div>
 
         <div className="panel">
           <p className="tag">POSITION CALCULATOR</p>
-
           <div className="bigData">
-            <span>Entry</span><b>$1.27</b>
-            <span>Stop</span><b>$1.18</b>
-            <span>Risk</span><b>$0.09</b>
-            <span>Target</span><b>$1.45</b>
-            <span>R:R</span><b>2.0</b>
-            <span>Shares</span><b>500</b>
+            <span>Entry</span><b>{money(top?.day?.c)}</b>
+            <span>Stop</span><b>{money((top?.day?.c || 0) * 0.93)}</b>
+            <span>Risk</span><b>7%</b>
+            <span>Target</span><b>{money((top?.day?.c || 0) * 1.15)}</b>
+            <span>R:R</span><b>2.1</b>
           </div>
         </div>
 
         <div className="panel">
           <p className="tag">SETTINGS</p>
-          <div className="setting">Polygon API Key</div>
-          <div className="setting">Supabase URL</div>
-          <div className="setting">Supabase Key</div>
-          <div className="setting">TradingView Webhook</div>
+          <div className="setting">Polygon API: {apiStatus}</div>
+          <div className="setting">Dashboard: LIVE DATA</div>
+          <div className="setting">Webhook: LATER</div>
+          <div className="setting">Supabase: LATER</div>
         </div>
       </section>
 
@@ -375,12 +399,6 @@ export default function Home() {
           border: 2px solid rgba(255,182,18,.65);
           background: radial-gradient(circle, rgba(255,182,18,.26), transparent 60%), #050505;
           box-shadow: 0 0 45px rgba(255,182,18,.3);
-          animation: pulse 2s infinite ease-in-out;
-        }
-
-        @keyframes pulse {
-          0%, 100% { transform: scale(1); box-shadow: 0 0 35px rgba(255,182,18,.25); }
-          50% { transform: scale(1.03); box-shadow: 0 0 60px rgba(255,182,18,.45); }
         }
 
         .circle strong {
@@ -434,101 +452,68 @@ export default function Home() {
           color: #00ff88 !important;
         }
 
-        .triple,
+        .cards {
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+          gap: 14px;
+        }
+
+        .card {
+          padding: 18px;
+          border-radius: 22px;
+          border: 1px solid rgba(255,182,18,.24);
+          background: #070707;
+        }
+
+        .cardTop {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+
+        .card h3 {
+          margin: 0;
+          color: #ffb612;
+          font-size: 30px;
+        }
+
+        .cardTop strong {
+          color: #00ff88;
+        }
+
+        .small {
+          font-size: 14px;
+        }
+
+        .pill {
+          margin-top: 14px;
+          padding: 12px;
+          border-radius: 12px;
+          text-align: center;
+          font-weight: 900;
+        }
+
+        .yes {
+          background: #ffb612;
+          color: #050505;
+        }
+
+        .wait {
+          background: rgba(255,182,18,.18);
+          color: #ffd700;
+          border: 1px solid rgba(255,182,18,.38);
+        }
+
+        .no {
+          background: rgba(255,77,77,.16);
+          color: #ff4d4d;
+          border: 1px solid rgba(255,77,77,.35);
+        }
+
         .bottom {
           display: grid;
           grid-template-columns: 1fr 1fr 1fr;
           gap: 18px;
-        }
-
-        .heatGrid {
-          display: grid;
-          grid-template-columns: repeat(4, 1fr);
-          gap: 12px;
-        }
-
-        .heatTile {
-          padding: 16px;
-          border-radius: 16px;
-          background: #070707;
-          border: 1px solid rgba(255,182,18,.25);
-        }
-
-        .heatTile strong {
-          display: block;
-          color: #ffb612;
-          font-size: 24px;
-        }
-
-        .heatTile span {
-          display: block;
-          color: #ffd700;
-          font-size: 34px;
-          font-weight: 900;
-        }
-
-        .heatTile small {
-          color: #aaa;
-        }
-
-        .heatTile.yes {
-          box-shadow: 0 0 22px rgba(255,182,18,.35);
-        }
-
-        .heatTile.no {
-          border-color: rgba(255,77,77,.45);
-        }
-
-        .speedMeter {
-          text-align: center;
-          padding: 22px;
-        }
-
-        .speedMeter strong {
-          display: block;
-          color: #ffd700;
-          font-size: 50px;
-          text-shadow: 0 0 20px rgba(255,215,0,.6);
-        }
-
-        .needle {
-          margin: 0 auto 10px;
-          width: 120px;
-          height: 8px;
-          background: #ffb612;
-          border-radius: 999px;
-          transform: rotate(-12deg);
-          box-shadow: 0 0 18px rgba(255,182,18,.7);
-        }
-
-        .bar,
-        .level {
-          margin-top: 18px;
-        }
-
-        .bar span,
-        .level span {
-          display: block;
-          color: #aaa;
-          margin-bottom: 8px;
-        }
-
-        .bar i,
-        .level i {
-          display: block;
-          height: 12px;
-          border-radius: 999px;
-          background: linear-gradient(90deg, #ffb612, #ffd700);
-          box-shadow: 0 0 16px rgba(255,182,18,.6);
-        }
-
-        .bar.red i {
-          background: linear-gradient(90deg, #ff4d4d, #7a1515);
-        }
-
-        .level b {
-          float: right;
-          color: #ffd700;
         }
 
         .setting {
@@ -540,13 +525,16 @@ export default function Home() {
           border: 1px dashed rgba(255,182,18,.25);
         }
 
+        .loading {
+          color: #ffd700;
+        }
+
         @media (max-width: 1100px) {
           .hero,
           .phaseBar,
           .dash,
           .radar,
-          .triple,
-          .heatGrid,
+          .cards,
           .bottom {
             grid-template-columns: 1fr;
           }
