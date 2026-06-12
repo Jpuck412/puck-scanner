@@ -59,7 +59,8 @@ export default function Home() {
   const [minGain, setMinGain] = useState(0);
   const [minVolume, setMinVolume] = useState(0);
   const [removeJunk, setRemoveJunk] = useState(false);
-
+  const [autoScan, setAutoScan] = useState(true);
+  const [refreshSec, setRefreshSec] = useState(15);
   async function load() {
     setStatus("LOADING");
     try {
@@ -80,8 +81,18 @@ export default function Home() {
   }
 
   useEffect(() => {
+  load();
+}, []);
+
+useEffect(() => {
+  if (!autoScan) return;
+
+  const id = setInterval(() => {
     load();
-  }, []);
+  }, refreshSec * 1000);
+
+  return () => clearInterval(id);
+}, [autoScan, refreshSec]);
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -158,7 +169,27 @@ export default function Home() {
 
         <section className="panel">
           <p className="tag">FILTER CONTROL</p>
+<div className="filters">
 
+<button onClick={() => load()}>
+SCAN NOW
+</button>
+
+<button onClick={() => setAutoScan(!autoScan)}>
+AUTO SCAN: {autoScan ? "ON" : "OFF"}
+</button>
+
+<select
+  value={refreshSec}
+  onChange={(e) => setRefreshSec(Number(e.target.value))}
+>
+  <option value={5}>5 SEC</option>
+  <option value={15}>15 SEC</option>
+  <option value={30}>30 SEC</option>
+  <option value={60}>60 SEC</option>
+</select>
+
+</div>
           <div className="filters">
             <label>
               Max Price
