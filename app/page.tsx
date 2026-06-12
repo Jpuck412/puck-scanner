@@ -27,21 +27,24 @@ function money(n: number) {
   return "$" + n.toFixed(n < 1 ? 4 : 2);
 }
 
-function pct(n: number) {
-  if (Number.isNaN(n)) return "N/A";
-  return (n >= 0 ? "+" : "") + n.toFixed(1) + "%";
+function money(n?: number) {
+  const x = Number(n);
+  if (!Number.isFinite(x) || x === 0) return "N/A";
+  return "$" + x.toFixed(x < 1 ? 4 : 2);
 }
 
-function vol(n: number) {
-  if (!n || Number.isNaN(n)) return "N/A";
-  if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
-  if (n >= 1000) return (n / 1000).toFixed(1) + "K";
-  return String(Math.round(n));
+function pct(n?: number) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return "N/A";
+  return (x >= 0 ? "+" : "") + x.toFixed(1) + "%";
 }
 
-function junk(ticker: string) {
-  const t = ticker.toUpperCase();
-  return t.endsWith("W") || t.endsWith("WS") || t.endsWith("U") || t.endsWith("R");
+function vol(n?: number) {
+  const x = Number(n);
+  if (!Number.isFinite(x) || x === 0) return "N/A";
+  if (x >= 1000000) return (x / 1000000).toFixed(1) + "M";
+  if (x >= 1000) return (x / 1000).toFixed(1) + "K";
+  return String(Math.round(x));
 }
 
 function speedMeter(s: Stock) {
@@ -149,7 +152,19 @@ export default function Home() {
     try {
       const res = await fetch("/api/gainers", { cache: "no-store" });
       const json = await res.json();
-      setStocks(json?.tickers || []);
+      setStocks(
+  (json?.tickers || json?.data?.tickers || json?.results || []).map((s: any) => ({
+    ticker: s?.ticker || "",
+    gain: Number(s?.gain ?? s?.todaysChangePerc ?? 0),
+    change: Number(s?.change ?? s?.todaysChange ?? 0),
+    price: Number(s?.price ?? s?.day?.c ?? s?.min?.c ?? ((s?.prevDay?.c ?? 0) + (s?.todaysChange ?? 0))),
+    volume: Number(s?.volume ?? s?.day?.v ?? s?.min?.v ?? 0),
+    open: Number(s?.open ?? s?.day?.o ?? s?.min?.o ?? s?.day?.c ?? 0),
+    high: Number(s?.high ?? s?.day?.h ?? s?.min?.h ?? s?.day?.c ?? 0),
+    low: Number(s?.low ?? s?.day?.l ?? s?.min?.l ?? s?.day?.c ?? 0),
+    prevClose: Number(s?.prevClose ?? s?.prevDay?.c ?? 0)
+  }))
+);
       setStatus(json?.ok ? "CONNECTED" : "ERROR");
       setLastScan(
         new Date().toLocaleTimeString("en-US", {
