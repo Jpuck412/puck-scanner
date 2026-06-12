@@ -7,7 +7,6 @@ type Stock = {
   todaysChangePerc?: number;
   todaysChange?: number;
   day?: { c?: number; v?: number; o?: number; h?: number; l?: number };
-  prevDay?: { c?: number };
 };
 
 function money(n?: number) {
@@ -32,42 +31,27 @@ function isJunkTicker(ticker: string) {
   return t.endsWith("W") || t.endsWith("WS") || t.endsWith("U") || t.endsWith("R");
 }
 
-function support(s: Stock) {
-  return s.day?.l || 0;
-}
-
-function resistance(s: Stock) {
-  return s.day?.h || 0;
-}
-
-function puckScore(s: Stock) {
+function score(s: Stock) {
   const price = s.day?.c || 0;
   const volume = s.day?.v || 0;
   const gain = s.todaysChangePerc || 0;
 
-  let score = 0;
-  score += Math.min(40, Math.max(0, gain * 1.1));
-  score += Math.min(35, volume / 250000);
-  score += price > 0 && price <= 5 ? 15 : price <= 20 ? 7 : 0;
-  score += isJunkTicker(s.ticker) ? -30 : 10;
+  let x = 0;
+  x += Math.min(40, Math.max(0, gain * 1.1));
+  x += Math.min(35, volume / 250000);
+  x += price > 0 && price <= 5 ? 15 : price <= 20 ? 7 : 0;
+  x += isJunkTicker(s.ticker) ? -30 : 10;
 
-  return Math.max(0, Math.min(100, Math.round(score)));
+  return Math.max(0, Math.min(100, Math.round(x)));
 }
 
-function verdict(score: number) {
-  if (score >= 80) return "YES";
-  if (score >= 60) return "WAIT";
+function verdict(n: number) {
+  if (n >= 80) return "YES";
+  if (n >= 60) return "WAIT";
   return "NO";
 }
 
-function rejectReason(
-  s: Stock,
-  minPrice: number,
-  maxPrice: number,
-  minVolume: number,
-  minGain: number,
-  removeJunk: boolean
-) {
+function rejectReason(s: Stock, minPrice: number, maxPrice: number, minVolume: number, minGain: number, removeJunk: boolean) {
   const price = s.day?.c || 0;
   const volume = s.day?.v || 0;
   const gain = s.todaysChangePerc || 0;
@@ -87,7 +71,6 @@ export default function Home() {
   const [apiStatus, setApiStatus] = useState("LOADING");
   const [lastScan, setLastScan] = useState("NONE");
   const [showRejected, setShowRejected] = useState(false);
-  const [session, setSession] = useState("REGULAR");
 
   const [draftMaxPrice, setDraftMaxPrice] = useState(5);
   const [draftMinPrice, setDraftMinPrice] = useState(0.1);
@@ -161,7 +144,7 @@ export default function Home() {
   const filtered = useMemo(() => {
     return stocks
       .filter((s) => !rejectReason(s, minPrice, maxPrice, minVolume, minGain, removeJunk))
-      .sort((a, b) => puckScore(b) - puckScore(a));
+      .sort((a, b) => score(b) - score(a));
   }, [stocks, minPrice, maxPrice, minVolume, minGain, removeJunk]);
 
   const rejected = useMemo(() => {
@@ -179,14 +162,14 @@ export default function Home() {
 
   const top10 = filtered.slice(0, 10);
   const top = top10[0];
-  const topScore = top ? puckScore(top) : 0;
+  const topScore = top ? score(top) : 0;
   const topVerdict = verdict(topScore);
 
   return (
     <main className="page">
       <section className="hero">
         <div>
-          <p className="tag">PROOF OF STRUCTURE™ V10</p>
+          <p className="tag">PROOF OF STRUCTURE™</p>
           <h1>MISSION CONTROL</h1>
           <span>The market must earn permission.</span>
         </div>
@@ -198,21 +181,9 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="sessions">
-        {["ALL DAY", "PREMARKET", "REGULAR", "AFTER HOURS"].map((s) => (
-          <button key={s} className={session === s ? "active" : ""} onClick={() => setSession(s)}>
-            {s}
-          </button>
-        ))}
-      </section>
-
       <section className="notice">
-        <b>{session}</b>
-        <span>
-          {session === "REGULAR"
-            ? "Regular-market Polygon gainers are live."
-            : "This session is prepared in the UI. Extended-hours feed still needs separate data connection."}
-        </span>
+        <b>REGULAR MARKET LIVE</b>
+        <span>Premarket and after-hours are future feeds. This page shows live Polygon regular-market gainers.</span>
       </section>
 
       <section className="dash">
@@ -224,9 +195,9 @@ export default function Home() {
           <div className="rule">🟢 Raw Count <b>{stocks.length}</b></div>
           <div className="rule">🟢 Filtered <b>{filtered.length}</b></div>
           <div className="rule">🟢 Top Score <b>{topScore}</b></div>
-          <div className="rule">🟡 Real Spread <b>LOCKED</b></div>
-          <div className="rule">🟡 Real Float <b>LOCKED</b></div>
-          <div className="rule">🟡 IBKR Orders <b>LOCKED</b></div>
+          <div className="rule">🟡 Spread <b>LOCKED</b></div>
+          <div className="rule">🟡 Float <b>LOCKED</b></div>
+          <div className="rule">🟡 IBKR <b>LOCKED</b></div>
 
           <button className="refresh" onClick={loadGainers}>NEW SCAN</button>
           <div className="final">WHAT PROVES I'M RIGHT?</div>
@@ -266,8 +237,8 @@ export default function Home() {
               <div>Gain <b>{pct(top?.todaysChangePerc)}</b></div>
               <div>Price <b>{money(top?.day?.c)}</b></div>
               <div>Volume <b>{vol(top?.day?.v)}</b></div>
-              <div>Support <b>{money(top ? support(top) : 0)}</b></div>
-              <div>Resistance <b>{money(top ? resistance(top) : 0)}</b></div>
+              <div>Support <b>{money(top?.day?.l)}</b></div>
+              <div>Resistance <b>{money(top?.day?.h)}</b></div>
               <div>Spread <b>UNKNOWN</b></div>
               <div>Float <b>UNKNOWN</b></div>
             </div>
@@ -280,10 +251,9 @@ export default function Home() {
           <div className="stat"><span>Raw Count</span><b>{stocks.length}</b></div>
           <div className="stat"><span>Filtered Count</span><b>{filtered.length}</b></div>
           <div className="stat"><span>Rejected</span><b>{rejected.length}</b></div>
-          <div className="stat"><span>Session</span><b>{session}</b></div>
           <div className="stat"><span>Max Price</span><b>${maxPrice}</b></div>
           <div className="stat"><span>Min Volume</span><b>{vol(minVolume)}</b></div>
-          <div className="stat"><span>Data Label</span><b>REGULAR LIVE</b></div>
+          <div className="stat"><span>Data Mode</span><b>REGULAR LIVE</b></div>
         </aside>
       </section>
 
@@ -310,7 +280,7 @@ export default function Home() {
         ) : (
           <div className="cards">
             {top10.map((s) => {
-              const sScore = puckScore(s);
+              const sScore = score(s);
               const v = verdict(sScore);
 
               return (
@@ -325,8 +295,8 @@ export default function Home() {
                     <span>Score</span><b>{sScore}</b>
                     <span>Day Change</span><b>{money(s.todaysChange)}</b>
                     <span>Volume</span><b>{vol(s.day?.v)}</b>
-                    <span>Support Zone</span><b>{money(support(s))}</b>
-                    <span>Resistance Zone</span><b>{money(resistance(s))}</b>
+                    <span>Support Zone</span><b>{money(s.day?.l)}</b>
+                    <span>Resistance Zone</span><b>{money(s.day?.h)}</b>
                     <span>Spread</span><b>UNKNOWN</b>
                     <span>Float</span><b>UNKNOWN</b>
                   </div>
@@ -340,13 +310,13 @@ export default function Home() {
       </section>
 
       <section className="panel">
-        <p className="tag">TOP 10 POSITION + STRUCTURE CALCULATOR</p>
+        <p className="tag">TOP 10 POSITION CALCULATOR</p>
 
         <div className="positionCards">
           {top10.map((s) => {
             const entry = s.day?.c || 0;
-            const stop = support(s);
-            const target = resistance(s);
+            const stop = s.day?.l || entry * 0.93;
+            const target = s.day?.h || entry * 1.15;
             const risk = Math.max(0, entry - stop);
             const reward = Math.max(0, target - entry);
             const rr = risk > 0 ? (reward / risk).toFixed(2) : "N/A";
@@ -364,8 +334,6 @@ export default function Home() {
                   <span>Resistance Zone</span><b>{money(target)}</b>
                   <span>Target Exit</span><b>{money(target)}</b>
                   <span>Risk / Reward</span><b>{rr}</b>
-                  <span>Spread Speed Meter</span><b>UNKNOWN</b>
-                  <span>Float Size</span><b>UNKNOWN</b>
                   <span>Order Type</span><b>LIMIT ONLY</b>
                   <span>Broker Status</span><b>IBKR LOCKED</b>
                 </div>
@@ -379,20 +347,16 @@ export default function Home() {
 
       <section className="bottom">
         <div className="panel">
-          <p className="tag">PRODUCT PAGES</p>
-          <div className="row"><b>Glossary</b><span>Separate page later</span><em>PLANNED</em></div>
-          <div className="row"><b>Disclaimer</b><span>Separate page later</span><em>PLANNED</em></div>
-          <div className="row"><b>Webhooks</b><span>User-token system later</span><em>PLANNED</em></div>
-          <div className="row"><b>IBKR</b><span>Manual confirm only</span><em>LOCKED</em></div>
+          <p className="tag">FUTURE FEEDS</p>
+          <div className="row"><b>Premarket</b><span>Separate data connection later</span><em>LOCKED</em></div>
+          <div className="row"><b>After Hours</b><span>Separate data connection later</span><em>LOCKED</em></div>
+          <div className="row"><b>Spread</b><span>Needs bid/ask feed</span><em>LOCKED</em></div>
+          <div className="row"><b>Float</b><span>Needs reference data</span><em>LOCKED</em></div>
         </div>
 
         <div className="panel disclaimer">
           <p className="tag">DISCLAIMER</p>
-          <span>
-            Educational and informational software only. Not financial advice.
-            No recommendation to buy or sell securities. User is responsible
-            for all trading decisions.
-          </span>
+          <span>Educational and informational software only. Not financial advice. No recommendation to buy or sell securities. User is responsible for all trading decisions.</span>
         </div>
       </section>
 
@@ -436,7 +400,7 @@ export default function Home() {
           text-shadow: 0 0 28px rgba(255,182,18,.8);
         }
 
-        .clock, .panel, .sessions button, .notice {
+        .clock, .panel, .notice {
           border-radius: 24px;
           border: 1px solid rgba(255,182,18,.25);
           background: linear-gradient(145deg, #121212, #050505);
@@ -447,31 +411,12 @@ export default function Home() {
         .clock small, .data span, .stat span, .row span, .disclaimer span, .notice span { color: #999; }
         .clock strong { display: block; color: #ffd700; font-size: 34px; margin: 10px 0; }
 
-        .sessions {
-          display: grid;
-          grid-template-columns: repeat(4, 1fr);
-          gap: 12px;
-          margin: 18px 0;
-        }
-
-        .sessions button {
-          padding: 16px;
-          color: #aaa;
-          font-weight: 900;
-        }
-
-        .sessions .active {
-          color: #050505;
-          background: #ffb612;
-          box-shadow: 0 0 28px rgba(255,182,18,.65);
-        }
-
         .notice {
           display: flex;
           justify-content: space-between;
           gap: 12px;
           padding: 16px;
-          margin-bottom: 18px;
+          margin: 18px 0;
         }
 
         .notice b { color: #ffd700; }
@@ -661,13 +606,11 @@ export default function Home() {
         .loading { color: #ffd700; }
 
         @media (max-width: 1100px) {
-          .hero, .sessions, .dash, .radar, .cards, .positionCards, .bottom, .filterGrid, .toggles, .rejectGrid {
+          .hero, .dash, .radar, .cards, .positionCards, .bottom, .filterGrid, .toggles, .rejectGrid {
             grid-template-columns: 1fr;
           }
 
-          .notice {
-            display: grid;
-          }
+          .notice { display: grid; }
         }
       `}</style>
     </main>
