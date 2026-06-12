@@ -2,7 +2,12 @@ export async function GET() {
   const apiKey = process.env.POLYGON_API_KEY;
 
   if (!apiKey) {
-    return Response.json({ ok: false, error: "Missing POLYGON_API_KEY", tickers: [] }, { status: 500 });
+    return Response.json({
+      ok: false,
+      error: "Missing POLYGON_API_KEY",
+      data: { tickers: [] },
+      tickers: []
+    });
   }
 
   try {
@@ -18,25 +23,46 @@ export async function GET() {
       const price =
         s?.day?.c ??
         s?.min?.c ??
-        (typeof s?.prevDay?.c === "number" && typeof s?.todaysChange === "number"
-          ? s.prevDay.c + s.todaysChange
-          : 0);
+        ((s?.prevDay?.c ?? 0) + (s?.todaysChange ?? 0));
+
+      const volume =
+        s?.day?.v ??
+        s?.min?.v ??
+        s?.prevDay?.v ??
+        0;
 
       return {
+        ...s,
         ticker: s?.ticker || "",
-        gain: s?.todaysChangePerc ?? 0,
-        change: s?.todaysChange ?? 0,
-        price,
-        volume: s?.day?.v ?? s?.min?.v ?? 0,
-        open: s?.day?.o ?? s?.min?.o ?? price,
-        high: s?.day?.h ?? s?.min?.h ?? price,
-        low: s?.day?.l ?? s?.min?.l ?? price,
-        prevClose: s?.prevDay?.c ?? 0
+        todaysChangePerc: s?.todaysChangePerc ?? 0,
+        todaysChange: s?.todaysChange ?? 0,
+        day: {
+          c: price,
+          v: volume,
+          o: s?.day?.o ?? s?.min?.o ?? price,
+          h: s?.day?.h ?? s?.min?.h ?? price,
+          l: s?.day?.l ?? s?.min?.l ?? price
+        },
+        prevDay: {
+          c: s?.prevDay?.c ?? 0,
+          v: s?.prevDay?.v ?? 0
+        }
       };
     });
 
-    return Response.json({ ok: true, count: tickers.length, tickers });
+    return Response.json({
+      ok: true,
+      source: "polygon",
+      count: tickers.length,
+      data: { tickers },
+      tickers
+    });
   } catch (error) {
-    return Response.json({ ok: false, error: String(error), tickers: [] }, { status: 500 });
+    return Response.json({
+      ok: false,
+      error: String(error),
+      data: { tickers: [] },
+      tickers: []
+    });
   }
 }
