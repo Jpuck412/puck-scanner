@@ -29,46 +29,27 @@ function vol(n?: number) {
 
 function isJunkTicker(ticker: string) {
   const t = ticker.toUpperCase();
-  return t.endsWith("W") || t.endsWith("WS") || t.endsWith("U") || t.endsWith("R") || t.includes(".W") || t.includes(".U") || t.includes(".R");
+  return t.endsWith("W") || t.endsWith("WS") || t.endsWith("U") || t.endsWith("R");
 }
 
 function support(s: Stock) {
-  const low = s.day?.l || 0;
-  const close = s.day?.c || 0;
-  return low || close * 0.93;
+  return s.day?.l || 0;
 }
 
 function resistance(s: Stock) {
-  const high = s.day?.h || 0;
-  const close = s.day?.c || 0;
-  return high || close * 1.15;
-}
-
-function spreadEstimate(s: Stock) {
-  const close = s.day?.c || 0;
-  if (!close) return 0;
-  return close < 1 ? 0.012 : close < 5 ? 0.007 : 0.004;
-}
-
-function floatEstimate(s: Stock) {
-  const volume = s.day?.v || 0;
-  if (volume > 20000000) return "Likely Low/Hot";
-  if (volume > 5000000) return "Medium/Hot";
-  return "Unknown";
+  return s.day?.h || 0;
 }
 
 function puckScore(s: Stock) {
   const price = s.day?.c || 0;
   const volume = s.day?.v || 0;
   const gain = s.todaysChangePerc || 0;
-  const spread = spreadEstimate(s);
 
   let score = 0;
-  score += Math.min(35, Math.max(0, gain * 1.15));
-  score += Math.min(30, volume / 250000);
-  score += price > 0 && price <= 5 ? 20 : price <= 20 ? 10 : 0;
-  score += spread <= 0.01 ? 10 : 4;
-  score += isJunkTicker(s.ticker) ? -25 : 10;
+  score += Math.min(40, Math.max(0, gain * 1.1));
+  score += Math.min(35, volume / 250000);
+  score += price > 0 && price <= 5 ? 15 : price <= 20 ? 7 : 0;
+  score += isJunkTicker(s.ticker) ? -30 : 10;
 
   return Math.max(0, Math.min(100, Math.round(score)));
 }
@@ -79,7 +60,14 @@ function verdict(score: number) {
   return "NO";
 }
 
-function rejectReason(s: Stock, minPrice: number, maxPrice: number, minVolume: number, minGain: number, removeJunk: boolean) {
+function rejectReason(
+  s: Stock,
+  minPrice: number,
+  maxPrice: number,
+  minVolume: number,
+  minGain: number,
+  removeJunk: boolean
+) {
   const price = s.day?.c || 0;
   const volume = s.day?.v || 0;
   const gain = s.todaysChangePerc || 0;
@@ -99,6 +87,7 @@ export default function Home() {
   const [apiStatus, setApiStatus] = useState("LOADING");
   const [lastScan, setLastScan] = useState("NONE");
   const [showRejected, setShowRejected] = useState(false);
+  const [session, setSession] = useState("REGULAR");
 
   const [draftMaxPrice, setDraftMaxPrice] = useState(5);
   const [draftMinPrice, setDraftMinPrice] = useState(0.1);
@@ -117,10 +106,14 @@ export default function Home() {
     try {
       const res = await fetch("/api/gainers", { cache: "no-store" });
       const json = await res.json();
-      const tickers = json?.data?.tickers || [];
-      setStocks(tickers);
+      setStocks(json?.data?.tickers || []);
       setApiStatus("CONNECTED");
-      setLastScan(new Date().toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", second: "2-digit" }));
+      setLastScan(new Date().toLocaleTimeString("en-US", {
+        timeZone: "America/New_York",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit"
+      }));
     } catch {
       setApiStatus("ERROR");
     } finally {
@@ -150,7 +143,12 @@ export default function Home() {
   }
 
   useEffect(() => {
-    const tick = () => setTime(new Date().toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", second: "2-digit" }));
+    const tick = () => setTime(new Date().toLocaleTimeString("en-US", {
+      timeZone: "America/New_York",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit"
+    }));
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
@@ -188,9 +186,9 @@ export default function Home() {
     <main className="page">
       <section className="hero">
         <div>
-          <p className="tag">PROOF OF STRUCTURE™ V9</p>
+          <p className="tag">PROOF OF STRUCTURE™ V10</p>
           <h1>MISSION CONTROL</h1>
-          <span>Live gainers. S/R zones. Spread meter. Float read. Broker-ready calculator.</span>
+          <span>The market must earn permission.</span>
         </div>
 
         <div className="clock">
@@ -200,24 +198,35 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="phaseBar">
-        <div>PREMARKET</div>
-        <div>REGULAR</div>
-        <div>AFTER HOURS</div>
-        <div>ALL DAY</div>
-        <div className="active">STRUCTURE MODE</div>
+      <section className="sessions">
+        {["ALL DAY", "PREMARKET", "REGULAR", "AFTER HOURS"].map((s) => (
+          <button key={s} className={session === s ? "active" : ""} onClick={() => setSession(s)}>
+            {s}
+          </button>
+        ))}
+      </section>
+
+      <section className="notice">
+        <b>{session}</b>
+        <span>
+          {session === "REGULAR"
+            ? "Regular-market Polygon gainers are live."
+            : "This session is prepared in the UI. Extended-hours feed still needs separate data connection."}
+        </span>
       </section>
 
       <section className="dash">
         <aside className="panel permission">
           <p className="tag">PERMISSION ENGINE</p>
           <h2>{topVerdict}</h2>
-          <div className="rule">🟢 Feed <b>{apiStatus}</b></div>
-          <div className="rule">🟢 Raw <b>{stocks.length}</b></div>
+
+          <div className="rule">🟢 Polygon Feed <b>{apiStatus}</b></div>
+          <div className="rule">🟢 Raw Count <b>{stocks.length}</b></div>
           <div className="rule">🟢 Filtered <b>{filtered.length}</b></div>
           <div className="rule">🟢 Top Score <b>{topScore}</b></div>
-          <div className="rule">🟡 Live Spread <b>EST</b></div>
-          <div className="rule">🟡 Float Size <b>EST</b></div>
+          <div className="rule">🟡 Real Spread <b>LOCKED</b></div>
+          <div className="rule">🟡 Real Float <b>LOCKED</b></div>
+          <div className="rule">🟡 IBKR Orders <b>LOCKED</b></div>
 
           <button className="refresh" onClick={loadGainers}>NEW SCAN</button>
           <div className="final">WHAT PROVES I'M RIGHT?</div>
@@ -226,6 +235,7 @@ export default function Home() {
         <section className="center">
           <div className="panel filters">
             <p className="tag">FILTER CONTROL</p>
+
             <div className="filterGrid">
               <label>Max Price<input value={draftMaxPrice} onChange={(e) => setDraftMaxPrice(Number(e.target.value))} type="number" step="0.1" /></label>
               <label>Min Price<input value={draftMinPrice} onChange={(e) => setDraftMinPrice(Number(e.target.value))} type="number" step="0.01" /></label>
@@ -234,7 +244,9 @@ export default function Home() {
             </div>
 
             <div className="toggles">
-              <button className={draftRemoveJunk ? "on" : ""} onClick={() => setDraftRemoveJunk(!draftRemoveJunk)}>Remove Junk: {draftRemoveJunk ? "ON" : "OFF"}</button>
+              <button className={draftRemoveJunk ? "on" : ""} onClick={() => setDraftRemoveJunk(!draftRemoveJunk)}>
+                Remove Junk: {draftRemoveJunk ? "ON" : "OFF"}
+              </button>
               <button onClick={applyFilters}>APPLY FILTERS</button>
               <button onClick={resetFilters}>RESET $5 SAFE</button>
               <button onClick={() => setShowRejected(!showRejected)}>{showRejected ? "HIDE REJECTED" : "SHOW REJECTED"}</button>
@@ -243,6 +255,7 @@ export default function Home() {
 
           <div className="panel radar">
             <p className="tag">STRUCTURE RADAR</p>
+
             <div className="circle">
               <strong>{topScore || "--"}</strong>
               <span>{top?.ticker || "WAIT"}</span>
@@ -251,12 +264,12 @@ export default function Home() {
             <div className="radarStats">
               <div>Top <b>{top?.ticker || "NONE"}</b></div>
               <div>Gain <b>{pct(top?.todaysChangePerc)}</b></div>
-              <div>Volume <b>{vol(top?.day?.v)}</b></div>
               <div>Price <b>{money(top?.day?.c)}</b></div>
+              <div>Volume <b>{vol(top?.day?.v)}</b></div>
               <div>Support <b>{money(top ? support(top) : 0)}</b></div>
               <div>Resistance <b>{money(top ? resistance(top) : 0)}</b></div>
-              <div>Spread Est. <b>{top ? pct(spreadEstimate(top) * 100) : "N/A"}</b></div>
-              <div>Float Read <b>{top ? floatEstimate(top) : "N/A"}</b></div>
+              <div>Spread <b>UNKNOWN</b></div>
+              <div>Float <b>UNKNOWN</b></div>
             </div>
           </div>
         </section>
@@ -267,9 +280,10 @@ export default function Home() {
           <div className="stat"><span>Raw Count</span><b>{stocks.length}</b></div>
           <div className="stat"><span>Filtered Count</span><b>{filtered.length}</b></div>
           <div className="stat"><span>Rejected</span><b>{rejected.length}</b></div>
+          <div className="stat"><span>Session</span><b>{session}</b></div>
           <div className="stat"><span>Max Price</span><b>${maxPrice}</b></div>
           <div className="stat"><span>Min Volume</span><b>{vol(minVolume)}</b></div>
-          <div className="stat"><span>Data Notes</span><b>Spread/Float Est.</b></div>
+          <div className="stat"><span>Data Label</span><b>REGULAR LIVE</b></div>
         </aside>
       </section>
 
@@ -290,6 +304,7 @@ export default function Home() {
 
       <section className="panel">
         <p className="tag">LIVE TOP 10</p>
+
         {loading ? (
           <h2 className="loading">Loading Polygon gainers...</h2>
         ) : (
@@ -297,6 +312,7 @@ export default function Home() {
             {top10.map((s) => {
               const sScore = puckScore(s);
               const v = verdict(sScore);
+
               return (
                 <article className="card" key={s.ticker}>
                   <div className="cardTop">
@@ -307,11 +323,12 @@ export default function Home() {
                   <div className="data small">
                     <span>Current Price</span><b>{money(s.day?.c)}</b>
                     <span>Score</span><b>{sScore}</b>
+                    <span>Day Change</span><b>{money(s.todaysChange)}</b>
                     <span>Volume</span><b>{vol(s.day?.v)}</b>
                     <span>Support Zone</span><b>{money(support(s))}</b>
                     <span>Resistance Zone</span><b>{money(resistance(s))}</b>
-                    <span>Spread Est.</span><b>{pct(spreadEstimate(s) * 100)}</b>
-                    <span>Float Read</span><b>{floatEstimate(s)}</b>
+                    <span>Spread</span><b>UNKNOWN</b>
+                    <span>Float</span><b>UNKNOWN</b>
                   </div>
 
                   <div className={`pill ${v.toLowerCase()}`}>{v}</div>
@@ -324,6 +341,7 @@ export default function Home() {
 
       <section className="panel">
         <p className="tag">TOP 10 POSITION + STRUCTURE CALCULATOR</p>
+
         <div className="positionCards">
           {top10.map((s) => {
             const entry = s.day?.c || 0;
@@ -336,6 +354,7 @@ export default function Home() {
             return (
               <article className="positionCard" key={s.ticker + "pos"}>
                 <h3>{s.ticker}</h3>
+
                 <div className="data">
                   <span>Current Price</span><b>{money(entry)}</b>
                   <span>Entry Price</span><b>{money(entry)}</b>
@@ -345,11 +364,12 @@ export default function Home() {
                   <span>Resistance Zone</span><b>{money(target)}</b>
                   <span>Target Exit</span><b>{money(target)}</b>
                   <span>Risk / Reward</span><b>{rr}</b>
-                  <span>Spread Speed Meter</span><b>{spreadEstimate(s) <= 0.007 ? "TIGHT / FAST" : "WIDE / CAREFUL"}</b>
-                  <span>Float Size Read</span><b>{floatEstimate(s)}</b>
+                  <span>Spread Speed Meter</span><b>UNKNOWN</b>
+                  <span>Float Size</span><b>UNKNOWN</b>
                   <span>Order Type</span><b>LIMIT ONLY</b>
                   <span>Broker Status</span><b>IBKR LOCKED</b>
                 </div>
+
                 <button className="preview">LIMIT ORDER PREVIEW</button>
               </article>
             );
@@ -359,16 +379,20 @@ export default function Home() {
 
       <section className="bottom">
         <div className="panel">
-          <p className="tag">NEXT TRUE-DATA UPGRADES</p>
-          <div className="row"><b>Spread</b><span>Needs real bid/ask feed</span><em>LATER</em></div>
-          <div className="row"><b>Float</b><span>Needs reference/fundamental source</span><em>LATER</em></div>
-          <div className="row"><b>News</b><span>Needs catalyst endpoint</span><em>LATER</em></div>
-          <div className="row"><b>IBKR</b><span>Manual confirm only</span><em>LATER</em></div>
+          <p className="tag">PRODUCT PAGES</p>
+          <div className="row"><b>Glossary</b><span>Separate page later</span><em>PLANNED</em></div>
+          <div className="row"><b>Disclaimer</b><span>Separate page later</span><em>PLANNED</em></div>
+          <div className="row"><b>Webhooks</b><span>User-token system later</span><em>PLANNED</em></div>
+          <div className="row"><b>IBKR</b><span>Manual confirm only</span><em>LOCKED</em></div>
         </div>
 
         <div className="panel disclaimer">
           <p className="tag">DISCLAIMER</p>
-          <span>Educational and informational software only. Not financial advice. No recommendation to buy or sell securities. User is responsible for all trading decisions.</span>
+          <span>
+            Educational and informational software only. Not financial advice.
+            No recommendation to buy or sell securities. User is responsible
+            for all trading decisions.
+          </span>
         </div>
       </section>
 
@@ -412,7 +436,7 @@ export default function Home() {
           text-shadow: 0 0 28px rgba(255,182,18,.8);
         }
 
-        .clock, .panel, .phaseBar div {
+        .clock, .panel, .sessions button, .notice {
           border-radius: 24px;
           border: 1px solid rgba(255,182,18,.25);
           background: linear-gradient(145deg, #121212, #050505);
@@ -420,18 +444,37 @@ export default function Home() {
         }
 
         .clock { padding: 22px; }
-        .clock small, .data span, .stat span, .row span, .disclaimer span { color: #999; }
+        .clock small, .data span, .stat span, .row span, .disclaimer span, .notice span { color: #999; }
         .clock strong { display: block; color: #ffd700; font-size: 34px; margin: 10px 0; }
 
-        .phaseBar {
+        .sessions {
           display: grid;
-          grid-template-columns: repeat(5, 1fr);
+          grid-template-columns: repeat(4, 1fr);
           gap: 12px;
           margin: 18px 0;
         }
 
-        .phaseBar div { padding: 16px; color: #aaa; text-align: center; font-weight: 900; }
-        .phaseBar .active { color: #050505; background: #ffb612; box-shadow: 0 0 28px rgba(255,182,18,.65); }
+        .sessions button {
+          padding: 16px;
+          color: #aaa;
+          font-weight: 900;
+        }
+
+        .sessions .active {
+          color: #050505;
+          background: #ffb612;
+          box-shadow: 0 0 28px rgba(255,182,18,.65);
+        }
+
+        .notice {
+          display: flex;
+          justify-content: space-between;
+          gap: 12px;
+          padding: 16px;
+          margin-bottom: 18px;
+        }
+
+        .notice b { color: #ffd700; }
 
         .dash {
           display: grid;
@@ -440,8 +483,18 @@ export default function Home() {
         }
 
         .panel { padding: 20px; margin-bottom: 18px; }
-        .permission { border-color: rgba(255,182,18,.55); background: linear-gradient(150deg, rgba(255,182,18,.18), #050505); }
-        .permission h2 { margin: 0; color: #ffd700; font-size: 86px; text-shadow: 0 0 28px rgba(255,215,0,.7); }
+
+        .permission {
+          border-color: rgba(255,182,18,.55);
+          background: linear-gradient(150deg, rgba(255,182,18,.18), #050505);
+        }
+
+        .permission h2 {
+          margin: 0;
+          color: #ffd700;
+          font-size: 86px;
+          text-shadow: 0 0 28px rgba(255,215,0,.7);
+        }
 
         .rule, .row, .stat {
           display: flex;
@@ -451,7 +504,11 @@ export default function Home() {
           border-bottom: 1px solid rgba(255,182,18,.12);
         }
 
-        .rule b, .row b, .row em, .stat b { color: #ffb612; font-style: normal; font-weight: 900; }
+        .rule b, .row b, .row em, .stat b {
+          color: #ffb612;
+          font-style: normal;
+          font-weight: 900;
+        }
 
         .refresh, .toggles button, .preview {
           width: 100%;
@@ -472,7 +529,17 @@ export default function Home() {
         }
 
         .toggles .on { background: #ffb612; color: #050505; }
-        .final { margin-top: 18px; padding: 14px; border-radius: 14px; text-align: center; background: rgba(255,182,18,.14); color: #ffd700; border: 1px solid rgba(255,182,18,.35); font-weight: 900; }
+
+        .final {
+          margin-top: 18px;
+          padding: 14px;
+          border-radius: 14px;
+          text-align: center;
+          background: rgba(255,182,18,.14);
+          color: #ffd700;
+          border: 1px solid rgba(255,182,18,.35);
+          font-weight: 900;
+        }
 
         .filterGrid {
           display: grid;
@@ -481,7 +548,17 @@ export default function Home() {
         }
 
         label { color: #aaa; font-size: 13px; }
-        input { width: 100%; margin-top: 8px; padding: 12px; border-radius: 12px; border: 1px solid rgba(255,182,18,.3); background: #050505; color: #ffd700; font-weight: 900; }
+
+        input {
+          width: 100%;
+          margin-top: 8px;
+          padding: 12px;
+          border-radius: 12px;
+          border: 1px solid rgba(255,182,18,.3);
+          background: #050505;
+          color: #ffd700;
+          font-weight: 900;
+        }
 
         .radar {
           display: grid;
@@ -564,7 +641,13 @@ export default function Home() {
           gap: 12px;
         }
 
-        .reject { padding: 14px; border-radius: 14px; background: rgba(255,77,77,.1); border: 1px solid rgba(255,77,77,.3); }
+        .reject {
+          padding: 14px;
+          border-radius: 14px;
+          background: rgba(255,77,77,.1);
+          border: 1px solid rgba(255,77,77,.3);
+        }
+
         .reject b { color: #ff4d4d; display: block; }
         .reject span { color: #ffd700; display: block; margin: 6px 0; }
         .reject em { color: #aaa; font-style: normal; }
@@ -578,8 +661,12 @@ export default function Home() {
         .loading { color: #ffd700; }
 
         @media (max-width: 1100px) {
-          .hero, .phaseBar, .dash, .radar, .cards, .positionCards, .bottom, .filterGrid, .toggles, .rejectGrid {
+          .hero, .sessions, .dash, .radar, .cards, .positionCards, .bottom, .filterGrid, .toggles, .rejectGrid {
             grid-template-columns: 1fr;
+          }
+
+          .notice {
+            display: grid;
           }
         }
       `}</style>
