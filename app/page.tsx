@@ -127,7 +127,7 @@ export default function Home() {
   async function load() {
     setStatus("SCANNING");
     try {
-      const res = await fetch("/api/gainers", { cache: "no-store" });
+      const res = await fetch("/api/scan", { cache: "no-store" });
       const json = await res.json();
       const list = json?.data?.tickers || json?.tickers || json?.results || [];
       setStocks(list.map(normalize));
