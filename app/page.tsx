@@ -129,6 +129,7 @@ export default function Home() {
           <h1>MISSION CONTROL</h1>
           <span>The market must earn permission.</span>
         </div>
+
         <div className="clock">
           <small>ET CLOCK</small>
           <strong>{time || "LOADING"}</strong>
@@ -138,7 +139,7 @@ export default function Home() {
 
       <section className="notice">
         <b>4AM–8PM WORKFLOW</b>
-        <span>Regular Polygon gainers live now. Premarket feed will be connected next without breaking this scanner.</span>
+        <span>Live scanner active. Premarket feed, spread, float, webhooks, and IBKR are staged for next upgrades.</span>
       </section>
 
       <section className="dash">
@@ -150,21 +151,24 @@ export default function Home() {
           <div className="row"><span>Filtered</span><b>{filtered.length}</b></div>
           <div className="row"><span>Top Ticker</span><b>{top?.ticker || "NONE"}</b></div>
           <div className="row"><span>Top Score</span><b>{topScore}</b></div>
+          <div className="row"><span>IBKR Orders</span><b>LOCKED</b></div>
           <button onClick={load}>NEW SCAN</button>
           <div className="final">WHAT PROVES I'M RIGHT?</div>
         </aside>
 
         <section className="panel">
           <p className="tag">FILTER CONTROL</p>
+
           <div className="filters">
             <label>Max Price<input value={maxPrice} onChange={(e) => setMaxPrice(Number(e.target.value))} type="number" step="0.1" /></label>
             <label>Min Price<input value={minPrice} onChange={(e) => setMinPrice(Number(e.target.value))} type="number" step="0.01" /></label>
             <label>Min Volume<input value={minVol} onChange={(e) => setMinVol(Number(e.target.value))} type="number" step="10000" /></label>
             <label>Min Gain %<input value={minGain} onChange={(e) => setMinGain(Number(e.target.value))} type="number" step="1" /></label>
           </div>
+
           <div className="toggles">
             <button onClick={() => setRemoveJunk(!removeJunk)}>Remove Junk: {removeJunk ? "ON" : "OFF"}</button>
-            <button onClick={() => { setMaxPrice(5); setMinPrice(0.1); setMinVol(500000); setMinGain(20); setRemoveJunk(true); }}>RESET SAFE</button>
+            <button onClick={() => { setMaxPrice(5); setMinPrice(0.1); setMinVol(500000); setMinGain(20); setRemoveJunk(true); }}>SAFE MODE</button>
             <button onClick={() => { setMaxPrice(50); setMinPrice(0); setMinVol(0); setMinGain(0); setRemoveJunk(false); }}>OPEN FILTERS</button>
             <button onClick={() => setShowRejected(!showRejected)}>{showRejected ? "HIDE REJECTED" : "SHOW REJECTED"}</button>
           </div>
@@ -174,6 +178,7 @@ export default function Home() {
               <strong>{topScore || "--"}</strong>
               <span>{top?.ticker || "WAIT"}</span>
             </div>
+
             <div className="stats">
               <div>Gain <b>{top ? pct(top.gain) : "N/A"}</b></div>
               <div>Price <b>{top ? money(top.price) : "N/A"}</b></div>
@@ -195,6 +200,8 @@ export default function Home() {
           <div className="row"><span>Rejected</span><b>{rejected.length}</b></div>
           <div className="row"><span>Mode</span><b>LIVE</b></div>
           <div className="row"><span>Premarket</span><b>NEXT</b></div>
+          <div className="row"><span>Spread</span><b>LOCKED</b></div>
+          <div className="row"><span>Float</span><b>LOCKED</b></div>
         </aside>
       </section>
 
@@ -272,12 +279,15 @@ export default function Home() {
 
       <section className="bottom">
         <div className="panel">
-          <p className="tag">NEXT UPGRADES</p>
+          <p className="tag">NEXT PRODUCT UPGRADES</p>
           <div className="row"><b>Premarket Feed</b><span>Connect next</span><em>PRIORITY</em></div>
-          <div className="row"><b>Spread</b><span>Needs bid/ask</span><em>LOCKED</em></div>
-          <div className="row"><b>Float</b><span>Needs reference endpoint</span><em>LOCKED</em></div>
-          <div className="row"><b>IBKR</b><span>Manual confirm only</span><em>LATER</em></div>
+          <div className="row"><b>Spread Meter</b><span>Needs bid/ask</span><em>LOCKED</em></div>
+          <div className="row"><b>Float Size</b><span>Needs reference endpoint</span><em>LOCKED</em></div>
+          <div className="row"><b>Broker Preview</b><span>Manual confirm only</span><em>STAGED</em></div>
+          <div className="row"><b>Glossary Page</b><span>Separate page</span><em>PLANNED</em></div>
+          <div className="row"><b>Disclaimer Page</b><span>Separate page</span><em>PLANNED</em></div>
         </div>
+
         <div className="panel disclaimer">
           <p className="tag">DISCLAIMER</p>
           <span>Educational and informational software only. Not financial advice. No recommendation to buy or sell securities. User is responsible for all trading decisions.</span>
@@ -319,3 +329,10 @@ export default function Home() {
         .yes { background: #ffb612; color: #050505; }
         .wait { background: rgba(255,182,18,.18); color: #ffd700; border: 1px solid rgba(255,182,18,.38) !important; }
         .no { background: rgba(255,77,77,.16); color: #ff4d4d; border: 1px solid rgba(255,77,77,.35) !important; }
+        .reject { border-color: rgba(255,77,77,.35); }
+        .bottom { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+        @media (max-width: 1100px) { .hero, .dash, .radar, .cards, .bottom, .filters, .toggles, .stats { grid-template-columns: 1fr; } .notice { display: grid; } }
+      `}</style>
+    </main>
+  );
+}
