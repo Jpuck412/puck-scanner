@@ -10,14 +10,6 @@ type Stock = {
   prevDay?: { c?: number };
 };
 
-type Rejected = {
-  ticker: string;
-  reason: string;
-  price: number;
-  gain: number;
-  volume: number;
-};
-
 function money(n?: number) {
   if (typeof n !== "number" || Number.isNaN(n)) return "N/A";
   return "$" + n.toFixed(n < 1 ? 4 : 2);
@@ -37,26 +29,45 @@ function vol(n?: number) {
 
 function isJunkTicker(ticker: string) {
   const t = ticker.toUpperCase();
-  return (
-    t.endsWith("W") ||
-    t.endsWith("WS") ||
-    t.endsWith("U") ||
-    t.endsWith("R") ||
-    t.includes(".W") ||
-    t.includes(".U") ||
-    t.includes(".R")
-  );
+  return t.endsWith("W") || t.endsWith("WS") || t.endsWith("U") || t.endsWith("R") || t.includes(".W") || t.includes(".U") || t.includes(".R");
+}
+
+function support(s: Stock) {
+  const low = s.day?.l || 0;
+  const close = s.day?.c || 0;
+  return low || close * 0.93;
+}
+
+function resistance(s: Stock) {
+  const high = s.day?.h || 0;
+  const close = s.day?.c || 0;
+  return high || close * 1.15;
+}
+
+function spreadEstimate(s: Stock) {
+  const close = s.day?.c || 0;
+  if (!close) return 0;
+  return close < 1 ? 0.012 : close < 5 ? 0.007 : 0.004;
+}
+
+function floatEstimate(s: Stock) {
+  const volume = s.day?.v || 0;
+  if (volume > 20000000) return "Likely Low/Hot";
+  if (volume > 5000000) return "Medium/Hot";
+  return "Unknown";
 }
 
 function puckScore(s: Stock) {
   const price = s.day?.c || 0;
   const volume = s.day?.v || 0;
   const gain = s.todaysChangePerc || 0;
+  const spread = spreadEstimate(s);
 
   let score = 0;
   score += Math.min(35, Math.max(0, gain * 1.15));
   score += Math.min(30, volume / 250000);
   score += price > 0 && price <= 5 ? 20 : price <= 20 ? 10 : 0;
+  score += spread <= 0.01 ? 10 : 4;
   score += isJunkTicker(s.ticker) ? -25 : 10;
 
   return Math.max(0, Math.min(100, Math.round(score)));
@@ -68,14 +79,7 @@ function verdict(score: number) {
   return "NO";
 }
 
-function rejectReason(
-  s: Stock,
-  minPrice: number,
-  maxPrice: number,
-  minVolume: number,
-  minGain: number,
-  removeJunk: boolean
-) {
+function rejectReason(s: Stock, minPrice: number, maxPrice: number, minVolume: number, minGain: number, removeJunk: boolean) {
   const price = s.day?.c || 0;
   const volume = s.day?.v || 0;
   const gain = s.todaysChangePerc || 0;
@@ -85,7 +89,6 @@ function rejectReason(
   if (price > maxPrice) return "PRICE TOO HIGH";
   if (volume < minVolume) return "LOW VOLUME";
   if (gain < minGain) return "WEAK GAIN";
-
   return "";
 }
 
@@ -111,22 +114,13 @@ export default function Home() {
 
   async function loadGainers() {
     setLoading(true);
-
     try {
       const res = await fetch("/api/gainers", { cache: "no-store" });
       const json = await res.json();
       const tickers = json?.data?.tickers || [];
-
       setStocks(tickers);
       setApiStatus("CONNECTED");
-      setLastScan(
-        new Date().toLocaleTimeString("en-US", {
-          timeZone: "America/New_York",
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit"
-        })
-      );
+      setLastScan(new Date().toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", second: "2-digit" }));
     } catch {
       setApiStatus("ERROR");
     } finally {
@@ -148,7 +142,6 @@ export default function Home() {
     setDraftMinVolume(500000);
     setDraftMinGain(20);
     setDraftRemoveJunk(true);
-
     setMaxPrice(5);
     setMinPrice(0.1);
     setMinVolume(500000);
@@ -157,17 +150,7 @@ export default function Home() {
   }
 
   useEffect(() => {
-    const tick = () => {
-      setTime(
-        new Date().toLocaleTimeString("en-US", {
-          timeZone: "America/New_York",
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit"
-        })
-      );
-    };
-
+    const tick = () => setTime(new Date().toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", second: "2-digit" }));
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
@@ -179,25 +162,19 @@ export default function Home() {
 
   const filtered = useMemo(() => {
     return stocks
-      .filter((s) => {
-        return !rejectReason(s, minPrice, maxPrice, minVolume, minGain, removeJunk);
-      })
+      .filter((s) => !rejectReason(s, minPrice, maxPrice, minVolume, minGain, removeJunk))
       .sort((a, b) => puckScore(b) - puckScore(a));
   }, [stocks, minPrice, maxPrice, minVolume, minGain, removeJunk]);
 
-  const rejected: Rejected[] = useMemo(() => {
+  const rejected = useMemo(() => {
     return stocks
-      .map((s) => {
-        const reason = rejectReason(s, minPrice, maxPrice, minVolume, minGain, removeJunk);
-
-        return {
-          ticker: s.ticker,
-          reason,
-          price: s.day?.c || 0,
-          gain: s.todaysChangePerc || 0,
-          volume: s.day?.v || 0
-        };
-      })
+      .map((s) => ({
+        ticker: s.ticker,
+        reason: rejectReason(s, minPrice, maxPrice, minVolume, minGain, removeJunk),
+        price: s.day?.c || 0,
+        gain: s.todaysChangePerc || 0,
+        volume: s.day?.v || 0
+      }))
       .filter((r) => r.reason)
       .slice(0, 20);
   }, [stocks, minPrice, maxPrice, minVolume, minGain, removeJunk]);
@@ -211,9 +188,9 @@ export default function Home() {
     <main className="page">
       <section className="hero">
         <div>
-          <p className="tag">PUCK SCANNER V8 ELITE MODE</p>
+          <p className="tag">PROOF OF STRUCTURE™ V9</p>
           <h1>MISSION CONTROL</h1>
-          <span>Live Polygon gainers. Filter engine. Broker-ready previews.</span>
+          <span>Live gainers. S/R zones. Spread meter. Float read. Broker-ready calculator.</span>
         </div>
 
         <div className="clock">
@@ -224,80 +201,48 @@ export default function Home() {
       </section>
 
       <section className="phaseBar">
-        <div>4:00 IGNITION</div>
-        <div>7:00 INJECTION</div>
-        <div>9:30 OPEN</div>
-        <div>11:00 FADE</div>
-        <div className="active">ELITE MODE</div>
+        <div>PREMARKET</div>
+        <div>REGULAR</div>
+        <div>AFTER HOURS</div>
+        <div>ALL DAY</div>
+        <div className="active">STRUCTURE MODE</div>
       </section>
 
       <section className="dash">
         <aside className="panel permission">
           <p className="tag">PERMISSION ENGINE</p>
           <h2>{topVerdict}</h2>
-
-          <div className="rule">🟢 Polygon Feed <b>{apiStatus}</b></div>
-          <div className="rule">🟢 Raw Gainers <b>{stocks.length}</b></div>
+          <div className="rule">🟢 Feed <b>{apiStatus}</b></div>
+          <div className="rule">🟢 Raw <b>{stocks.length}</b></div>
           <div className="rule">🟢 Filtered <b>{filtered.length}</b></div>
           <div className="rule">🟢 Top Score <b>{topScore}</b></div>
-          <div className="rule">🟡 IBKR Orders <b>LOCKED</b></div>
-          <div className="rule">🟡 Live Trading <b>OFF</b></div>
+          <div className="rule">🟡 Live Spread <b>EST</b></div>
+          <div className="rule">🟡 Float Size <b>EST</b></div>
 
-          <button className="refresh" onClick={loadGainers}>
-            NEW SCAN
-          </button>
-
+          <button className="refresh" onClick={loadGainers}>NEW SCAN</button>
           <div className="final">WHAT PROVES I'M RIGHT?</div>
         </aside>
 
         <section className="center">
           <div className="panel filters">
             <p className="tag">FILTER CONTROL</p>
-
             <div className="filterGrid">
-              <label>
-                Max Price
-                <input value={draftMaxPrice} onChange={(e) => setDraftMaxPrice(Number(e.target.value))} type="number" step="0.1" />
-              </label>
-
-              <label>
-                Min Price
-                <input value={draftMinPrice} onChange={(e) => setDraftMinPrice(Number(e.target.value))} type="number" step="0.01" />
-              </label>
-
-              <label>
-                Min Volume
-                <input value={draftMinVolume} onChange={(e) => setDraftMinVolume(Number(e.target.value))} type="number" step="10000" />
-              </label>
-
-              <label>
-                Min Gain %
-                <input value={draftMinGain} onChange={(e) => setDraftMinGain(Number(e.target.value))} type="number" step="1" />
-              </label>
+              <label>Max Price<input value={draftMaxPrice} onChange={(e) => setDraftMaxPrice(Number(e.target.value))} type="number" step="0.1" /></label>
+              <label>Min Price<input value={draftMinPrice} onChange={(e) => setDraftMinPrice(Number(e.target.value))} type="number" step="0.01" /></label>
+              <label>Min Volume<input value={draftMinVolume} onChange={(e) => setDraftMinVolume(Number(e.target.value))} type="number" step="10000" /></label>
+              <label>Min Gain %<input value={draftMinGain} onChange={(e) => setDraftMinGain(Number(e.target.value))} type="number" step="1" /></label>
             </div>
 
             <div className="toggles">
-              <button className={draftRemoveJunk ? "on" : ""} onClick={() => setDraftRemoveJunk(!draftRemoveJunk)}>
-                Remove Junk: {draftRemoveJunk ? "ON" : "OFF"}
-              </button>
-
-              <button onClick={applyFilters}>
-                APPLY FILTERS
-              </button>
-
-              <button onClick={resetFilters}>
-                RESET $5 SAFE
-              </button>
-
-              <button onClick={() => setShowRejected(!showRejected)}>
-                {showRejected ? "HIDE REJECTED" : "SHOW REJECTED"}
-              </button>
+              <button className={draftRemoveJunk ? "on" : ""} onClick={() => setDraftRemoveJunk(!draftRemoveJunk)}>Remove Junk: {draftRemoveJunk ? "ON" : "OFF"}</button>
+              <button onClick={applyFilters}>APPLY FILTERS</button>
+              <button onClick={resetFilters}>RESET $5 SAFE</button>
+              <button onClick={() => setShowRejected(!showRejected)}>{showRejected ? "HIDE REJECTED" : "SHOW REJECTED"}</button>
             </div>
           </div>
 
           <div className="panel radar">
-            <p className="tag">LIVE RADAR</p>
-
+            <p className="tag">STRUCTURE RADAR</p>
             <div className="circle">
               <strong>{topScore || "--"}</strong>
               <span>{top?.ticker || "WAIT"}</span>
@@ -308,8 +253,10 @@ export default function Home() {
               <div>Gain <b>{pct(top?.todaysChangePerc)}</b></div>
               <div>Volume <b>{vol(top?.day?.v)}</b></div>
               <div>Price <b>{money(top?.day?.c)}</b></div>
-              <div>Verdict <b>{topVerdict}</b></div>
-              <div>Mode <b>{maxPrice <= 5 ? "SAFE" : "CUSTOM"}</b></div>
+              <div>Support <b>{money(top ? support(top) : 0)}</b></div>
+              <div>Resistance <b>{money(top ? resistance(top) : 0)}</b></div>
+              <div>Spread Est. <b>{top ? pct(spreadEstimate(top) * 100) : "N/A"}</b></div>
+              <div>Float Read <b>{top ? floatEstimate(top) : "N/A"}</b></div>
             </div>
           </div>
         </section>
@@ -322,7 +269,7 @@ export default function Home() {
           <div className="stat"><span>Rejected</span><b>{rejected.length}</b></div>
           <div className="stat"><span>Max Price</span><b>${maxPrice}</b></div>
           <div className="stat"><span>Min Volume</span><b>{vol(minVolume)}</b></div>
-          <div className="stat"><span>Last Scan</span><b>{lastScan}</b></div>
+          <div className="stat"><span>Data Notes</span><b>Spread/Float Est.</b></div>
         </aside>
       </section>
 
@@ -343,7 +290,6 @@ export default function Home() {
 
       <section className="panel">
         <p className="tag">LIVE TOP 10</p>
-
         {loading ? (
           <h2 className="loading">Loading Polygon gainers...</h2>
         ) : (
@@ -360,12 +306,12 @@ export default function Home() {
 
                   <div className="data small">
                     <span>Current Price</span><b>{money(s.day?.c)}</b>
-                    <span>PUCK Score</span><b>{sScore}</b>
-                    <span>Day Change</span><b>{money(s.todaysChange)}</b>
+                    <span>Score</span><b>{sScore}</b>
                     <span>Volume</span><b>{vol(s.day?.v)}</b>
-                    <span>Open</span><b>{money(s.day?.o)}</b>
-                    <span>High</span><b>{money(s.day?.h)}</b>
-                    <span>Low</span><b>{money(s.day?.l)}</b>
+                    <span>Support Zone</span><b>{money(support(s))}</b>
+                    <span>Resistance Zone</span><b>{money(resistance(s))}</b>
+                    <span>Spread Est.</span><b>{pct(spreadEstimate(s) * 100)}</b>
+                    <span>Float Read</span><b>{floatEstimate(s)}</b>
                   </div>
 
                   <div className={`pill ${v.toLowerCase()}`}>{v}</div>
@@ -377,33 +323,34 @@ export default function Home() {
       </section>
 
       <section className="panel">
-        <p className="tag">TOP 10 POSITION CALCULATOR</p>
-
+        <p className="tag">TOP 10 POSITION + STRUCTURE CALCULATOR</p>
         <div className="positionCards">
           {top10.map((s) => {
             const entry = s.day?.c || 0;
-            const stop = entry * 0.93;
-            const target = entry * 1.15;
-            const risk = entry - stop;
+            const stop = support(s);
+            const target = resistance(s);
+            const risk = Math.max(0, entry - stop);
+            const reward = Math.max(0, target - entry);
+            const rr = risk > 0 ? (reward / risk).toFixed(2) : "N/A";
 
             return (
               <article className="positionCard" key={s.ticker + "pos"}>
                 <h3>{s.ticker}</h3>
-
                 <div className="data">
                   <span>Current Price</span><b>{money(entry)}</b>
                   <span>Entry Price</span><b>{money(entry)}</b>
+                  <span>Support Zone</span><b>{money(stop)}</b>
                   <span>Stop Loss</span><b>{money(stop)}</b>
                   <span>Risk Per Share</span><b>{money(risk)}</b>
+                  <span>Resistance Zone</span><b>{money(target)}</b>
                   <span>Target Exit</span><b>{money(target)}</b>
-                  <span>Risk / Reward</span><b>2.1</b>
+                  <span>Risk / Reward</span><b>{rr}</b>
+                  <span>Spread Speed Meter</span><b>{spreadEstimate(s) <= 0.007 ? "TIGHT / FAST" : "WIDE / CAREFUL"}</b>
+                  <span>Float Size Read</span><b>{floatEstimate(s)}</b>
                   <span>Order Type</span><b>LIMIT ONLY</b>
                   <span>Broker Status</span><b>IBKR LOCKED</b>
                 </div>
-
-                <button className="preview">
-                  LIMIT ORDER PREVIEW
-                </button>
+                <button className="preview">LIMIT ORDER PREVIEW</button>
               </article>
             );
           })}
@@ -412,39 +359,22 @@ export default function Home() {
 
       <section className="bottom">
         <div className="panel">
-          <p className="tag">BROKER INTEGRATION PLAN</p>
-          <div className="row"><b>Stage 1</b><span>Scanner only</span><em>DONE</em></div>
-          <div className="row"><b>Stage 2</b><span>Limit order preview</span><em>NOW</em></div>
-          <div className="row"><b>Stage 3</b><span>IBKR account connection</span><em>LATER</em></div>
-          <div className="row"><b>Stage 4</b><span>Manual confirm only</span><em>LATER</em></div>
-          <div className="row"><b>Safety</b><span>No market orders / no auto-buy</span><em>LOCKED</em></div>
-        </div>
-
-        <div className="panel">
-          <p className="tag">PRODUCT PAGES</p>
-          <div className="setting">Glossary Page: Planned</div>
-          <div className="setting">Disclaimer Page: Planned</div>
-          <div className="setting">Webhook Page: Planned</div>
-          <div className="setting">User Tokens: Future</div>
+          <p className="tag">NEXT TRUE-DATA UPGRADES</p>
+          <div className="row"><b>Spread</b><span>Needs real bid/ask feed</span><em>LATER</em></div>
+          <div className="row"><b>Float</b><span>Needs reference/fundamental source</span><em>LATER</em></div>
+          <div className="row"><b>News</b><span>Needs catalyst endpoint</span><em>LATER</em></div>
+          <div className="row"><b>IBKR</b><span>Manual confirm only</span><em>LATER</em></div>
         </div>
 
         <div className="panel disclaimer">
           <p className="tag">DISCLAIMER</p>
-          <span>
-            Educational and informational software only. Not financial advice.
-            No recommendation to buy or sell securities. User is responsible
-            for all trading decisions.
-          </span>
+          <span>Educational and informational software only. Not financial advice. No recommendation to buy or sell securities. User is responsible for all trading decisions.</span>
         </div>
       </section>
 
       <style>{`
         * { box-sizing: border-box; }
-
-        body {
-          margin: 0;
-          background: #020202;
-        }
+        body { margin: 0; background: #020202; }
 
         .page {
           min-height: 100vh;
@@ -482,33 +412,16 @@ export default function Home() {
           text-shadow: 0 0 28px rgba(255,182,18,.8);
         }
 
-        .clock,
-        .panel,
-        .phaseBar div {
+        .clock, .panel, .phaseBar div {
           border-radius: 24px;
           border: 1px solid rgba(255,182,18,.25);
           background: linear-gradient(145deg, #121212, #050505);
           box-shadow: 0 18px 45px rgba(0,0,0,.7);
         }
 
-        .clock {
-          padding: 22px;
-        }
-
-        .clock small,
-        .data span,
-        .stat span,
-        .row span,
-        .disclaimer span {
-          color: #999;
-        }
-
-        .clock strong {
-          display: block;
-          color: #ffd700;
-          font-size: 34px;
-          margin: 10px 0;
-        }
+        .clock { padding: 22px; }
+        .clock small, .data span, .stat span, .row span, .disclaimer span { color: #999; }
+        .clock strong { display: block; color: #ffd700; font-size: 34px; margin: 10px 0; }
 
         .phaseBar {
           display: grid;
@@ -517,18 +430,8 @@ export default function Home() {
           margin: 18px 0;
         }
 
-        .phaseBar div {
-          padding: 16px;
-          color: #aaa;
-          text-align: center;
-          font-weight: 900;
-        }
-
-        .phaseBar .active {
-          color: #050505;
-          background: #ffb612;
-          box-shadow: 0 0 28px rgba(255,182,18,.65);
-        }
+        .phaseBar div { padding: 16px; color: #aaa; text-align: center; font-weight: 900; }
+        .phaseBar .active { color: #050505; background: #ffb612; box-shadow: 0 0 28px rgba(255,182,18,.65); }
 
         .dash {
           display: grid;
@@ -536,26 +439,11 @@ export default function Home() {
           gap: 18px;
         }
 
-        .panel {
-          padding: 20px;
-          margin-bottom: 18px;
-        }
+        .panel { padding: 20px; margin-bottom: 18px; }
+        .permission { border-color: rgba(255,182,18,.55); background: linear-gradient(150deg, rgba(255,182,18,.18), #050505); }
+        .permission h2 { margin: 0; color: #ffd700; font-size: 86px; text-shadow: 0 0 28px rgba(255,215,0,.7); }
 
-        .permission {
-          border-color: rgba(255,182,18,.55);
-          background: linear-gradient(150deg, rgba(255,182,18,.18), #050505);
-        }
-
-        .permission h2 {
-          margin: 0;
-          color: #ffd700;
-          font-size: 86px;
-          text-shadow: 0 0 28px rgba(255,215,0,.7);
-        }
-
-        .rule,
-        .row,
-        .stat {
+        .rule, .row, .stat {
           display: flex;
           justify-content: space-between;
           gap: 10px;
@@ -563,18 +451,9 @@ export default function Home() {
           border-bottom: 1px solid rgba(255,182,18,.12);
         }
 
-        .rule b,
-        .row b,
-        .row em,
-        .stat b {
-          color: #ffb612;
-          font-style: normal;
-          font-weight: 900;
-        }
+        .rule b, .row b, .row em, .stat b { color: #ffb612; font-style: normal; font-weight: 900; }
 
-        .refresh,
-        .toggles button,
-        .preview {
+        .refresh, .toggles button, .preview {
           width: 100%;
           margin-top: 12px;
           padding: 13px;
@@ -592,21 +471,8 @@ export default function Home() {
           margin-top: 14px;
         }
 
-        .toggles .on {
-          background: #ffb612;
-          color: #050505;
-        }
-
-        .final {
-          margin-top: 18px;
-          padding: 14px;
-          border-radius: 14px;
-          text-align: center;
-          background: rgba(255,182,18,.14);
-          color: #ffd700;
-          border: 1px solid rgba(255,182,18,.35);
-          font-weight: 900;
-        }
+        .toggles .on { background: #ffb612; color: #050505; }
+        .final { margin-top: 18px; padding: 14px; border-radius: 14px; text-align: center; background: rgba(255,182,18,.14); color: #ffd700; border: 1px solid rgba(255,182,18,.35); font-weight: 900; }
 
         .filterGrid {
           display: grid;
@@ -614,21 +480,8 @@ export default function Home() {
           gap: 12px;
         }
 
-        label {
-          color: #aaa;
-          font-size: 13px;
-        }
-
-        input {
-          width: 100%;
-          margin-top: 8px;
-          padding: 12px;
-          border-radius: 12px;
-          border: 1px solid rgba(255,182,18,.3);
-          background: #050505;
-          color: #ffd700;
-          font-weight: 900;
-        }
+        label { color: #aaa; font-size: 13px; }
+        input { width: 100%; margin-top: 8px; padding: 12px; border-radius: 12px; border: 1px solid rgba(255,182,18,.3); background: #050505; color: #ffd700; font-weight: 900; }
 
         .radar {
           display: grid;
@@ -648,17 +501,8 @@ export default function Home() {
           box-shadow: 0 0 45px rgba(255,182,18,.3);
         }
 
-        .circle strong {
-          display: block;
-          color: #ffd700;
-          font-size: 68px;
-          text-align: center;
-        }
-
-        .circle span {
-          color: #ffb612;
-          font-weight: 900;
-        }
+        .circle strong { display: block; color: #ffd700; font-size: 68px; text-align: center; }
+        .circle span { color: #ffb612; font-weight: 900; }
 
         .radarStats {
           display: grid;
@@ -673,42 +517,24 @@ export default function Home() {
           border: 1px solid rgba(255,182,18,.18);
         }
 
-        .radarStats b {
-          float: right;
-          color: #ffd700;
-        }
+        .radarStats b { float: right; color: #ffd700; }
 
-        .cards,
-        .positionCards {
+        .cards, .positionCards {
           display: grid;
           grid-template-columns: repeat(5, 1fr);
           gap: 14px;
         }
 
-        .card,
-        .positionCard {
+        .card, .positionCard {
           padding: 18px;
           border-radius: 22px;
           border: 1px solid rgba(255,182,18,.24);
           background: #070707;
         }
 
-        .cardTop {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-        }
-
-        .card h3,
-        .positionCard h3 {
-          margin: 0;
-          color: #ffb612;
-          font-size: 28px;
-        }
-
-        .cardTop strong {
-          color: #00ff88;
-        }
+        .cardTop { display: flex; justify-content: space-between; align-items: center; }
+        .card h3, .positionCard h3 { margin: 0; color: #ffb612; font-size: 28px; }
+        .cardTop strong { color: #00ff88; }
 
         .data {
           display: grid;
@@ -717,13 +543,8 @@ export default function Home() {
           margin-top: 14px;
         }
 
-        .data b {
-          color: #f5f5f5;
-        }
-
-        .small {
-          font-size: 13px;
-        }
+        .data b { color: #f5f5f5; }
+        .small { font-size: 13px; }
 
         .pill {
           margin-top: 14px;
@@ -733,22 +554,9 @@ export default function Home() {
           font-weight: 900;
         }
 
-        .yes {
-          background: #ffb612;
-          color: #050505;
-        }
-
-        .wait {
-          background: rgba(255,182,18,.18);
-          color: #ffd700;
-          border: 1px solid rgba(255,182,18,.38);
-        }
-
-        .no {
-          background: rgba(255,77,77,.16);
-          color: #ff4d4d;
-          border: 1px solid rgba(255,77,77,.35);
-        }
+        .yes { background: #ffb612; color: #050505; }
+        .wait { background: rgba(255,182,18,.18); color: #ffd700; border: 1px solid rgba(255,182,18,.38); }
+        .no { background: rgba(255,77,77,.16); color: #ff4d4d; border: 1px solid rgba(255,77,77,.35); }
 
         .rejectGrid {
           display: grid;
@@ -756,59 +564,21 @@ export default function Home() {
           gap: 12px;
         }
 
-        .reject {
-          padding: 14px;
-          border-radius: 14px;
-          background: rgba(255,77,77,.1);
-          border: 1px solid rgba(255,77,77,.3);
-        }
-
-        .reject b {
-          color: #ff4d4d;
-          display: block;
-        }
-
-        .reject span {
-          color: #ffd700;
-          display: block;
-          margin: 6px 0;
-        }
-
-        .reject em {
-          color: #aaa;
-          font-style: normal;
-        }
+        .reject { padding: 14px; border-radius: 14px; background: rgba(255,77,77,.1); border: 1px solid rgba(255,77,77,.3); }
+        .reject b { color: #ff4d4d; display: block; }
+        .reject span { color: #ffd700; display: block; margin: 6px 0; }
+        .reject em { color: #aaa; font-style: normal; }
 
         .bottom {
           display: grid;
-          grid-template-columns: 1fr 1fr 1fr;
+          grid-template-columns: 1fr 1fr;
           gap: 18px;
         }
 
-        .setting {
-          margin-top: 10px;
-          padding: 12px;
-          border-radius: 12px;
-          background: #070707;
-          color: #bbb;
-          border: 1px dashed rgba(255,182,18,.25);
-        }
-
-        .loading {
-          color: #ffd700;
-        }
+        .loading { color: #ffd700; }
 
         @media (max-width: 1100px) {
-          .hero,
-          .phaseBar,
-          .dash,
-          .radar,
-          .cards,
-          .positionCards,
-          .bottom,
-          .filterGrid,
-          .toggles,
-          .rejectGrid {
+          .hero, .phaseBar, .dash, .radar, .cards, .positionCards, .bottom, .filterGrid, .toggles, .rejectGrid {
             grid-template-columns: 1fr;
           }
         }
