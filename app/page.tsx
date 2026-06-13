@@ -1,8 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Sidebar from "./components/Sidebar";
-type RawStock = any;
 
 type Stock = {
   ticker: string;
@@ -13,35 +11,34 @@ type Stock = {
   open: number;
   high: number;
   low: number;
-  prevClose: number;
+  support: number;
+  resistance: number;
+  entryAggressive: number;
+  entryConfirmation: number;
+  entryProof: number;
+  stop: number;
+  target1: number;
+  target2: number;
+  target3: number;
+  risk: number;
+  reward: number;
+  rr: number;
+  speed: number;
+  volumeSurge: number;
+  spreadStatus: string;
+  catalyst: string;
+  proofScore: number;
+  ignitionScore: number;
+  verdict: string;
+  rejection: string;
 };
 
-type Mode = "GAINERS" | "VOLUME" | "PRESSURE" | "REVERSAL" | "SHORT" | "CUSTOM";
+type Page = "dashboard" | "scanner" | "structure" | "news" | "help" | "glossary" | "settings";
+type Mode = "BOTTOM" | "RANK" | "VOLUME" | "VWAP" | "TOP" | "CUSTOM";
 
-function n(v: any) {
-  const x = Number(v);
-  return Number.isFinite(x) ? x : 0;
-}
-
-function normalize(s: RawStock): Stock {
-  const prevClose = n(s?.prevClose ?? s?.prevDay?.c);
-  const change = n(s?.change ?? s?.todaysChange);
-  const price = n(s?.price ?? s?.day?.c ?? s?.min?.c ?? (prevClose + change));
-  const open = n(s?.open ?? s?.day?.o ?? s?.min?.o ?? price);
-  const high = n(s?.high ?? s?.day?.h ?? s?.min?.h ?? price);
-  const low = n(s?.low ?? s?.day?.l ?? s?.min?.l ?? price);
-
-  return {
-    ticker: String(s?.ticker || ""),
-    price,
-    gain: n(s?.gain ?? s?.todaysChangePerc),
-    change,
-    volume: n(s?.volume ?? s?.day?.v ?? s?.min?.v),
-    open,
-    high,
-    low,
-    prevClose
-  };
+function num(v: any) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
 }
 
 function money(v: number) {
@@ -60,59 +57,80 @@ function vol(v: number) {
   return String(Math.round(v));
 }
 
-function junk(t: string) {
+function isJunk(t: string) {
   const x = t.toUpperCase();
   return x.endsWith("W") || x.endsWith("WS") || x.endsWith("U") || x.endsWith("R");
 }
 
-function speed(s: Stock) {
-  if (s.gain >= 100 && s.volume >= 10000000) return "VIOLENT";
-  if (s.gain >= 50 && s.volume >= 3000000) return "FAST";
-  if (s.gain >= 20 && s.volume >= 500000) return "ACTIVE";
-  return "SLOW";
-}
+function normalize(s: any): Stock {
+  const ticker = String(s?.ticker || "");
+  const price = num(s?.price ?? s?.day?.c ?? s?.min?.c ?? ((s?.prevDay?.c ?? 0) + (s?.todaysChange ?? 0)));
+  const gain = num(s?.gain ?? s?.todaysChangePerc);
+  const change = num(s?.change ?? s?.todaysChange);
+  const volume = num(s?.volume ?? s?.day?.v ?? s?.min?.v);
+  const open = num(s?.open ?? s?.day?.o ?? s?.min?.o ?? price);
+  const low = num(s?.support ?? s?.day?.l ?? s?.low ?? price * 0.94);
+  const high = num(s?.resistance ?? s?.day?.h ?? s?.high ?? price * 1.12);
 
-function spread(s: Stock) {
-  if (s.price < 1 && s.volume < 1000000) return "RISK";
-  if (s.volume > 5000000) return "LIKELY TIGHT";
-  return "UNKNOWN";
-}
+  const support = low;
+  const resistance = high;
 
-function trap(s: Stock) {
-  let r = 0;
-  if (junk(s.ticker)) r += 35;
-  if (s.gain > 150) r += 30;
-  if (s.volume < 250000) r += 20;
-  if (s.high && s.price < s.high * 0.75) r += 15;
-  return Math.min(100, r);
-}
+  const entryAggressive = resistance * 0.985;
+  const entryConfirmation = resistance * 1.01;
+  const entryProof = resistance * 1.045;
 
-function score(s: Stock) {
-  let x = 0;
-  x += Math.min(35, Math.max(0, s.gain * 0.9));
-  x += Math.min(30, s.volume / 350000);
-  x += s.price > 0 && s.price <= 5 ? 15 : s.price <= 10 ? 10 : 4;
-  x += s.price > s.low ? 8 : 0;
-  x += s.high > s.price ? 7 : 0;
-  x += junk(s.ticker) ? -35 : 10;
-  x -= trap(s) * 0.2;
-  return Math.max(0, Math.min(100, Math.round(x)));
-}
+  const stop = support;
+  const target1 = resistance * 1.08;
+  const target2 = resistance * 1.18;
+  const target3 = resistance * 1.35;
 
-function verdict(s: Stock) {
-  const sc = score(s);
-  if (sc >= 80) return "PROOF";
-  if (sc >= 60) return "WAIT";
-  return "NO";
+  const risk = Math.max(0, entryProof - stop);
+  const reward = Math.max(0, target1 - entryProof);
+  const rr = risk > 0 ? reward / risk : 0;
+
+  const volumeSurge = num(s?.volumeSurge ?? s?.structure?.volumeSurge ?? volume / 1000000);
+  const speed = Math.min(100, Math.round(gain * 0.45 + volumeSurge * 18));
+
+  let ignitionScore = 0;
+  ignitionScore += Math.min(30, gain * 0.7);
+  ignitionScore += Math.min(25, volume / 500000);
+  ignitionScore += Math.min(25, volumeSurge * 8);
+  ignitionScore += price > 0 && price <= 5 ? 15 : price <= 10 ? 10 : 5;
+  if (isJunk(ticker)) ignitionScore -= 30;
+  ignitionScore = Math.max(0, Math.min(100, Math.round(ignitionScore)));
+
+  const spreadStatus = volume >= 5000000 ? "PASS" : volume >= 1000000 ? "CAUTION" : "FAIL";
+  const catalyst = "CHECK NEWS";
+
+  let proofScore = ignitionScore;
+  if (price > resistance) proofScore += 8;
+  if (rr >= 2) proofScore += 8;
+  if (spreadStatus === "FAIL") proofScore -= 15;
+  proofScore = Math.max(0, Math.min(100, Math.round(proofScore)));
+
+  const verdict = proofScore >= 80 ? "YES" : proofScore >= 60 ? "WAIT" : "NO";
+
+  let rejection = "";
+  if (isJunk(ticker)) rejection = "JUNK SYMBOL";
+  else if (volume < 100000) rejection = "LOW VOLUME";
+  else if (spreadStatus === "FAIL") rejection = "SPREAD RISK";
+  else if (proofScore < 60) rejection = "NO PROOF";
+
+  return {
+    ticker, price, gain, change, volume, open, high, low,
+    support, resistance, entryAggressive, entryConfirmation, entryProof,
+    stop, target1, target2, target3, risk, reward, rr, speed,
+    volumeSurge, spreadStatus, catalyst, proofScore, ignitionScore, verdict, rejection
+  };
 }
 
 export default function Home() {
+  const [page, setPage] = useState<Page>("dashboard");
+  const [mode, setMode] = useState<Mode>("BOTTOM");
   const [stocks, setStocks] = useState<Stock[]>([]);
   const [status, setStatus] = useState("LOADING");
   const [time, setTime] = useState("");
   const [lastScan, setLastScan] = useState("NONE");
-
-  const [mode, setMode] = useState<Mode>("GAINERS");
   const [autoScan, setAutoScan] = useState(true);
   const [refreshSec, setRefreshSec] = useState(15);
   const [showRejected, setShowRejected] = useState(false);
@@ -121,13 +139,16 @@ export default function Home() {
   const [maxPrice, setMaxPrice] = useState(10);
   const [minGain, setMinGain] = useState(0);
   const [minVolume, setMinVolume] = useState(100000);
-  const [limit, setLimit] = useState(25);
   const [removeJunk, setRemoveJunk] = useState(true);
+
+  const [manualTicker, setManualTicker] = useState("");
+  const [manualSupport, setManualSupport] = useState(28);
+  const [manualResistance, setManualResistance] = useState(34);
 
   async function load() {
     setStatus("SCANNING");
     try {
-      const res = await fetch("/api/scan", { cache: "no-store" });
+      const res = await fetch("/api/gainers", { cache: "no-store" });
       const json = await res.json();
       const list = json?.data?.tickers || json?.tickers || json?.results || [];
       setStocks(list.map(normalize));
@@ -140,10 +161,10 @@ export default function Home() {
 
   useEffect(() => {
     load();
-    const clock = setInterval(() => {
+    const id = setInterval(() => {
       setTime(new Date().toLocaleTimeString("en-US", { timeZone: "America/New_York" }));
     }, 1000);
-    return () => clearInterval(clock);
+    return () => clearInterval(id);
   }, []);
 
   useEffect(() => {
@@ -152,278 +173,186 @@ export default function Home() {
     return () => clearInterval(id);
   }, [autoScan, refreshSec]);
 
-  const rejected = useMemo(() => {
-    return stocks
-      .map((s) => {
-        let reason = "";
-        if (removeJunk && junk(s.ticker)) reason = "JUNK SYMBOL";
-        else if (s.price < minPrice) reason = "PRICE LOW";
-        else if (s.price > maxPrice) reason = "PRICE HIGH";
-        else if (s.gain < minGain) reason = "GAIN LOW";
-        else if (s.volume < minVolume) reason = "VOLUME LOW";
-        return { s, reason };
-      })
-      .filter((x) => x.reason);
-  }, [stocks, minPrice, maxPrice, minGain, minVolume, removeJunk]);
-
   const filtered = useMemo(() => {
-    let list = stocks.filter((s) => !rejected.find((r) => r.s.ticker === s.ticker));
+    let list = stocks.filter((s) => {
+      if (removeJunk && isJunk(s.ticker)) return false;
+      if (s.price < minPrice || s.price > maxPrice) return false;
+      if (s.gain < minGain) return false;
+      if (s.volume < minVolume) return false;
+      return true;
+    });
 
-    if (mode === "GAINERS") list.sort((a, b) => b.gain - a.gain);
-    if (mode === "VOLUME") list.sort((a, b) => b.volume - a.volume);
-    if (mode === "PRESSURE") list.sort((a, b) => score(b) - score(a));
-    if (mode === "REVERSAL") list.sort((a, b) => b.price - b.low - (a.price - a.low));
-    if (mode === "SHORT") list.sort((a, b) => trap(b) - trap(a));
-    if (mode === "CUSTOM") list.sort((a, b) => score(b) - score(a));
+    if (mode === "BOTTOM") list = list.sort((a, b) => b.ignitionScore - a.ignitionScore);
+    if (mode === "RANK") list = list.sort((a, b) => b.speed - a.speed);
+    if (mode === "VOLUME") list = list.sort((a, b) => b.volumeSurge - a.volumeSurge);
+    if (mode === "VWAP") list = list.sort((a, b) => b.proofScore - a.proofScore);
+    if (mode === "TOP") list = list.sort((a, b) => b.gain - a.gain);
+    if (mode === "CUSTOM") list = list.sort((a, b) => b.proofScore - a.proofScore);
 
-    return list.slice(0, limit);
-  }, [stocks, rejected, mode, limit]);
+    return list.slice(0, 30);
+  }, [stocks, minPrice, maxPrice, minGain, minVolume, removeJunk, mode]);
 
+  const rejected = stocks.filter((s) => s.rejection);
   const top = filtered[0];
 
-  function safePreset() {
-    setMinPrice(0.1);
-    setMaxPrice(5);
-    setMinGain(20);
-    setMinVolume(500000);
-    setRemoveJunk(true);
-    setLimit(10);
-  }
-
-  function openPreset() {
-    setMinPrice(0);
-    setMaxPrice(50);
-    setMinGain(0);
-    setMinVolume(0);
-    setRemoveJunk(false);
-    setLimit(50);
-  }
-
-  function fourAmPreset() {
-    setMinPrice(0.1);
-    setMaxPrice(10);
-    setMinGain(5);
-    setMinVolume(100000);
-    setRemoveJunk(true);
-    setLimit(30);
-  }
+  const manualAggressive = manualResistance * 0.985;
+  const manualConfirmation = manualResistance * 1.01;
+  const manualProof = manualResistance * 1.045;
+  const manualStop = manualSupport;
+  const manualTarget1 = manualResistance * 1.08;
+  const manualRisk = manualProof - manualStop;
+  const manualReward = manualTarget1 - manualProof;
+  const manualRR = manualRisk > 0 ? manualReward / manualRisk : 0;
 
   return (
-    <main className="appShell">
-  <Sidebar />
-  <section className="page">
-      <section className="hero">
-        <div>
-          <p className="tag">PROOF OF STRUCTURE™ ELITE</p>
-          <h1>MISSION CONTROL</h1>
-          <span>Speed. Volume. Spread. Support. Proof.</span>
-        </div>
-        <div className="clock">
-          <small>ET CLOCK</small>
-          <strong>{time || "LOADING"}</strong>
-          <small>Last scan: {lastScan}</small>
-        </div>
-      </section>
-
-      <section className="modes">
-        {["GAINERS", "VOLUME", "PRESSURE", "REVERSAL", "SHORT", "CUSTOM"].map((m) => (
-          <button key={m} onClick={() => setMode(m as Mode)} className={mode === m ? "active" : ""}>{m}</button>
+    <main className="app">
+      <aside className="sidebar">
+        <h2>PROOF<br />STRUCTURE</h2>
+        {["dashboard", "scanner", "structure", "news", "help", "glossary", "settings"].map((p) => (
+          <button key={p} onClick={() => setPage(p as Page)} className={page === p ? "active" : ""}>
+            {p.toUpperCase()}
+          </button>
         ))}
-      </section>
+      </aside>
 
-      <section className="grid">
-        <aside className="panel permission">
-          <p className="tag">COMMAND CENTER</p>
-          <h2>{top ? verdict(top) : "WAIT"}</h2>
-          <div><span>Status</span><b>{status}</b></div>
-          <div><span>Raw</span><b>{stocks.length}</b></div>
-          <div><span>Showing</span><b>{filtered.length}</b></div>
-          <div><span>Rejected</span><b>{rejected.length}</b></div>
-          <div><span>Top</span><b>{top?.ticker || "NONE"}</b></div>
-          <div><span>Score</span><b>{top ? score(top) : 0}</b></div>
-          <button onClick={load}>RUN SCAN</button>
-          <button onClick={() => setAutoScan(!autoScan)}>AUTO SCAN: {autoScan ? "ON" : "OFF"}</button>
-          <div className="final">WHAT PROVES I'M RIGHT?</div>
-        </aside>
-
-        <section className="panel">
-          <p className="tag">PRECISION FILTERS</p>
-          <div className="filters">
-            <label>Min Price<input type="number" value={minPrice} onChange={(e) => setMinPrice(Number(e.target.value))} /></label>
-            <label>Max Price<input type="number" value={maxPrice} onChange={(e) => setMaxPrice(Number(e.target.value))} /></label>
-            <label>Min Gain %<input type="number" value={minGain} onChange={(e) => setMinGain(Number(e.target.value))} /></label>
-            <label>Min Volume<input type="number" value={minVolume} onChange={(e) => setMinVolume(Number(e.target.value))} /></label>
-            <label>Limit<input type="number" value={limit} onChange={(e) => setLimit(Number(e.target.value))} /></label>
-            <label>Refresh Sec<input type="number" value={refreshSec} onChange={(e) => setRefreshSec(Number(e.target.value))} /></label>
+      <section className="main">
+        <header className="hero">
+          <div>
+            <p>PROOF OF STRUCTURE™ ELITE</p>
+            <h1>MISSION CONTROL</h1>
+            <span>Bottom ignition. Rank climbers. Real entries after proof.</span>
           </div>
-          <div className="actions">
-            <button onClick={() => setRemoveJunk(!removeJunk)}>JUNK FILTER: {removeJunk ? "ON" : "OFF"}</button>
-            <button onClick={safePreset}>SAFE PRESET</button>
-            <button onClick={openPreset}>OPEN FILTERS</button>
-            <button onClick={fourAmPreset}>4AM PRESET</button>
+          <div className="clock">
+            <small>ET CLOCK</small>
+            <strong>{time || "LOADING"}</strong>
+            <small>Last Scan: {lastScan}</small>
+          </div>
+        </header>
+
+        {page === "dashboard" && (
+          <>
+            <section className="modebar">
+              {[
+                ["BOTTOM", "BOTTOM IGNITION"],
+                ["RANK", "RANK CLIMBERS"],
+                ["VOLUME", "VOLUME AWAKENING"],
+                ["VWAP", "VWAP BREAKOUT"],
+                ["TOP", "TOP GAINERS"],
+                ["CUSTOM", "CUSTOM"]
+              ].map(([k, v]) => (
+                <button key={k} onClick={() => setMode(k as Mode)} className={mode === k ? "active" : ""}>{v}</button>
+              ))}
+            </section>
+
+            <section className="grid3">
+              <Panel title="COMMAND CENTER">
+                <h3 className={top?.verdict === "YES" ? "big green" : top?.verdict === "NO" ? "big red" : "big yellow"}>
+                  {top?.verdict || "WAIT"}
+                </h3>
+                <Row a="Status" b={status} />
+                <Row a="Raw" b={stocks.length} />
+                <Row a="Showing" b={filtered.length} />
+                <Row a="Rejected" b={rejected.length} />
+                <Row a="Top" b={top?.ticker || "NONE"} />
+                <Row a="Proof" b={top?.proofScore || 0} />
+                <button onClick={load}>RUN SCAN</button>
+                <button onClick={() => setAutoScan(!autoScan)}>AUTO: {autoScan ? "ON" : "OFF"}</button>
+              </Panel>
+
+              <Panel title="PRECISION FILTERS">
+                <div className="filters">
+                  <label>Min Price<input value={minPrice} onChange={(e) => setMinPrice(Number(e.target.value))} type="number" /></label>
+                  <label>Max Price<input value={maxPrice} onChange={(e) => setMaxPrice(Number(e.target.value))} type="number" /></label>
+                  <label>Min Gain<input value={minGain} onChange={(e) => setMinGain(Number(e.target.value))} type="number" /></label>
+                  <label>Min Volume<input value={minVolume} onChange={(e) => setMinVolume(Number(e.target.value))} type="number" /></label>
+                  <label>Refresh<input value={refreshSec} onChange={(e) => setRefreshSec(Number(e.target.value))} type="number" /></label>
+                  <button onClick={() => setRemoveJunk(!removeJunk)}>JUNK: {removeJunk ? "ON" : "OFF"}</button>
+                </div>
+              </Panel>
+
+              <Panel title="TOP STRUCTURE">
+                <Row a="Ticker" b={top?.ticker || "NONE"} />
+                <Row a="Support" b={top ? money(top.support) : "N/A"} />
+                <Row a="Resistance" b={top ? money(top.resistance) : "N/A"} />
+                <Row a="Aggressive" b={top ? money(top.entryAggressive) : "N/A"} />
+                <Row a="Confirmation" b={top ? money(top.entryConfirmation) : "N/A"} />
+                <Row a="Proof Entry" b={top ? money(top.entryProof) : "N/A"} />
+                <Row a="Stop" b={top ? money(top.stop) : "N/A"} />
+                <Row a="Target 1" b={top ? money(top.target1) : "N/A"} />
+              </Panel>
+            </section>
+          </>
+        )}
+
+        {page === "scanner" && (
+          <Panel title="LIVE RESULTS GRID">
+            <div className="table">
+              {["Ticker","Price","Gain","Vol","Speed","Spread","Support","Resist","Agg","Conf","Proof","Score","Verdict"].map(h => <b key={h}>{h}</b>)}
+              {filtered.map((s) => (
+                <>
+                  <span>{s.ticker}</span><span>{money(s.price)}</span><span className="green">{pct(s.gain)}</span><span>{vol(s.volume)}</span><span>{s.speed}</span><span className={s.spreadStatus === "PASS" ? "green" : s.spreadStatus === "FAIL" ? "red" : "yellow"}>{s.spreadStatus}</span><span>{money(s.support)}</span><span>{money(s.resistance)}</span><span>{money(s.entryAggressive)}</span><span>{money(s.entryConfirmation)}</span><span>{money(s.entryProof)}</span><span>{s.proofScore}</span><span className={s.verdict === "YES" ? "green" : s.verdict === "NO" ? "red" : "yellow"}>{s.verdict}</span>
+                </>
+              ))}
+            </div>
             <button onClick={() => setShowRejected(!showRejected)}>{showRejected ? "HIDE REJECTED" : "SHOW REJECTED"}</button>
-          </div>
+            {showRejected && rejected.map((s) => <Row key={s.ticker} a={s.ticker} b={s.rejection} />)}
+          </Panel>
+        )}
 
-          <div className="radar">
-            <div className="circle">
-              <strong>{top ? score(top) : "--"}</strong>
-              <span>{top?.ticker || "WAIT"}</span>
+        {page === "structure" && (
+          <Panel title="MANUAL STRUCTURE ENGINE">
+            <div className="filters">
+              <label>Ticker<input value={manualTicker} onChange={(e) => setManualTicker(e.target.value.toUpperCase())} /></label>
+              <label>Support<input value={manualSupport} onChange={(e) => setManualSupport(Number(e.target.value))} type="number" /></label>
+              <label>Resistance<input value={manualResistance} onChange={(e) => setManualResistance(Number(e.target.value))} type="number" /></label>
             </div>
-            <div className="statgrid">
-              <div>Price <b>{top ? money(top.price) : "N/A"}</b></div>
-              <div>Gain <b>{top ? pct(top.gain) : "N/A"}</b></div>
-              <div>Volume <b>{top ? vol(top.volume) : "N/A"}</b></div>
-              <div>Speed <b>{top ? speed(top) : "N/A"}</b></div>
-              <div>Spread <b>{top ? spread(top) : "N/A"}</b></div>
-              <div>Trap Risk <b>{top ? trap(top) : "N/A"}</b></div>
-            </div>
-          </div>
-        </section>
+            <Row a="Aggressive Entry" b={money(manualAggressive)} />
+            <Row a="Confirmation Entry" b={money(manualConfirmation)} />
+            <Row a="Proof Entry" b={money(manualProof)} />
+            <Row a="Stop" b={money(manualStop)} />
+            <Row a="Target 1" b={money(manualTarget1)} />
+            <Row a="Risk/Reward" b={manualRR.toFixed(2)} />
+          </Panel>
+        )}
 
-        <aside className="panel">
-          <p className="tag">DATA QUALITY</p>
-          <div><span>Feed</span><b>{status}</b></div>
-          <div><span>Mode</span><b>{mode}</b></div>
-          <div><span>Auto</span><b>{autoScan ? `${refreshSec}s` : "OFF"}</b></div>
-          <div><span>Spread</span><b>ESTIMATED</b></div>
-          <div><span>Float</span><b>LOCKED</b></div>
-          <div><span>Broker</span><b>PREVIEW ONLY</b></div>
-        </aside>
-      </section>
+        {page === "news" && <Info title="NEWS ENGINE" items={["FDA","Earnings","8-K","Press Release","Offering","Reverse Split","Merger","Government Contract","Analyst Upgrade"]} />}
+        {page === "help" && <Info title="HELP CENTER" items={["How Scanner Works","How Aggressive Entry Works","How Confirmation Entry Works","How Proof Entry Works","How Support Works","How Resistance Works","How Risk Works"]} />}
+        {page === "glossary" && <Info title="GLOSSARY" items={["VWAP","EMA","RVOL","Float","Spread","Support","Resistance","Catalyst","Webhook","Limit Order","Risk/Reward","Tape","Absorption"]} />}
+        {page === "settings" && <Info title="SETTINGS" items={["Theme: Medium Gray + Blue Neon","Premarket 4AM","Regular Market","After Hours Later","Broker Preview Only","IBKR Later","No Auto Buy Default"]} />}
 
-      {showRejected && (
-        <section className="panel">
-          <p className="tag">REJECTION ENGINE</p>
-          <div className="cards">
-            {rejected.slice(0, 30).map(({ s, reason }) => (
-              <article className="card reject" key={s.ticker}>
-                <h3>{s.ticker}</h3>
-                <div><span>Reason</span><b>{reason}</b></div>
-                <div><span>Price</span><b>{money(s.price)}</b></div>
-                <div><span>Gain</span><b>{pct(s.gain)}</b></div>
-                <div><span>Volume</span><b>{vol(s.volume)}</b></div>
-              </article>
-            ))}
-          </div>
-        </section>
-      )}
-
-      <section className="panel">
-        <p className="tag">LIVE RESULTS GRID</p>
-        <div className="table">
-          <div className="head">Ticker</div><div className="head">Price</div><div className="head">Gain</div><div className="head">Vol</div><div className="head">Speed</div><div className="head">Spread</div><div className="head">Support</div><div className="head">Resist</div><div className="head">Score</div><div className="head">Proof</div>
-          {filtered.map((s) => (
-            <>
-              <div>{s.ticker}</div><div>{money(s.price)}</div><div className="green">{pct(s.gain)}</div><div>{vol(s.volume)}</div><div>{speed(s)}</div><div>{spread(s)}</div><div>{money(s.low)}</div><div>{money(s.high)}</div><div>{score(s)}</div><div>{verdict(s)}</div>
-            </>
-          ))}
-        </div>
-      </section>
-
-      <section className="panel">
-        <p className="tag">POSITION + BROKER PREVIEW</p>
-        <div className="cards">
-          {filtered.slice(0, 10).map((s) => {
-            const entry = s.price;
-            const stop = s.low;
-            const target = s.high;
-            const risk = Math.max(0, entry - stop);
-            const reward = Math.max(0, target - entry);
-            const rr = risk ? (reward / risk).toFixed(2) : "N/A";
-            return (
-              <article className="card" key={s.ticker + "calc"}>
-                <h3>{s.ticker}</h3>
-                <div><span>Current</span><b>{money(entry)}</b></div>
-                <div><span>Entry</span><b>{money(entry)}</b></div>
-                <div><span>Stop</span><b>{money(stop)}</b></div>
-                <div><span>Risk/Share</span><b>{money(risk)}</b></div>
-                <div><span>Target</span><b>{money(target)}</b></div>
-                <div><span>R:R</span><b>{rr}</b></div>
-                <div><span>Order</span><b>LIMIT ONLY</b></div>
-                <button>PREVIEW ONLY</button>
-              </article>
-            );
-          })}
-        </div>
-      </section>
-
-      <section className="bottom">
-        <div className="panel">
-          <p className="tag">LOCKED PRO FEATURES</p>
-          <div><span>Real Bid/Ask Spread</span><b>NEXT</b></div>
-          <div><span>Real Float Feed</span><b>NEXT</b></div>
-          <div><span>IBKR Connect</span><b>LOCKED</b></div>
-          <div><span>Webhooks</span><b>LOCKED</b></div>
-        </div>
-        <div className="panel disclaimer">
-          <p className="tag">DISCLAIMER</p>
-          <span>Educational and informational software only. Not financial advice. No recommendation to buy or sell securities.</span>
-        </div>
+        <footer>
+          This software is educational only. Not financial advice. All trading decisions are the user's responsibility.
+        </footer>
       </section>
 
       <style>{`
-        *{box-sizing:border-box} body{margin:0;background:#020202}
-        .appShell{
-display:grid;
-grid-template-columns:260px 1fr;
-min-height:100vh;
-background:#020202;
-}
-
-.sidebar{
-position:sticky;
-top:0;
-height:100vh;
-padding:22px;
-border-right:1px solid rgba(255,182,18,.25);
-background:linear-gradient(180deg,#101010,#050505);
-}
-
-.brand{
-display:grid;
-gap:6px;
-margin-bottom:24px;
-}
-
-.brand strong{
-color:#ffb612;
-letter-spacing:2px;
-font-size:14px;
-}
-
-.brand span{
-color:#999;
-font-size:12px;
-}
-
-.sidebar nav{
-display:grid;
-gap:10px;
-}
-
-.sidebar button{
-text-align:left;
-}
-        .page{min-height:100vh;padding:22px;color:#f5f5f5;font-family:Arial,sans-serif;background:radial-gradient(circle at top left,rgba(255,182,18,.24),transparent 30%),linear-gradient(135deg,#020202,#090909)}
-        .hero,.panel,.card,.clock,.modes button{border-radius:24px;border:1px solid rgba(255,182,18,.25);background:linear-gradient(145deg,#121212,#050505);box-shadow:0 18px 45px rgba(0,0,0,.7)}
-        .hero{display:grid;grid-template-columns:1fr 300px;gap:18px;padding:28px}
-        .tag{color:#ffb612;letter-spacing:4px;font-size:12px;font-weight:900}
-        h1{font-size:clamp(44px,7vw,82px);margin:8px 0;color:#ffb612;text-shadow:0 0 28px rgba(255,182,18,.8)}
-        .clock,.panel,.card{padding:18px}.clock strong,b{color:#ffd700}.clock small,span{color:#999}
-        .modes{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin:18px 0}.active,button:hover{background:#ffb612!important;color:#050505!important}
-        button{width:100%;padding:13px;margin-top:10px;border-radius:14px;border:1px solid rgba(255,182,18,.45);background:rgba(255,182,18,.12);color:#ffd700;font-weight:900}
-        .grid{display:grid;grid-template-columns:320px 1fr 300px;gap:18px}.permission h2{font-size:70px;color:#ffd700;margin:0}
-        .panel div,.card div{display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,182,18,.12)}
-        .filters,.actions,.statgrid{display:grid!important;grid-template-columns:repeat(3,1fr);gap:12px;border:0!important}.actions{grid-template-columns:repeat(5,1fr)}
-        label{color:#aaa;font-size:13px} input{width:100%;padding:12px;margin-top:8px;border-radius:12px;border:1px solid rgba(255,182,18,.3);background:#050505;color:#ffd700;font-weight:900}
-        .radar{display:grid!important;grid-template-columns:220px 1fr;gap:20px;align-items:center;border:0!important}.circle{height:220px;border-radius:50%;display:grid!important;place-items:center;border:2px solid rgba(255,182,18,.65);background:radial-gradient(circle,rgba(255,182,18,.26),transparent 60%),#050505}
-        .circle strong{font-size:64px}.cards{display:grid;grid-template-columns:repeat(5,1fr);gap:14px}.card h3{color:#ffb612;font-size:28px;margin:0 0 12px}
-        .table{display:grid;grid-template-columns:repeat(10,1fr);gap:0;border:1px solid rgba(255,182,18,.2);border-radius:16px;overflow:hidden}.table div{padding:10px;border-bottom:1px solid rgba(255,182,18,.12)}.head{background:rgba(255,182,18,.15);color:#ffd700;font-weight:900}.green{color:#00ff88}
-        .final{margin-top:18px;padding:14px;border-radius:14px;text-align:center;background:rgba(255,182,18,.14);color:#ffd700;font-weight:900}
-        .bottom{display:grid;grid-template-columns:1fr 1fr;gap:18px}.reject{border-color:rgba(255,77,77,.35)}
-        @media(max-width:1100px){.hero,.grid,.modes,.filters,.actions,.radar,.cards,.bottom,.table,.statgrid{grid-template-columns:1fr!important}}
-     `}</style>
-    </section>
-        </main>
+        *{box-sizing:border-box}body{margin:0;background:#1d2229;color:#e8f3ff;font-family:Arial,sans-serif}
+        .app{display:grid;grid-template-columns:230px 1fr;min-height:100vh}
+        .sidebar{background:#151a20;border-right:1px solid #31475e;padding:20px;position:sticky;top:0;height:100vh}
+        .sidebar h2{color:#4db7ff;letter-spacing:3px}.sidebar button,.modebar button,button{width:100%;padding:12px;margin:7px 0;border-radius:12px;border:1px solid #39536b;background:#232b34;color:#93d8ff;font-weight:900}
+        .active,button:hover{background:#0b77ff!important;color:white!important}
+        .main{padding:22px}.hero,.panel{background:#252c35;border:1px solid #3b536b;border-radius:22px;padding:20px;margin-bottom:16px;box-shadow:0 12px 35px rgba(0,0,0,.35)}
+        .hero{display:grid;grid-template-columns:1fr 280px;gap:20px}h1{font-size:58px;margin:5px 0;color:#67c7ff}.hero p,.tag{color:#48aaff;letter-spacing:4px;font-weight:900;font-size:12px}
+        .clock strong{font-size:28px;color:#64c7ff}.grid3{display:grid;grid-template-columns:320px 1fr 320px;gap:16px}.modebar{display:grid;grid-template-columns:repeat(6,1fr);gap:8px}
+        .row{display:flex;justify-content:space-between;border-bottom:1px solid #35495f;padding:8px 0}.row span:first-child{color:#9baab8}.row b{color:#dcefff}
+        .big{font-size:64px;margin:0}.green{color:#00ff91!important}.red{color:#ff4d5e!important}.yellow{color:#ffd166!important}
+        .filters{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.filters label{color:#a9bbcb}.filters input{width:100%;margin-top:6px;padding:11px;border-radius:10px;border:1px solid #45627d;background:#111820;color:#6cc8ff}
+        .table{display:grid;grid-template-columns:repeat(13,1fr);overflow:auto;border:1px solid #39536b;border-radius:14px}.table>*{padding:10px;border-bottom:1px solid #34495d}.table b{background:#172230;color:#69c9ff}
+        footer{color:#94a7b7;padding:20px}.panel h2{color:#63c4ff}.panel ul{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.panel li{background:#1b222b;border:1px solid #31475e;padding:12px;border-radius:12px;list-style:none}
+        @media(max-width:1000px){.app,.hero,.grid3,.modebar,.filters,.table{grid-template-columns:1fr}.sidebar{position:relative;height:auto}}
+      `}</style>
+    </main>
   );
+}
+
+function Panel({ title, children }: { title: string; children: React.ReactNode }) {
+  return <section className="panel"><p className="tag">{title}</p>{children}</section>;
+}
+
+function Row({ a, b }: { a: string; b: any }) {
+  return <div className="row"><span>{a}</span><b>{b}</b></div>;
+}
+
+function Info({ title, items }: { title: string; items: string[] }) {
+  return <Panel title={title}><ul>{items.map((x) => <li key={x}>{x}</li>)}</ul></Panel>;
 }
