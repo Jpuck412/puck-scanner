@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-
+import Sidebar from "./components/Sidebar";
 type RawStock = any;
 
 type Stock = {
@@ -209,7 +209,9 @@ export default function Home() {
   }
 
   return (
-    <main className="page">
+    <main className="appShell">
+  <Sidebar />
+  <section className="page">
       <section className="hero">
         <div>
           <p className="tag">PROOF OF STRUCTURE™ ELITE</p>
@@ -361,6 +363,47 @@ export default function Home() {
 
       <style>{`
         *{box-sizing:border-box} body{margin:0;background:#020202}
+        .appShell{
+display:grid;
+grid-template-columns:260px 1fr;
+min-height:100vh;
+background:#020202;
+}
+
+.sidebar{
+position:sticky;
+top:0;
+height:100vh;
+padding:22px;
+border-right:1px solid rgba(255,182,18,.25);
+background:linear-gradient(180deg,#101010,#050505);
+}
+
+.brand{
+display:grid;
+gap:6px;
+margin-bottom:24px;
+}
+
+.brand strong{
+color:#ffb612;
+letter-spacing:2px;
+font-size:14px;
+}
+
+.brand span{
+color:#999;
+font-size:12px;
+}
+
+.sidebar nav{
+display:grid;
+gap:10px;
+}
+
+.sidebar button{
+text-align:left;
+}
         .page{min-height:100vh;padding:22px;color:#f5f5f5;font-family:Arial,sans-serif;background:radial-gradient(circle at top left,rgba(255,182,18,.24),transparent 30%),linear-gradient(135deg,#020202,#090909)}
         .hero,.panel,.card,.clock,.modes button{border-radius:24px;border:1px solid rgba(255,182,18,.25);background:linear-gradient(145deg,#121212,#050505);box-shadow:0 18px 45px rgba(0,0,0,.7)}
         .hero{display:grid;grid-template-columns:1fr 300px;gap:18px;padding:28px}
@@ -379,7 +422,8 @@ export default function Home() {
         .final{margin-top:18px;padding:14px;border-radius:14px;text-align:center;background:rgba(255,182,18,.14);color:#ffd700;font-weight:900}
         .bottom{display:grid;grid-template-columns:1fr 1fr;gap:18px}.reject{border-color:rgba(255,77,77,.35)}
         @media(max-width:1100px){.hero,.grid,.modes,.filters,.actions,.radar,.cards,.bottom,.table,.statgrid{grid-template-columns:1fr!important}}
-      `}</style>
-    </main>
+     `}</style>
+    </section>
+        </main>
   );
 }
