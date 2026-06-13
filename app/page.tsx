@@ -1,6 +1,27 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+
+type Page =
+  | "dashboard"
+  | "scanner"
+  | "structure"
+  | "news"
+  | "help"
+  | "glossary"
+  | "watchlist"
+  | "journal"
+  | "replay"
+  | "settings";
+
+type ScanMode =
+  | "BOTTOM"
+  | "RANK"
+  | "VOLUME"
+  | "VWAP"
+  | "TOP"
+  | "REVERSAL"
+  | "CUSTOM";
 
 type Stock = {
   ticker: string;
@@ -13,9 +34,9 @@ type Stock = {
   low: number;
   support: number;
   resistance: number;
-  entryAggressive: number;
-  entryConfirmation: number;
-  entryProof: number;
+  aggressiveEntry: number;
+  confirmationEntry: number;
+  proofEntry: number;
   stop: number;
   target1: number;
   target2: number;
@@ -23,110 +44,131 @@ type Stock = {
   risk: number;
   reward: number;
   rr: number;
-  speed: number;
-  volumeSurge: number;
-  spreadStatus: string;
-  catalyst: string;
-  proofScore: number;
+  speedScore: number;
+  volumeScore: number;
   ignitionScore: number;
-  verdict: string;
+  proofScore: number;
+  spreadStatus: "PASS" | "CAUTION" | "FAIL";
+  verdict: "YES" | "WAIT" | "NO";
   rejection: string;
+  catalyst: "GOOD" | "BAD" | "CHECK";
 };
 
-type Page = "dashboard" | "scanner" | "structure" | "news" | "help" | "glossary" | "settings";
-type Mode = "BOTTOM" | "RANK" | "VOLUME" | "VWAP" | "TOP" | "CUSTOM";
-
-function num(v: any) {
+function toNum(v: unknown): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 }
 
-function money(v: number) {
-  if (!v) return "N/A";
+function money(v: number): string {
+  if (!Number.isFinite(v) || v === 0) return "N/A";
   return "$" + v.toFixed(v < 1 ? 4 : 2);
 }
 
-function pct(v: number) {
+function pct(v: number): string {
   return (v >= 0 ? "+" : "") + v.toFixed(1) + "%";
 }
 
-function vol(v: number) {
+function vol(v: number): string {
   if (!v) return "N/A";
-  if (v >= 1000000) return (v / 1000000).toFixed(1) + "M";
-  if (v >= 1000) return (v / 1000).toFixed(1) + "K";
+  if (v >= 1_000_000) return (v / 1_000_000).toFixed(1) + "M";
+  if (v >= 1_000) return (v / 1_000).toFixed(1) + "K";
   return String(Math.round(v));
 }
 
-function isJunk(t: string) {
-  const x = t.toUpperCase();
-  return x.endsWith("W") || x.endsWith("WS") || x.endsWith("U") || x.endsWith("R");
+function isJunk(ticker: string): boolean {
+  const t = ticker.toUpperCase();
+  return t.endsWith("W") || t.endsWith("WS") || t.endsWith("U") || t.endsWith("R");
 }
 
-function normalize(s: any): Stock {
-  const ticker = String(s?.ticker || "");
-  const price = num(s?.price ?? s?.day?.c ?? s?.min?.c ?? ((s?.prevDay?.c ?? 0) + (s?.todaysChange ?? 0)));
-  const gain = num(s?.gain ?? s?.todaysChangePerc);
-  const change = num(s?.change ?? s?.todaysChange);
-  const volume = num(s?.volume ?? s?.day?.v ?? s?.min?.v);
-  const open = num(s?.open ?? s?.day?.o ?? s?.min?.o ?? price);
-  const low = num(s?.support ?? s?.day?.l ?? s?.low ?? price * 0.94);
-  const high = num(s?.resistance ?? s?.day?.h ?? s?.high ?? price * 1.12);
+function normalize(raw: any): Stock {
+  const ticker = String(raw?.ticker || "");
+  const price = toNum(raw?.price ?? raw?.day?.c ?? raw?.min?.c ?? ((raw?.prevDay?.c ?? 0) + (raw?.todaysChange ?? 0)));
+  const gain = toNum(raw?.gain ?? raw?.todaysChangePerc);
+  const change = toNum(raw?.change ?? raw?.todaysChange);
+  const volume = toNum(raw?.volume ?? raw?.day?.v ?? raw?.min?.v);
+  const open = toNum(raw?.open ?? raw?.day?.o ?? raw?.min?.o ?? price);
+  const high = toNum(raw?.high ?? raw?.day?.h ?? raw?.resistance ?? price * 1.12);
+  const low = toNum(raw?.low ?? raw?.day?.l ?? raw?.support ?? price * 0.94);
 
-  const support = low;
-  const resistance = high;
+  const support = toNum(raw?.support ?? raw?.structure?.support ?? low);
+  const resistance = toNum(raw?.resistance ?? raw?.structure?.resistance ?? high);
 
-  const entryAggressive = resistance * 0.985;
-  const entryConfirmation = resistance * 1.01;
-  const entryProof = resistance * 1.045;
+  const aggressiveEntry = resistance * 0.985;
+  const confirmationEntry = resistance * 1.01;
+  const proofEntry = resistance * 1.045;
 
   const stop = support;
   const target1 = resistance * 1.08;
   const target2 = resistance * 1.18;
   const target3 = resistance * 1.35;
 
-  const risk = Math.max(0, entryProof - stop);
-  const reward = Math.max(0, target1 - entryProof);
+  const risk = Math.max(0, proofEntry - stop);
+  const reward = Math.max(0, target1 - proofEntry);
   const rr = risk > 0 ? reward / risk : 0;
 
-  const volumeSurge = num(s?.volumeSurge ?? s?.structure?.volumeSurge ?? volume / 1000000);
-  const speed = Math.min(100, Math.round(gain * 0.45 + volumeSurge * 18));
+  const volumeScore = Math.min(100, Math.round(volume / 75_000));
+  const speedScore = Math.min(100, Math.round(gain * 0.5 + volumeScore * 0.35));
+  const spreadStatus: Stock["spreadStatus"] =
+    volume >= 5_000_000 ? "PASS" : volume >= 750_000 ? "CAUTION" : "FAIL";
 
   let ignitionScore = 0;
-  ignitionScore += Math.min(30, gain * 0.7);
-  ignitionScore += Math.min(25, volume / 500000);
-  ignitionScore += Math.min(25, volumeSurge * 8);
-  ignitionScore += price > 0 && price <= 5 ? 15 : price <= 10 ? 10 : 5;
-  if (isJunk(ticker)) ignitionScore -= 30;
+  ignitionScore += Math.min(30, Math.max(0, gain * 0.7));
+  ignitionScore += Math.min(25, volume / 400_000);
+  ignitionScore += Math.min(20, speedScore * 0.2);
+  ignitionScore += price > 0 && price <= 5 ? 15 : price <= 10 ? 10 : 4;
+  ignitionScore += isJunk(ticker) ? -35 : 10;
   ignitionScore = Math.max(0, Math.min(100, Math.round(ignitionScore)));
 
-  const spreadStatus = volume >= 5000000 ? "PASS" : volume >= 1000000 ? "CAUTION" : "FAIL";
-  const catalyst = "CHECK NEWS";
-
   let proofScore = ignitionScore;
-  if (price > resistance) proofScore += 8;
-  if (rr >= 2) proofScore += 8;
+  if (rr >= 2) proofScore += 10;
+  else if (rr >= 1) proofScore += 5;
   if (spreadStatus === "FAIL") proofScore -= 15;
+  if (price > resistance) proofScore += 8;
   proofScore = Math.max(0, Math.min(100, Math.round(proofScore)));
 
-  const verdict = proofScore >= 80 ? "YES" : proofScore >= 60 ? "WAIT" : "NO";
+  const verdict: Stock["verdict"] = proofScore >= 80 ? "YES" : proofScore >= 60 ? "WAIT" : "NO";
 
   let rejection = "";
   if (isJunk(ticker)) rejection = "JUNK SYMBOL";
-  else if (volume < 100000) rejection = "LOW VOLUME";
+  else if (volume < 100_000) rejection = "LOW VOLUME";
   else if (spreadStatus === "FAIL") rejection = "SPREAD RISK";
   else if (proofScore < 60) rejection = "NO PROOF";
 
   return {
-    ticker, price, gain, change, volume, open, high, low,
-    support, resistance, entryAggressive, entryConfirmation, entryProof,
-    stop, target1, target2, target3, risk, reward, rr, speed,
-    volumeSurge, spreadStatus, catalyst, proofScore, ignitionScore, verdict, rejection
+    ticker,
+    price,
+    gain,
+    change,
+    volume,
+    open,
+    high,
+    low,
+    support,
+    resistance,
+    aggressiveEntry,
+    confirmationEntry,
+    proofEntry,
+    stop,
+    target1,
+    target2,
+    target3,
+    risk,
+    reward,
+    rr,
+    speedScore,
+    volumeScore,
+    ignitionScore,
+    proofScore,
+    spreadStatus,
+    verdict,
+    rejection,
+    catalyst: "CHECK"
   };
 }
 
 export default function Home() {
   const [page, setPage] = useState<Page>("dashboard");
-  const [mode, setMode] = useState<Mode>("BOTTOM");
+  const [mode, setMode] = useState<ScanMode>("BOTTOM");
   const [stocks, setStocks] = useState<Stock[]>([]);
   const [status, setStatus] = useState("LOADING");
   const [time, setTime] = useState("");
@@ -141,7 +183,7 @@ export default function Home() {
   const [minVolume, setMinVolume] = useState(100000);
   const [removeJunk, setRemoveJunk] = useState(true);
 
-  const [manualTicker, setManualTicker] = useState("");
+  const [manualTicker, setManualTicker] = useState("CAST");
   const [manualSupport, setManualSupport] = useState(28);
   const [manualResistance, setManualResistance] = useState(34);
 
@@ -161,10 +203,10 @@ export default function Home() {
 
   useEffect(() => {
     load();
-    const id = setInterval(() => {
+    const clock = setInterval(() => {
       setTime(new Date().toLocaleTimeString("en-US", { timeZone: "America/New_York" }));
     }, 1000);
-    return () => clearInterval(id);
+    return () => clearInterval(clock);
   }, []);
 
   useEffect(() => {
@@ -183,14 +225,15 @@ export default function Home() {
     });
 
     if (mode === "BOTTOM") list = list.sort((a, b) => b.ignitionScore - a.ignitionScore);
-    if (mode === "RANK") list = list.sort((a, b) => b.speed - a.speed);
-    if (mode === "VOLUME") list = list.sort((a, b) => b.volumeSurge - a.volumeSurge);
+    if (mode === "RANK") list = list.sort((a, b) => b.speedScore - a.speedScore);
+    if (mode === "VOLUME") list = list.sort((a, b) => b.volumeScore - a.volumeScore);
     if (mode === "VWAP") list = list.sort((a, b) => b.proofScore - a.proofScore);
     if (mode === "TOP") list = list.sort((a, b) => b.gain - a.gain);
+    if (mode === "REVERSAL") list = list.sort((a, b) => (b.price - b.low) - (a.price - a.low));
     if (mode === "CUSTOM") list = list.sort((a, b) => b.proofScore - a.proofScore);
 
-    return list.slice(0, 30);
-  }, [stocks, minPrice, maxPrice, minGain, minVolume, removeJunk, mode]);
+    return list.slice(0, 40);
+  }, [stocks, mode, minPrice, maxPrice, minGain, minVolume, removeJunk]);
 
   const rejected = stocks.filter((s) => s.rejection);
   const top = filtered[0];
@@ -200,73 +243,103 @@ export default function Home() {
   const manualProof = manualResistance * 1.045;
   const manualStop = manualSupport;
   const manualTarget1 = manualResistance * 1.08;
-  const manualRisk = manualProof - manualStop;
-  const manualReward = manualTarget1 - manualProof;
+  const manualTarget2 = manualResistance * 1.18;
+  const manualTarget3 = manualResistance * 1.35;
+  const manualRisk = Math.max(0, manualProof - manualStop);
+  const manualReward = Math.max(0, manualTarget1 - manualProof);
   const manualRR = manualRisk > 0 ? manualReward / manualRisk : 0;
 
   return (
     <main className="app">
-      <aside className="sidebar">
-        <h2>PROOF<br />STRUCTURE</h2>
-        {["dashboard", "scanner", "structure", "news", "help", "glossary", "settings"].map((p) => (
-          <button key={p} onClick={() => setPage(p as Page)} className={page === p ? "active" : ""}>
-            {p.toUpperCase()}
+      <aside className="sidebar metal dark">
+        <div className="brand">
+          <small>PROOF OF STRUCTURE™</small>
+          <h2>ELITE</h2>
+          <span>MISSION CONTROL</span>
+        </div>
+
+        {[
+          ["dashboard", "Dashboard"],
+          ["scanner", "Scanner"],
+          ["structure", "Structure"],
+          ["news", "News"],
+          ["help", "Help"],
+          ["glossary", "Glossary"],
+          ["watchlist", "Watchlist"],
+          ["journal", "Journal"],
+          ["replay", "Replay"],
+          ["settings", "Settings"]
+        ].map(([key, label]) => (
+          <button key={key} onClick={() => setPage(key as Page)} className={page === key ? "active nav" : "nav"}>
+            {label}
           </button>
         ))}
+
+        <Panel title="COMMAND CENTER" small>
+          <h3 className={top?.verdict === "YES" ? "yesText" : top?.verdict === "NO" ? "noText" : "waitText"}>
+            {top?.verdict || "WAIT"}
+          </h3>
+          <Row a="Status" b={status} />
+          <Row a="Market" b="CHECK" />
+          <Row a="Next Open" b="Mon 4:00 AM ET" />
+        </Panel>
       </aside>
 
       <section className="main">
-        <header className="hero">
+        <header className="hero metal light">
           <div>
-            <p>PROOF OF STRUCTURE™ ELITE</p>
+            <p className="tag">PROOF OF STRUCTURE™ ELITE</p>
             <h1>MISSION CONTROL</h1>
             <span>Bottom ignition. Rank climbers. Real entries after proof.</span>
           </div>
           <div className="clock">
             <small>ET CLOCK</small>
             <strong>{time || "LOADING"}</strong>
-            <small>Last Scan: {lastScan}</small>
+            <small>LAST SCAN: {lastScan}</small>
           </div>
         </header>
 
         {page === "dashboard" && (
           <>
-            <section className="modebar">
+            <section className="modes">
               {[
-                ["BOTTOM", "BOTTOM IGNITION"],
-                ["RANK", "RANK CLIMBERS"],
-                ["VOLUME", "VOLUME AWAKENING"],
-                ["VWAP", "VWAP BREAKOUT"],
-                ["TOP", "TOP GAINERS"],
-                ["CUSTOM", "CUSTOM"]
-              ].map(([k, v]) => (
-                <button key={k} onClick={() => setMode(k as Mode)} className={mode === k ? "active" : ""}>{v}</button>
+                ["BOTTOM", "Bottom Ignition"],
+                ["RANK", "Rank Climbers"],
+                ["VOLUME", "Volume Awakening"],
+                ["VWAP", "VWAP Breakout"],
+                ["TOP", "Top Gainers"],
+                ["REVERSAL", "Reversal Watch"],
+                ["CUSTOM", "Custom Scan"]
+              ].map(([key, label]) => (
+                <button key={key} onClick={() => setMode(key as ScanMode)} className={mode === key ? "active" : ""}>
+                  {label}
+                </button>
               ))}
             </section>
 
             <section className="grid3">
               <Panel title="COMMAND CENTER">
-                <h3 className={top?.verdict === "YES" ? "big green" : top?.verdict === "NO" ? "big red" : "big yellow"}>
+                <h3 className={top?.verdict === "YES" ? "big yesText" : top?.verdict === "NO" ? "big noText" : "big waitText"}>
                   {top?.verdict || "WAIT"}
                 </h3>
-                <Row a="Status" b={status} />
-                <Row a="Raw" b={stocks.length} />
+                <Row a="Feed" b={status} />
+                <Row a="Raw Count" b={stocks.length} />
                 <Row a="Showing" b={filtered.length} />
                 <Row a="Rejected" b={rejected.length} />
-                <Row a="Top" b={top?.ticker || "NONE"} />
-                <Row a="Proof" b={top?.proofScore || 0} />
+                <Row a="Top Ticker" b={top?.ticker || "NONE"} />
+                <Row a="Proof Score" b={top?.proofScore || 0} />
                 <button onClick={load}>RUN SCAN</button>
-                <button onClick={() => setAutoScan(!autoScan)}>AUTO: {autoScan ? "ON" : "OFF"}</button>
+                <button onClick={() => setAutoScan(!autoScan)}>AUTO SCAN: {autoScan ? "ON" : "OFF"}</button>
               </Panel>
 
               <Panel title="PRECISION FILTERS">
                 <div className="filters">
-                  <label>Min Price<input value={minPrice} onChange={(e) => setMinPrice(Number(e.target.value))} type="number" /></label>
-                  <label>Max Price<input value={maxPrice} onChange={(e) => setMaxPrice(Number(e.target.value))} type="number" /></label>
-                  <label>Min Gain<input value={minGain} onChange={(e) => setMinGain(Number(e.target.value))} type="number" /></label>
-                  <label>Min Volume<input value={minVolume} onChange={(e) => setMinVolume(Number(e.target.value))} type="number" /></label>
-                  <label>Refresh<input value={refreshSec} onChange={(e) => setRefreshSec(Number(e.target.value))} type="number" /></label>
-                  <button onClick={() => setRemoveJunk(!removeJunk)}>JUNK: {removeJunk ? "ON" : "OFF"}</button>
+                  <label>Min Price<input type="number" value={minPrice} onChange={(e) => setMinPrice(Number(e.target.value))} /></label>
+                  <label>Max Price<input type="number" value={maxPrice} onChange={(e) => setMaxPrice(Number(e.target.value))} /></label>
+                  <label>Min Gain<input type="number" value={minGain} onChange={(e) => setMinGain(Number(e.target.value))} /></label>
+                  <label>Min Volume<input type="number" value={minVolume} onChange={(e) => setMinVolume(Number(e.target.value))} /></label>
+                  <label>Refresh Sec<input type="number" value={refreshSec} onChange={(e) => setRefreshSec(Number(e.target.value))} /></label>
+                  <button onClick={() => setRemoveJunk(!removeJunk)}>JUNK FILTER: {removeJunk ? "ON" : "OFF"}</button>
                 </div>
               </Panel>
 
@@ -274,9 +347,9 @@ export default function Home() {
                 <Row a="Ticker" b={top?.ticker || "NONE"} />
                 <Row a="Support" b={top ? money(top.support) : "N/A"} />
                 <Row a="Resistance" b={top ? money(top.resistance) : "N/A"} />
-                <Row a="Aggressive" b={top ? money(top.entryAggressive) : "N/A"} />
-                <Row a="Confirmation" b={top ? money(top.entryConfirmation) : "N/A"} />
-                <Row a="Proof Entry" b={top ? money(top.entryProof) : "N/A"} />
+                <Row a="Aggressive Entry" b={top ? money(top.aggressiveEntry) : "N/A"} />
+                <Row a="Confirmation Entry" b={top ? money(top.confirmationEntry) : "N/A"} />
+                <Row a="Proof Entry" b={top ? money(top.proofEntry) : "N/A"} />
                 <Row a="Stop" b={top ? money(top.stop) : "N/A"} />
                 <Row a="Target 1" b={top ? money(top.target1) : "N/A"} />
               </Panel>
@@ -287,11 +360,25 @@ export default function Home() {
         {page === "scanner" && (
           <Panel title="LIVE RESULTS GRID">
             <div className="table">
-              {["Ticker","Price","Gain","Vol","Speed","Spread","Support","Resist","Agg","Conf","Proof","Score","Verdict"].map(h => <b key={h}>{h}</b>)}
+              {["Ticker", "Price", "Gain", "Vol", "Speed", "Spread", "Support", "Resist", "Agg", "Confirm", "Proof", "Score", "Verdict"].map((h) => (
+                <b key={h}>{h}</b>
+              ))}
               {filtered.map((s) => (
-                <>
-                  <span>{s.ticker}</span><span>{money(s.price)}</span><span className="green">{pct(s.gain)}</span><span>{vol(s.volume)}</span><span>{s.speed}</span><span className={s.spreadStatus === "PASS" ? "green" : s.spreadStatus === "FAIL" ? "red" : "yellow"}>{s.spreadStatus}</span><span>{money(s.support)}</span><span>{money(s.resistance)}</span><span>{money(s.entryAggressive)}</span><span>{money(s.entryConfirmation)}</span><span>{money(s.entryProof)}</span><span>{s.proofScore}</span><span className={s.verdict === "YES" ? "green" : s.verdict === "NO" ? "red" : "yellow"}>{s.verdict}</span>
-                </>
+                <div className="rowGrid" key={s.ticker}>
+                  <span>{s.ticker}</span>
+                  <span>{money(s.price)}</span>
+                  <span className="good">{pct(s.gain)}</span>
+                  <span>{vol(s.volume)}</span>
+                  <span>{s.speedScore}</span>
+                  <span className={s.spreadStatus === "PASS" ? "good" : s.spreadStatus === "FAIL" ? "bad" : "warn"}>{s.spreadStatus}</span>
+                  <span>{money(s.support)}</span>
+                  <span>{money(s.resistance)}</span>
+                  <span>{money(s.aggressiveEntry)}</span>
+                  <span>{money(s.confirmationEntry)}</span>
+                  <span>{money(s.proofEntry)}</span>
+                  <span>{s.proofScore}</span>
+                  <span className={s.verdict === "YES" ? "good" : s.verdict === "NO" ? "bad" : "warn"}>{s.verdict}</span>
+                </div>
               ))}
             </div>
             <button onClick={() => setShowRejected(!showRejected)}>{showRejected ? "HIDE REJECTED" : "SHOW REJECTED"}</button>
@@ -303,22 +390,63 @@ export default function Home() {
           <Panel title="MANUAL STRUCTURE ENGINE">
             <div className="filters">
               <label>Ticker<input value={manualTicker} onChange={(e) => setManualTicker(e.target.value.toUpperCase())} /></label>
-              <label>Support<input value={manualSupport} onChange={(e) => setManualSupport(Number(e.target.value))} type="number" /></label>
-              <label>Resistance<input value={manualResistance} onChange={(e) => setManualResistance(Number(e.target.value))} type="number" /></label>
+              <label>Support<input type="number" value={manualSupport} onChange={(e) => setManualSupport(Number(e.target.value))} /></label>
+              <label>Resistance<input type="number" value={manualResistance} onChange={(e) => setManualResistance(Number(e.target.value))} /></label>
             </div>
             <Row a="Aggressive Entry" b={money(manualAggressive)} />
             <Row a="Confirmation Entry" b={money(manualConfirmation)} />
             <Row a="Proof Entry" b={money(manualProof)} />
             <Row a="Stop" b={money(manualStop)} />
             <Row a="Target 1" b={money(manualTarget1)} />
-            <Row a="Risk/Reward" b={manualRR.toFixed(2)} />
+            <Row a="Target 2" b={money(manualTarget2)} />
+            <Row a="Target 3" b={money(manualTarget3)} />
+            <Row a="Risk / Reward" b={manualRR.toFixed(2)} />
           </Panel>
         )}
 
-        {page === "news" && <Info title="NEWS ENGINE" items={["FDA","Earnings","8-K","Press Release","Offering","Reverse Split","Merger","Government Contract","Analyst Upgrade"]} />}
-        {page === "help" && <Info title="HELP CENTER" items={["How Scanner Works","How Aggressive Entry Works","How Confirmation Entry Works","How Proof Entry Works","How Support Works","How Resistance Works","How Risk Works"]} />}
-        {page === "glossary" && <Info title="GLOSSARY" items={["VWAP","EMA","RVOL","Float","Spread","Support","Resistance","Catalyst","Webhook","Limit Order","Risk/Reward","Tape","Absorption"]} />}
-        {page === "settings" && <Info title="SETTINGS" items={["Theme: Medium Gray + Blue Neon","Premarket 4AM","Regular Market","After Hours Later","Broker Preview Only","IBKR Later","No Auto Buy Default"]} />}
+        {page === "news" && (
+          <Info title="NEWS CATALYST ENGINE" items={[
+            ["FDA", "GOOD news gets green. Bad dilution gets red."],
+            ["Earnings", "Strong earnings can fuel continuation."],
+            ["8-K", "Read for offerings, splits, mergers, contracts."],
+            ["Offering", "Usually red risk unless already absorbed."],
+            ["Reverse Split", "High caution."],
+            ["Government Contract", "Green catalyst if real money is attached."],
+            ["Analyst Upgrade", "Can create short-term attention."]
+          ]} />
+        )}
+
+        {page === "help" && (
+          <Info title="HELP CENTER" items={[
+            ["How Scanner Works", "Find bottom and mid-list gainers waking up before they reach the top."],
+            ["Aggressive Entry", "Earliest entry near resistance. Highest risk, best price."],
+            ["Confirmation Entry", "Entry after resistance breaks. Balanced risk."],
+            ["Proof Entry", "Entry after resistance breaks and proves itself. Best confirmation."],
+            ["Support", "Area buyers defended. Stop lives under it."],
+            ["Resistance", "Area sellers defended. Entry comes after it breaks."],
+            ["Risk", "Distance between entry and stop."]
+          ]} />
+        )}
+
+        {page === "glossary" && (
+          <Info title="GLOSSARY" items={[
+            ["VWAP", "Average price weighted by volume."],
+            ["EMA", "Fast moving average used for trend structure."],
+            ["RVOL", "Relative volume compared to normal volume."],
+            ["Float", "Shares available to trade."],
+            ["Spread", "Difference between bid and ask."],
+            ["Support", "Buyer defense area."],
+            ["Resistance", "Seller defense area."],
+            ["Catalyst", "Reason traders care now."],
+            ["Limit Order", "Order with max buy or min sell price."],
+            ["Risk / Reward", "Reward compared to risk."]
+          ]} />
+        )}
+
+        {page === "watchlist" && <Info title="WATCHLIST" items={[["Favorites", "Saved tickers."], ["Hot List", "Best current setups."], ["Watch Later", "Not ready yet."], ["Scanner Queue", "Tickers waiting for proof."]]} />}
+        {page === "journal" && <Info title="TRADE JOURNAL" items={[["Notes", "Trade thoughts."], ["Screenshots", "Save setup evidence."], ["Review", "Why it worked or failed."], ["Performance", "Track results."]]} />}
+        {page === "replay" && <Info title="REPLAY MODE" items={[["Winning Trades", "Study what worked."], ["Losing Trades", "Study what failed."], ["Triggers", "See scanner trigger reason."], ["Structure Review", "Replay support/resistance."]]} />}
+        {page === "settings" && <Info title="SETTINGS" items={[["Theme", "Rusty light gray steel."], ["Safe Mode", "Protective scanner defaults."], ["Broker", "Preview only."], ["IBKR", "Later."], ["Auto Buy", "Off by default."]]} />}
 
         <footer>
           This software is educational only. Not financial advice. All trading decisions are the user's responsibility.
@@ -326,33 +454,78 @@ export default function Home() {
       </section>
 
       <style>{`
-        *{box-sizing:border-box}body{margin:0;background:#1d2229;color:#e8f3ff;font-family:Arial,sans-serif}
-        .app{display:grid;grid-template-columns:230px 1fr;min-height:100vh}
-        .sidebar{background:#151a20;border-right:1px solid #31475e;padding:20px;position:sticky;top:0;height:100vh}
-        .sidebar h2{color:#4db7ff;letter-spacing:3px}.sidebar button,.modebar button,button{width:100%;padding:12px;margin:7px 0;border-radius:12px;border:1px solid #39536b;background:#232b34;color:#93d8ff;font-weight:900}
-        .active,button:hover{background:#0b77ff!important;color:white!important}
-        .main{padding:22px}.hero,.panel{background:#252c35;border:1px solid #3b536b;border-radius:22px;padding:20px;margin-bottom:16px;box-shadow:0 12px 35px rgba(0,0,0,.35)}
-        .hero{display:grid;grid-template-columns:1fr 280px;gap:20px}h1{font-size:58px;margin:5px 0;color:#67c7ff}.hero p,.tag{color:#48aaff;letter-spacing:4px;font-weight:900;font-size:12px}
-        .clock strong{font-size:28px;color:#64c7ff}.grid3{display:grid;grid-template-columns:320px 1fr 320px;gap:16px}.modebar{display:grid;grid-template-columns:repeat(6,1fr);gap:8px}
-        .row{display:flex;justify-content:space-between;border-bottom:1px solid #35495f;padding:8px 0}.row span:first-child{color:#9baab8}.row b{color:#dcefff}
-        .big{font-size:64px;margin:0}.green{color:#00ff91!important}.red{color:#ff4d5e!important}.yellow{color:#ffd166!important}
-        .filters{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.filters label{color:#a9bbcb}.filters input{width:100%;margin-top:6px;padding:11px;border-radius:10px;border:1px solid #45627d;background:#111820;color:#6cc8ff}
-        .table{display:grid;grid-template-columns:repeat(13,1fr);overflow:auto;border:1px solid #39536b;border-radius:14px}.table>*{padding:10px;border-bottom:1px solid #34495d}.table b{background:#172230;color:#69c9ff}
-        footer{color:#94a7b7;padding:20px}.panel h2{color:#63c4ff}.panel ul{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.panel li{background:#1b222b;border:1px solid #31475e;padding:12px;border-radius:12px;list-style:none}
-        @media(max-width:1000px){.app,.hero,.grid3,.modebar,.filters,.table{grid-template-columns:1fr}.sidebar{position:relative;height:auto}}
+        *{box-sizing:border-box}
+        body{margin:0;background:#2b2b28;color:#252525;font-family:Arial,sans-serif}
+        .app{min-height:100vh;display:grid;grid-template-columns:240px 1fr;background:radial-gradient(circle at top,#5c5b54,#2b2b28 60%)}
+        .sidebar{padding:18px;height:100vh;position:sticky;top:0}
+        .brand{padding:18px;border:1px solid #222;background:#c5c0b4;border-radius:12px;margin-bottom:14px;box-shadow:inset 0 0 18px rgba(0,0,0,.35)}
+        .brand small,.tag{color:#1f6da8;letter-spacing:4px;font-weight:900;font-size:12px}
+        .brand h2{font-size:48px;margin:4px 0;color:#333;letter-spacing:2px}
+        .nav,button{width:100%;padding:13px;margin:7px 0;border-radius:10px;border:1px solid #1f2529;background:#303336;color:#d9d3c4;font-weight:900;letter-spacing:1px;box-shadow:inset 0 0 12px rgba(255,255,255,.04)}
+        .active,button:hover{background:#1f7eea!important;color:white!important}
+        .main{padding:22px}
+        .metal{border:1px solid #2a2a2a;border-radius:16px;box-shadow:0 18px 35px rgba(0,0,0,.45),inset 0 0 24px rgba(0,0,0,.18);position:relative;overflow:hidden}
+        .metal:before,.panel:before{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(circle at 10% 20%,rgba(255,255,255,.22),transparent 2%),radial-gradient(circle at 80% 30%,rgba(0,0,0,.18),transparent 3%),linear-gradient(120deg,rgba(255,255,255,.14),transparent 20%,rgba(0,0,0,.12));opacity:.55}
+        .dark{background:#3f423f;color:#e0ddd2}
+        .light,.panel{background:#bdb7aa;color:#222}
+        .hero{display:grid;grid-template-columns:1fr 330px;gap:18px;padding:24px;margin-bottom:18px}
+        h1{font-size:64px;line-height:.95;margin:8px 0;color:#343434;text-shadow:1px 1px #eee;letter-spacing:2px}
+        .clock strong{font-size:34px;color:#1f6da8}
+        .modes{display:grid;grid-template-columns:repeat(7,1fr);gap:10px;margin-bottom:18px}
+        .grid3{display:grid;grid-template-columns:320px 1fr 330px;gap:18px}
+        .panel{padding:18px;border:1px solid #2d3337;border-radius:16px;margin-bottom:18px;position:relative}
+        .panel>*{position:relative}
+        .panel h3.big{font-size:70px;margin:0}
+        .yesText,.good{color:#1e8f44!important}.noText,.bad{color:#b6212f!important}.waitText,.warn{color:#b67900!important}
+        .row{display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid rgba(0,0,0,.25);padding:9px 0}
+        .row span{color:#4c4c4c}.row b{color:#1f1f1f}
+        .filters{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+        label{font-weight:900;color:#333}
+        input{width:100%;padding:12px;margin-top:6px;border-radius:8px;border:1px solid #222;background:#252525;color:#6bbcff;font-weight:900}
+        .table{border:1px solid #333;border-radius:12px;overflow:auto}
+        .table>b,.rowGrid span{padding:10px;border-bottom:1px solid rgba(0,0,0,.25)}
+        .table{display:grid;grid-template-columns:repeat(13,minmax(105px,1fr))}
+        .rowGrid{display:contents}
+        .table>b{background:#333;color:#d9d3c4}
+        ul{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;padding:0}
+        li{list-style:none;background:#d0cabd;border:1px solid #3a3a3a;border-radius:12px;padding:14px}
+        li b{display:block;color:#1f6da8;margin-bottom:6px}
+        footer{color:#d9d3c4;padding:20px}
+        @media(max-width:1050px){.app,.hero,.grid3,.modes,.filters,ul{grid-template-columns:1fr}.sidebar{position:relative;height:auto}.table{grid-template-columns:repeat(13,150px)}h1{font-size:46px}}
       `}</style>
     </main>
   );
 }
 
-function Panel({ title, children }: { title: string; children: React.ReactNode }) {
-  return <section className="panel"><p className="tag">{title}</p>{children}</section>;
+function Panel({ title, children, small }: { title: string; children: ReactNode; small?: boolean }) {
+  return (
+    <section className={small ? "panel smallPanel" : "panel"}>
+      <p className="tag">{title}</p>
+      {children}
+    </section>
+  );
 }
 
-function Row({ a, b }: { a: string; b: any }) {
-  return <div className="row"><span>{a}</span><b>{b}</b></div>;
+function Row({ a, b }: { a: string; b: ReactNode }) {
+  return (
+    <div className="row">
+      <span>{a}</span>
+      <b>{b}</b>
+    </div>
+  );
 }
 
-function Info({ title, items }: { title: string; items: string[] }) {
-  return <Panel title={title}><ul>{items.map((x) => <li key={x}>{x}</li>)}</ul></Panel>;
+function Info({ title, items }: { title: string; items: [string, string][] }) {
+  return (
+    <Panel title={title}>
+      <ul>
+        {items.map(([name, text]) => (
+          <li key={name}>
+            <b>{name}</b>
+            <span>{text}</span>
+          </li>
+        ))}
+      </ul>
+    </Panel>
+  );
 }
