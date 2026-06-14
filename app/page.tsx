@@ -437,7 +437,22 @@ export default function Home() {
                     <span>{money(s.proofEntry)}</span>
                     <span>{s.proofScore}</span>
                     <span className={s.verdict === "YES" ? "good" : s.verdict === "NO" ? "bad" : "warn"}>{s.verdict}</span>
-                    <span><button onClick={() => addWatchlist(s.ticker)}>ADD</button></span>
+                    <span className="actionCell">
+  <button onClick={() => watchlist.includes(s.ticker) ? removeWatchlist(s.ticker) : addWatchlist(s.ticker)}>
+    {watchlist.includes(s.ticker) ? "REMOVE" : "ADD"}
+  </button>
+
+  <button onClick={() => {
+    setManualTicker(s.ticker);
+    setPage("structure");
+  }}>
+    STRUCTURE
+  </button>
+
+  <button onClick={() => addJournalEntry(s.ticker)}>
+    JOURNAL
+  </button>
+</span>
                   </div>
                 ))}
               </div>
