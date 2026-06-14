@@ -14,14 +14,7 @@ type Page =
   | "replay"
   | "settings";
 
-type ScanMode =
-  | "BOTTOM"
-  | "RANK"
-  | "VOLUME"
-  | "VWAP"
-  | "TOP"
-  | "REVERSAL"
-  | "CUSTOM";
+type ScanMode = "BOTTOM" | "RANK" | "VOLUME" | "VWAP" | "TOP" | "REVERSAL" | "CUSTOM";
 
 type Stock = {
   ticker: string;
@@ -51,7 +44,20 @@ type Stock = {
   spreadStatus: "PASS" | "CAUTION" | "FAIL";
   verdict: "YES" | "WAIT" | "NO";
   rejection: string;
-  catalyst: "GOOD" | "BAD" | "CHECK";
+};
+
+type JournalEntry = {
+  id: number;
+  date: string;
+  ticker: string;
+  setup: string;
+  entryExitTarget: string;
+  stopRiskShares: string;
+  result: string;
+  reason: string;
+  rightProof: string;
+  wrongProof: string;
+  lesson: string;
 };
 
 function toNum(v: unknown): number {
@@ -108,6 +114,7 @@ function normalize(raw: any): Stock {
 
   const volumeScore = Math.min(100, Math.round(volume / 75_000));
   const speedScore = Math.min(100, Math.round(gain * 0.5 + volumeScore * 0.35));
+
   const spreadStatus: Stock["spreadStatus"] =
     volume >= 5_000_000 ? "PASS" : volume >= 750_000 ? "CAUTION" : "FAIL";
 
@@ -161,8 +168,7 @@ function normalize(raw: any): Stock {
     proofScore,
     spreadStatus,
     verdict,
-    rejection,
-    catalyst: "CHECK"
+    rejection
   };
 }
 
@@ -187,12 +193,32 @@ export default function Home() {
   const [manualSupport, setManualSupport] = useState(28);
   const [manualResistance, setManualResistance] = useState(34);
 
+  const [watchlist, setWatchlist] = useState<string[]>([]);
+
+  const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([
+    {
+      id: 1,
+      date: new Date().toLocaleDateString(),
+      ticker: "",
+      setup: "Bottom Ignition",
+      entryExitTarget: "",
+      stopRiskShares: "",
+      result: "WAIT",
+      reason: "",
+      rightProof: "",
+      wrongProof: "",
+      lesson: ""
+    }
+  ]);
+
   async function load() {
     setStatus("SCANNING");
+
     try {
       const res = await fetch("/api/gainers", { cache: "no-store" });
       const json = await res.json();
       const list = json?.data?.tickers || json?.tickers || json?.results || [];
+
       setStocks(list.map(normalize));
       setStatus("CONNECTED");
       setLastScan(new Date().toLocaleTimeString("en-US", { timeZone: "America/New_York" }));
@@ -203,14 +229,17 @@ export default function Home() {
 
   useEffect(() => {
     load();
+
     const clock = setInterval(() => {
       setTime(new Date().toLocaleTimeString("en-US", { timeZone: "America/New_York" }));
     }, 1000);
+
     return () => clearInterval(clock);
   }, []);
 
   useEffect(() => {
     if (!autoScan) return;
+
     const id = setInterval(load, refreshSec * 1000);
     return () => clearInterval(id);
   }, [autoScan, refreshSec]);
@@ -224,13 +253,13 @@ export default function Home() {
       return true;
     });
 
-    if (mode === "BOTTOM") list = list.sort((a, b) => b.ignitionScore - a.ignitionScore);
-    if (mode === "RANK") list = list.sort((a, b) => b.speedScore - a.speedScore);
-    if (mode === "VOLUME") list = list.sort((a, b) => b.volumeScore - a.volumeScore);
-    if (mode === "VWAP") list = list.sort((a, b) => b.proofScore - a.proofScore);
-    if (mode === "TOP") list = list.sort((a, b) => b.gain - a.gain);
-    if (mode === "REVERSAL") list = list.sort((a, b) => (b.price - b.low) - (a.price - a.low));
-    if (mode === "CUSTOM") list = list.sort((a, b) => b.proofScore - a.proofScore);
+    if (mode === "BOTTOM") list = [...list].sort((a, b) => b.ignitionScore - a.ignitionScore);
+    if (mode === "RANK") list = [...list].sort((a, b) => b.speedScore - a.speedScore);
+    if (mode === "VOLUME") list = [...list].sort((a, b) => b.volumeScore - a.volumeScore);
+    if (mode === "VWAP") list = [...list].sort((a, b) => b.proofScore - a.proofScore);
+    if (mode === "TOP") list = [...list].sort((a, b) => b.gain - a.gain);
+    if (mode === "REVERSAL") list = [...list].sort((a, b) => (b.price - b.low) - (a.price - a.low));
+    if (mode === "CUSTOM") list = [...list].sort((a, b) => b.proofScore - a.proofScore);
 
     return list.slice(0, 40);
   }, [stocks, mode, minPrice, maxPrice, minGain, minVolume, removeJunk]);
@@ -248,6 +277,42 @@ export default function Home() {
   const manualRisk = Math.max(0, manualProof - manualStop);
   const manualReward = Math.max(0, manualTarget1 - manualProof);
   const manualRR = manualRisk > 0 ? manualReward / manualRisk : 0;
+
+  function addWatchlist(ticker: string) {
+    if (!ticker) return;
+    setWatchlist((prev) => (prev.includes(ticker) ? prev : [ticker, ...prev]));
+  }
+
+  function removeWatchlist(ticker: string) {
+    setWatchlist((prev) => prev.filter((t) => t !== ticker));
+  }
+
+  function addJournalEntry() {
+    setJournalEntries((prev) => [
+      {
+        id: Date.now(),
+        date: new Date().toLocaleDateString(),
+        ticker: "",
+        setup: "Bottom Ignition",
+        entryExitTarget: "",
+        stopRiskShares: "",
+        result: "WAIT",
+        reason: "",
+        rightProof: "",
+        wrongProof: "",
+        lesson: ""
+      },
+      ...prev
+    ]);
+  }
+
+  function updateJournal(id: number, field: keyof JournalEntry, value: string) {
+    setJournalEntries((prev) => prev.map((j) => (j.id === id ? { ...j, [field]: value } : j)));
+  }
+
+  function deleteJournal(id: number) {
+    setJournalEntries((prev) => prev.filter((j) => j.id !== id));
+  }
 
   return (
     <main className="app">
@@ -274,15 +339,6 @@ export default function Home() {
             {label}
           </button>
         ))}
-
-        <Panel title="COMMAND CENTER" small>
-          <h3 className={top?.verdict === "YES" ? "yesText" : top?.verdict === "NO" ? "noText" : "waitText"}>
-            {top?.verdict || "WAIT"}
-          </h3>
-          <Row a="Status" b={status} />
-          <Row a="Market" b="CHECK" />
-          <Row a="Next Open" b="Mon 4:00 AM ET" />
-        </Panel>
       </aside>
 
       <section className="main">
@@ -292,6 +348,7 @@ export default function Home() {
             <h1>MISSION CONTROL</h1>
             <span>Bottom ignition. Rank climbers. Real entries after proof.</span>
           </div>
+
           <div className="clock">
             <small>ET CLOCK</small>
             <strong>{time || "LOADING"}</strong>
@@ -359,28 +416,33 @@ export default function Home() {
 
         {page === "scanner" && (
           <Panel title="LIVE RESULTS GRID">
-            <div className="table">
-              {["Ticker", "Price", "Gain", "Vol", "Speed", "Spread", "Support", "Resist", "Agg", "Confirm", "Proof", "Score", "Verdict"].map((h) => (
-                <b key={h}>{h}</b>
-              ))}
-              {filtered.map((s) => (
-                <div className="rowGrid" key={s.ticker}>
-                  <span>{s.ticker}</span>
-                  <span>{money(s.price)}</span>
-                  <span className="good">{pct(s.gain)}</span>
-                  <span>{vol(s.volume)}</span>
-                  <span>{s.speedScore}</span>
-                  <span className={s.spreadStatus === "PASS" ? "good" : s.spreadStatus === "FAIL" ? "bad" : "warn"}>{s.spreadStatus}</span>
-                  <span>{money(s.support)}</span>
-                  <span>{money(s.resistance)}</span>
-                  <span>{money(s.aggressiveEntry)}</span>
-                  <span>{money(s.confirmationEntry)}</span>
-                  <span>{money(s.proofEntry)}</span>
-                  <span>{s.proofScore}</span>
-                  <span className={s.verdict === "YES" ? "good" : s.verdict === "NO" ? "bad" : "warn"}>{s.verdict}</span>
-                </div>
-              ))}
+            <div className="tableWrap">
+              <div className="table">
+                {["Ticker", "Price", "Gain", "Vol", "Speed", "Spread", "Support", "Resist", "Agg", "Confirm", "Proof", "Score", "Verdict", "Actions"].map((h) => (
+                  <b key={h}>{h}</b>
+                ))}
+
+                {filtered.map((s) => (
+                  <div className="rowGrid" key={s.ticker}>
+                    <span>{s.ticker}</span>
+                    <span>{money(s.price)}</span>
+                    <span className="good">{pct(s.gain)}</span>
+                    <span>{vol(s.volume)}</span>
+                    <span>{s.speedScore}</span>
+                    <span className={s.spreadStatus === "PASS" ? "good" : s.spreadStatus === "FAIL" ? "bad" : "warn"}>{s.spreadStatus}</span>
+                    <span>{money(s.support)}</span>
+                    <span>{money(s.resistance)}</span>
+                    <span>{money(s.aggressiveEntry)}</span>
+                    <span>{money(s.confirmationEntry)}</span>
+                    <span>{money(s.proofEntry)}</span>
+                    <span>{s.proofScore}</span>
+                    <span className={s.verdict === "YES" ? "good" : s.verdict === "NO" ? "bad" : "warn"}>{s.verdict}</span>
+                    <span><button onClick={() => addWatchlist(s.ticker)}>ADD</button></span>
+                  </div>
+                ))}
+              </div>
             </div>
+
             <button onClick={() => setShowRejected(!showRejected)}>{showRejected ? "HIDE REJECTED" : "SHOW REJECTED"}</button>
             {showRejected && rejected.map((s) => <Row key={s.ticker} a={s.ticker} b={s.rejection} />)}
           </Panel>
@@ -405,15 +467,25 @@ export default function Home() {
         )}
 
         {page === "news" && (
-          <Info title="NEWS CATALYST ENGINE" items={[
-            ["FDA", "GOOD news gets green. Bad dilution gets red."],
-            ["Earnings", "Strong earnings can fuel continuation."],
-            ["8-K", "Read for offerings, splits, mergers, contracts."],
-            ["Offering", "Usually red risk unless already absorbed."],
-            ["Reverse Split", "High caution."],
-            ["Government Contract", "Green catalyst if real money is attached."],
-            ["Analyst Upgrade", "Can create short-term attention."]
-          ]} />
+          <Panel title="LIVE NEWS / CATALYST CENTER">
+            <div className="newsGrid">
+              {[
+                ["FDA", "CHECK", "FDA news can move biotech fast. Confirm whether approval, trial update, or rejection."],
+                ["Earnings", "CHECK", "Good earnings can continue. Bad guidance can reverse."],
+                ["8-K", "CHECK", "Read carefully. Could be contract, offering, merger, or dilution."],
+                ["Offering", "BAD", "Usually dilution risk. Red until proven absorbed."],
+                ["Reverse Split", "BAD", "High caution. Often weak structure."],
+                ["Government Contract", "GOOD", "Green if contract has real money and verified source."],
+                ["Analyst Upgrade", "GOOD", "Can create attention and short-term momentum."]
+              ].map(([name, statusText, detail]) => (
+                <article className="newsCard" key={name}>
+                  <h3>{name}</h3>
+                  <strong className={statusText === "GOOD" ? "good" : statusText === "BAD" ? "bad" : "warn"}>{statusText}</strong>
+                  <p>{detail}</p>
+                </article>
+              ))}
+            </div>
+          </Panel>
         )}
 
         {page === "help" && (
@@ -424,7 +496,10 @@ export default function Home() {
             ["Proof Entry", "Entry after resistance breaks and proves itself. Best confirmation."],
             ["Support", "Area buyers defended. Stop lives under it."],
             ["Resistance", "Area sellers defended. Entry comes after it breaks."],
-            ["Risk", "Distance between entry and stop."]
+            ["Risk", "Distance between entry and stop."],
+            ["News Page", "Catalyst center. Good catalysts show green, bad/dilution risk shows red."],
+            ["Watchlist", "Saved tickers you want to monitor."],
+            ["Journal", "Guided trade notebook that tells you what to write."]
           ]} />
         )}
 
@@ -443,9 +518,65 @@ export default function Home() {
           ]} />
         )}
 
-        {page === "watchlist" && <Info title="WATCHLIST" items={[["Favorites", "Saved tickers."], ["Hot List", "Best current setups."], ["Watch Later", "Not ready yet."], ["Scanner Queue", "Tickers waiting for proof."]]} />}
-        {page === "journal" && <Info title="TRADE JOURNAL" items={[["Notes", "Trade thoughts."], ["Screenshots", "Save setup evidence."], ["Review", "Why it worked or failed."], ["Performance", "Track results."]]} />}
+        {page === "watchlist" && (
+          <Panel title="INTERACTIVE WATCHLIST">
+            <div className="watchGrid">
+              {watchlist.length === 0 && <h2>No tickers saved yet. Use ADD on the scanner page.</h2>}
+              {watchlist.map((ticker) => (
+                <article className="watchCard" key={ticker}>
+                  <h3>{ticker}</h3>
+                  <button onClick={() => setManualTicker(ticker)}>OPEN STRUCTURE</button>
+                  <button onClick={() => removeWatchlist(ticker)}>REMOVE</button>
+                </article>
+              ))}
+            </div>
+          </Panel>
+        )}
+
+        {page === "journal" && (
+          <Panel title="GUIDED TRADE JOURNAL">
+            <button onClick={addJournalEntry}>+ NEW TRADE NOTE</button>
+
+            <div className="journalStack">
+              {journalEntries.map((j) => (
+                <article className="journalCard" key={j.id}>
+                  <div className="journalTop">
+                    <input value={j.date} onChange={(e) => updateJournal(j.id, "date", e.target.value)} />
+                    <input placeholder="TICKER" value={j.ticker} onChange={(e) => updateJournal(j.id, "ticker", e.target.value.toUpperCase())} />
+                    <select value={j.setup} onChange={(e) => updateJournal(j.id, "setup", e.target.value)}>
+                      <option>Bottom Ignition</option>
+                      <option>Rank Climber</option>
+                      <option>VWAP Breakout</option>
+                      <option>Top Gainer</option>
+                      <option>Manual Entry</option>
+                    </select>
+                  </div>
+
+                  <div className="journalNumbers">
+                    <input placeholder="Entry / Exit / Target" value={j.entryExitTarget} onChange={(e) => updateJournal(j.id, "entryExitTarget", e.target.value)} />
+                    <input placeholder="Stop / Risk / Shares" value={j.stopRiskShares} onChange={(e) => updateJournal(j.id, "stopRiskShares", e.target.value)} />
+                    <select value={j.result} onChange={(e) => updateJournal(j.id, "result", e.target.value)}>
+                      <option>WIN</option>
+                      <option>LOSS</option>
+                      <option>BREAKEVEN</option>
+                      <option>WAIT</option>
+                    </select>
+                  </div>
+
+                  <textarea placeholder="WHY DID I ENTER?" value={j.reason} onChange={(e) => updateJournal(j.id, "reason", e.target.value)} />
+                  <textarea placeholder="WHAT PROVED I WAS RIGHT?" value={j.rightProof} onChange={(e) => updateJournal(j.id, "rightProof", e.target.value)} />
+                  <textarea placeholder="WHAT PROVED I WAS WRONG?" value={j.wrongProof} onChange={(e) => updateJournal(j.id, "wrongProof", e.target.value)} />
+                  <textarea placeholder="LESSON LEARNED" value={j.lesson} onChange={(e) => updateJournal(j.id, "lesson", e.target.value)} />
+
+                  <button onClick={() => deleteJournal(j.id)}>DELETE TRADE NOTE</button>
+                </article>
+              ))}
+            </div>
+          </Panel>
+        )}
+
         {page === "replay" && <Info title="REPLAY MODE" items={[["Winning Trades", "Study what worked."], ["Losing Trades", "Study what failed."], ["Triggers", "See scanner trigger reason."], ["Structure Review", "Replay support/resistance."]]} />}
+
         {page === "settings" && <Info title="SETTINGS" items={[["Theme", "Rusty light gray steel."], ["Safe Mode", "Protective scanner defaults."], ["Broker", "Preview only."], ["IBKR", "Later."], ["Auto Buy", "Off by default."]]} />}
 
         <footer>
@@ -455,51 +586,61 @@ export default function Home() {
 
       <style>{`
         *{box-sizing:border-box}
-        body{margin:0;background:#2b2b28;color:#252525;font-family:Arial,sans-serif}
-        .app{min-height:100vh;display:grid;grid-template-columns:240px 1fr;background:radial-gradient(circle at top,#5c5b54,#2b2b28 60%)}
-        .sidebar{padding:18px;height:100vh;position:sticky;top:0}
+        html,body{margin:0;min-height:100%;background:#2b2b28;color:#252525;font-family:Arial,sans-serif;overflow:auto}
+        .app{min-height:100vh;display:grid;grid-template-columns:240px minmax(0,1fr);background:radial-gradient(circle at top,#5c5b54,#2b2b28 60%);overflow:visible}
+        .sidebar{padding:18px;height:100vh;position:sticky;top:0;overflow-y:auto;overflow-x:hidden}
+        .main{padding:22px;min-width:0;overflow-x:auto;overflow-y:visible}
         .brand{padding:18px;border:1px solid #222;background:#c5c0b4;border-radius:12px;margin-bottom:14px;box-shadow:inset 0 0 18px rgba(0,0,0,.35)}
         .brand small,.tag{color:#1f6da8;letter-spacing:4px;font-weight:900;font-size:12px}
         .brand h2{font-size:48px;margin:4px 0;color:#333;letter-spacing:2px}
-        .nav,button{width:100%;padding:13px;margin:7px 0;border-radius:10px;border:1px solid #1f2529;background:#303336;color:#d9d3c4;font-weight:900;letter-spacing:1px;box-shadow:inset 0 0 12px rgba(255,255,255,.04)}
+        .nav,button{width:100%;padding:13px;margin:7px 0;border-radius:10px;border:1px solid #1f2529;background:#303336;color:#d9d3c4;font-weight:900;letter-spacing:1px}
         .active,button:hover{background:#1f7eea!important;color:white!important}
-        .main{padding:22px}
-        .metal{border:1px solid #2a2a2a;border-radius:16px;box-shadow:0 18px 35px rgba(0,0,0,.45),inset 0 0 24px rgba(0,0,0,.18);position:relative;overflow:hidden}
-        .metal:before,.panel:before{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(circle at 10% 20%,rgba(255,255,255,.22),transparent 2%),radial-gradient(circle at 80% 30%,rgba(0,0,0,.18),transparent 3%),linear-gradient(120deg,rgba(255,255,255,.14),transparent 20%,rgba(0,0,0,.12));opacity:.55}
+        .metal,.panel{border:1px solid #2a2a2a;border-radius:16px;box-shadow:0 18px 35px rgba(0,0,0,.45),inset 0 0 24px rgba(0,0,0,.18);position:relative;overflow:hidden}
         .dark{background:#3f423f;color:#e0ddd2}
         .light,.panel{background:#bdb7aa;color:#222}
-        .hero{display:grid;grid-template-columns:1fr 330px;gap:18px;padding:24px;margin-bottom:18px}
+        .hero{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:18px;padding:24px;margin-bottom:18px}
         h1{font-size:64px;line-height:.95;margin:8px 0;color:#343434;text-shadow:1px 1px #eee;letter-spacing:2px}
         .clock strong{font-size:34px;color:#1f6da8}
-        .modes{display:grid;grid-template-columns:repeat(7,1fr);gap:10px;margin-bottom:18px}
-        .grid3{display:grid;grid-template-columns:320px 1fr 330px;gap:18px}
-        .panel{padding:18px;border:1px solid #2d3337;border-radius:16px;margin-bottom:18px;position:relative}
-        .panel>*{position:relative}
+        .modes{display:grid;grid-template-columns:repeat(7,minmax(130px,1fr));gap:10px;margin-bottom:18px;overflow-x:auto}
+        .grid3{display:grid;grid-template-columns:320px minmax(0,1fr) 330px;gap:18px}
+        .panel{padding:18px;margin-bottom:18px}
         .panel h3.big{font-size:70px;margin:0}
         .yesText,.good{color:#1e8f44!important}.noText,.bad{color:#b6212f!important}.waitText,.warn{color:#b67900!important}
         .row{display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid rgba(0,0,0,.25);padding:9px 0}
         .row span{color:#4c4c4c}.row b{color:#1f1f1f}
-        .filters{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+        .filters{display:grid;grid-template-columns:repeat(3,minmax(160px,1fr));gap:14px}
         label{font-weight:900;color:#333}
-        input{width:100%;padding:12px;margin-top:6px;border-radius:8px;border:1px solid #222;background:#252525;color:#6bbcff;font-weight:900}
-        .table{border:1px solid #333;border-radius:12px;overflow:auto}
+        input,select,textarea{width:100%;padding:12px;margin-top:6px;border-radius:8px;border:1px solid #222;background:#252525;color:#6bbcff;font-weight:900}
+        .tableWrap{max-width:100%;overflow:auto}
+        .table{display:grid;grid-template-columns:repeat(14,minmax(115px,1fr));min-width:1600px;border:1px solid #333;border-radius:12px;overflow:hidden}
         .table>b,.rowGrid span{padding:10px;border-bottom:1px solid rgba(0,0,0,.25)}
-        .table{display:grid;grid-template-columns:repeat(13,minmax(105px,1fr))}
         .rowGrid{display:contents}
         .table>b{background:#333;color:#d9d3c4}
-        ul{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;padding:0}
+        .newsGrid,.watchGrid{display:grid;grid-template-columns:repeat(3,minmax(220px,1fr));gap:14px}
+        .newsCard,.watchCard,.journalCard{background:#d0cabd;border:1px solid #3a3a3a;border-radius:12px;padding:14px}
+        .journalStack{display:grid;gap:18px}
+        .journalTop,.journalNumbers{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:12px}
+        .journalCard textarea{min-height:90px;resize:vertical}
+        ul{display:grid;grid-template-columns:repeat(3,minmax(220px,1fr));gap:12px;padding:0}
         li{list-style:none;background:#d0cabd;border:1px solid #3a3a3a;border-radius:12px;padding:14px}
         li b{display:block;color:#1f6da8;margin-bottom:6px}
         footer{color:#d9d3c4;padding:20px}
-        @media(max-width:1050px){.app,.hero,.grid3,.modes,.filters,ul{grid-template-columns:1fr}.sidebar{position:relative;height:auto}.table{grid-template-columns:repeat(13,150px)}h1{font-size:46px}}
+        @media(max-width:1050px){
+          .app{grid-template-columns:1fr}
+          .sidebar{position:relative;height:auto}
+          .hero,.grid3,.filters,.newsGrid,.watchGrid,.journalTop,.journalNumbers,ul{grid-template-columns:1fr}
+          .modes{grid-template-columns:repeat(7,180px)}
+          .table{grid-template-columns:repeat(14,150px)}
+          h1{font-size:46px}
+        }
       `}</style>
     </main>
   );
 }
 
-function Panel({ title, children, small }: { title: string; children: ReactNode; small?: boolean }) {
+function Panel({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className={small ? "panel smallPanel" : "panel"}>
+    <section className="panel">
       <p className="tag">{title}</p>
       {children}
     </section>
@@ -516,16 +657,26 @@ function Row({ a, b }: { a: string; b: ReactNode }) {
 }
 
 function Info({ title, items }: { title: string; items: [string, string][] }) {
+  const [open, setOpen] = useState<string | null>(items[0]?.[0] || null);
+  const active = items.find(([name]) => name === open);
+
   return (
     <Panel title={title}>
       <ul>
         {items.map(([name, text]) => (
-          <li key={name}>
+          <li key={name} onClick={() => setOpen(name)}>
             <b>{name}</b>
-            <span>{text}</span>
+            <span>{open === name ? text : "Tap to open"}</span>
           </li>
         ))}
       </ul>
+
+      {active && (
+        <div className="newsCard">
+          <h2>{active[0]}</h2>
+          <p>{active[1]}</p>
+        </div>
+      )}
     </Panel>
   );
 }
