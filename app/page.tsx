@@ -192,7 +192,7 @@ export default function Home() {
   const [manualTicker, setManualTicker] = useState("CAST");
   const [manualSupport, setManualSupport] = useState(28);
   const [manualResistance, setManualResistance] = useState(34);
-
+  const [selectedTicker, setSelectedTicker] = useState("");
   const [watchlist, setWatchlist] = useState<string[]>([]);
 
   const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([
@@ -436,16 +436,24 @@ export default function Home() {
                     <span>{money(s.confirmationEntry)}</span>
                     <span>{money(s.proofEntry)}</span>
                     <span>{s.proofScore}</span>
-                    <span className={s.verdict === "YES" ? "good" : s.verdict === "NO" ? "bad" : "warn"}>{s.verdict}</span>
+                    <span className={s.verdict === "YES
                     <span className="actionCell">
-  <button onClick={() => watchlist.includes(s.ticker) ? removeWatchlist(s.ticker) : addWatchlist(s.ticker)}>
+  <button
+    onClick={() =>
+      watchlist.includes(s.ticker)
+        ? removeWatchlist(s.ticker)
+        : addWatchlist(s.ticker)
+    }
+  >
     {watchlist.includes(s.ticker) ? "REMOVE" : "ADD"}
   </button>
 
-  <button onClick={() => {
-    setManualTicker(s.ticker);
-    setPage("structure");
-  }}>
+  <button
+    onClick={() => {
+      setManualTicker(s.ticker);
+      setPage("structure");
+    }}
+  >
     STRUCTURE
   </button>
 
@@ -453,7 +461,7 @@ export default function Home() {
     JOURNAL
   </button>
 </span>
-                  </div>
+                      </div>
                 ))}
               </div>
             </div>
