@@ -55,6 +55,7 @@ type Stock = {
   trapRisk: Signal;
   structureGrade: string;
   verdict: Verdict;
+  earlyRunner: string;
   rejection: string;
   whyLikes: string[];
   whyRejects: string[];
@@ -180,7 +181,16 @@ function normalize(raw: any, index: number): Stock {
   const structureGrade = rr >= 2 && spreadStatus === "GOOD" ? "A" : rr >= 1.2 ? "B" : rr >= 0.6 ? "C" : "D";
   const trapRisk: Signal =
     gain > 80 && volume < 500_000 ? "BAD" : spreadStatus === "BAD" ? "BAD" : proofScore < 55 ? "CHECK" : "GOOD";
-
+  const earlyRunner =
+    rankChange >= 35 && volumeAcceleration >= 65 && gain < 35
+      ? "EARLY"
+      : rankChange >= 20 && volumeAcceleration >= 50 && gain < 60
+      ? "WARMING"
+      : proofScore >= 80
+      ? "HOT"
+      : gain >= 80
+      ? "EXTENDED"
+      : "WATCH";
   const whyLikes: string[] = [];
   const whyRejects: string[] = [];
 
@@ -235,6 +245,7 @@ function normalize(raw: any, index: number): Stock {
     trapRisk,
     structureGrade,
     verdict,
+    earlyRunner,
     rejection,
     whyLikes,
     whyRejects,
@@ -385,6 +396,7 @@ export default function Home() {
   ]);
 
   const rejected = stocks.filter((s) => s.rejection);
+  const rejectionLog = rejected.slice(0, 10);
   const top = filtered[0];
   const marketWeather = emptyFeed ? "MARKET CLOSED" : filtered.length >= 10 ? "HOT" : filtered.length >= 3 ? "MIXED" : "DEAD";
 
@@ -500,7 +512,7 @@ export default function Home() {
                 <Row a="Last Scan" b={lastScan} />
                 <Row a="API Status" b={emptyFeed ? "NO LIVE DATA" : "CONNECTED"} />
                 <Row a="Tickers Returned" b={stocks.length} />
-                <Row a="Filter Passed" b={filtered.length} />
+                <Row a="Filter Passed" b={filtered.length}
                 <Row a="Filter Rejected" b={Math.max(0, stocks.length - filtered.length)} />
                 <Row a="Market Weather" b={marketWeather} />
                 <Row a="Raw Count" b={stocks.length} />
@@ -587,6 +599,7 @@ export default function Home() {
                     <span>{money(s.proofEntry)}</span>
                     <span>{s.rr.toFixed(2)}</span>
                     <span>{s.proofScore}</span>
+                    <span>{s.earlyRunner}</span>
                     <span className={s.verdict === "YES" ? "good" : s.verdict === "NO" ? "bad" : "warn"}>{s.verdict}</span>
                     <span className="actionCell">
                       <button onClick={() => (watchlist.includes(s.ticker) ? removeWatchlist(s.ticker) : addWatchlist(s.ticker))}>
@@ -953,7 +966,7 @@ h1{font-size:64px;line-height:.95;margin:8px 0;color:#2c2c2c;text-shadow:1px 1px
 label{font-weight:900;color:#333}
 input,select,textarea{width:100%;padding:12px;margin-top:6px;border-radius:8px;border:1px solid #1f1f1f;background:#202020;color:#63b8ff;font-weight:900}
 .tableWrap{max-width:100%;overflow:auto}
-.table{display:grid;grid-template-columns:repeat(16,minmax(118px,1fr));min-width:1900px;border:1px solid #333;border-radius:12px;overflow:hidden}
+.table{display:grid;grid-template-columns:repeat(17,minmax(118px,1fr));min-width:1900px;border:1px solid #333;border-radius:12px;overflow:hidden}
 .table>b,.rowGrid span{padding:10px;border-bottom:1px solid rgba(0,0,0,.25)}
 .rowGrid{display:contents}
 .table>b{background:#303233;color:#ddd6c8}
