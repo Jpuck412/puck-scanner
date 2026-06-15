@@ -619,7 +619,18 @@ export default function Home() {
               {showRejected ? "HIDE REJECTED" : "SHOW REJECTED"}
             </button>
 
-            {showRejected && rejected.map((s) => <Row key={s.ticker} a={s.ticker} b={s.rejection} />)}
+            {showRejected && (
+  <div className="detailBox">
+    <h2>PERMISSION REMOVED</h2>
+    {rejected.length === 0 ? (
+      <p>No rejected symbols.</p>
+    ) : (
+      rejected.slice(0, 12).map((s) => (
+        <Row key={s.ticker} a={s.ticker} b={s.rejection || "NO PROOF"} />
+      ))
+    )}
+  </div>
+)}
           </Panel>
         )}
 
