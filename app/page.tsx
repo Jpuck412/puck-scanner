@@ -31,6 +31,7 @@ type Stock = {
   gain: number;
   change: number;
   volume: number;
+  floatSize: number;
   support: number;
   resistance: number;
   aggressiveEntry: number;
@@ -221,6 +222,7 @@ function normalize(raw: any, index: number): Stock {
     gain,
     change,
     volume,
+    floatSize,
     support,
     resistance,
     aggressiveEntry,
@@ -254,9 +256,9 @@ function normalize(raw: any, index: number): Stock {
 
 function demoStocks(): Stock[] {
   return [
-    { ticker: "TEST", price: 1.42, gain: 18.4, volume: 820_000, day: { h: 1.48, l: 1.21 } },
-    { ticker: "DEMO", price: 0.74, gain: 11.2, volume: 430_000, day: { h: 0.79, l: 0.66 } },
-    { ticker: "SCAN", price: 2.18, gain: 31.5, volume: 1_200_000, day: { h: 2.29, l: 1.92 } },
+    { ticker: "TEST", price: 1.42, gain: 18.4, volume: 820_000, floatSize: 8_700_000,
+    { ticker: "DEMO", price: 0.74, gain: 11.2, volume: 430_000, floatSize: 1_500_000,
+    { ticker: "SCAN", price: 2.18, gain: 31.5, volume: 1_200_000, floatSize: 3_200_000,
   ].map(normalize);
 }
 
@@ -567,6 +569,7 @@ export default function Home() {
                   "Price",
                   "Gain",
                   "Vol",
+                  "Float",
                   "Rank+",
                   "VolAccel",
                   "Spread",
@@ -590,6 +593,7 @@ export default function Home() {
                     <span>{money(s.price)}</span>
                     <span className="good">{pct(s.gain)}</span>
                     <span>{vol(s.volume)}</span>
+                    <span>{vol(s.floatSize)}</span>  
                     <span>{s.rankChange}</span>
                     <span>{s.volumeAcceleration}</span>
                     <span className={classFor(s.spreadStatus)}>{s.spreadStatus}</span>
@@ -978,7 +982,7 @@ h1{font-size:64px;line-height:.95;margin:8px 0;color:#2c2c2c;text-shadow:1px 1px
 label{font-weight:900;color:#333}
 input,select,textarea{width:100%;padding:12px;margin-top:6px;border-radius:8px;border:1px solid #1f1f1f;background:#202020;color:#63b8ff;font-weight:900}
 .tableWrap{max-width:100%;overflow:auto}
-.table{display:grid;grid-template-columns:repeat(17,minmax(118px,1fr));min-width:1900px;border:1px solid #333;border-radius:12px;overflow:hidden}
+.table{display:grid;grid-template-columns:repeat(18,minmax(118px,1fr));min-width:1900px;border:1px solid #333;border-radius:12px;overflow:hidden}
 .table>b,.rowGrid span{padding:10px;border-bottom:1px solid rgba(0,0,0,.25)}
 .rowGrid{display:contents}
 .table>b{background:#303233;color:#ddd6c8}
