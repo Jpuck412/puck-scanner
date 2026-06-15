@@ -45,7 +45,6 @@ type Stock = {
   reward: number;
   rr: number;
   rvol: number;
-  floatSize: number;
   spread: number;
   speedScore: number;
   ignitionScore: number;
