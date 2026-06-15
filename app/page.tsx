@@ -177,20 +177,31 @@ function normalize(raw: any, index: number): Stock {
   if (volumeAcceleration >= 70) proofScore += 6;
   proofScore = Math.max(0, Math.min(100, Math.round(proofScore)));
 
-  const verdict: Verdict = proofScore >= 80 ? "YES" : proofScore >= 60 ? "WAIT" : "NO";
+  const verdict: Verdict =
+  proofScore >= 85 ? "YES" :
+  proofScore >= 45 ? "WAIT" :
+  "NO";
   const structureGrade = rr >= 2 && spreadStatus === "GOOD" ? "A" : rr >= 1.2 ? "B" : rr >= 0.6 ? "C" : "D";
   const trapRisk: Signal =
     gain > 80 && volume < 500_000 ? "BAD" : spreadStatus === "BAD" ? "BAD" : proofScore < 55 ? "CHECK" : "GOOD";
   const earlyRunner =
-    rankChange >= 35 && volumeAcceleration >= 65 && gain < 35
-      ? "EARLY"
-      : rankChange >= 20 && volumeAcceleration >= 50 && gain < 60
-      ? "WARMING"
-      : proofScore >= 80
-      ? "HOT"
-      : gain >= 80
-      ? "EXTENDED"
-      : "WATCH";
+  rankChange >= 30 &&
+  volumeAcceleration >= 55 &&
+  gain < 25
+    ? "EARLY"
+
+    : rankChange >= 15 &&
+      volumeAcceleration >= 35 &&
+      gain < 50
+    ? "WARMING"
+
+    : proofScore >= 85
+    ? "HOT"
+
+    : gain >= 80
+    ? "EXTENDED"
+
+    : "WATCH";
   const whyLikes: string[] = [];
   const whyRejects: string[] = [];
 
@@ -210,10 +221,20 @@ function normalize(raw: any, index: number): Stock {
   else whyRejects.push("Junk symbol risk");
 
   let rejection = "";
-  if (isJunk(ticker)) rejection = "JUNK SYMBOL";
-  else if (volume < 100_000) rejection = "LOW VOLUME";
-  else if (spreadStatus === "BAD") rejection = "SPREAD RISK";
-  else if (proofScore < 30) rejection = "NO PROOF";
+
+if (price < support) {
+  rejection = "SUPPORT FAILED";
+}
+else if (proofScore < 25) {
+  rejection = "NO PROOF";
+}
+else if (
+  spreadStatus === "BAD" &&
+  gain < 5 &&
+  volumeAcceleration < 20
+) {
+  rejection = "DEAD TAPE";
+}
 
   return {
     ticker,
