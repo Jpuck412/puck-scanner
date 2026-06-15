@@ -577,6 +577,7 @@ export default function Home() {
                   "Proof",
                   "R/R",
                   "Score",
+                  "Early",
                   "Verdict",
                   "Actions",
                 ].map((h) => (
