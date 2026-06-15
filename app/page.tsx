@@ -213,7 +213,7 @@ function normalize(raw: any, index: number): Stock {
   if (isJunk(ticker)) rejection = "JUNK SYMBOL";
   else if (volume < 100_000) rejection = "LOW VOLUME";
   else if (spreadStatus === "BAD") rejection = "SPREAD RISK";
-  else if (proofScore < 60) rejection = "NO PROOF";
+  else if (proofScore < 45) rejection = "NO PROOF";
 
   return {
     ticker,
