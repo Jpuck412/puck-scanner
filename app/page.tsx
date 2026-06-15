@@ -197,7 +197,7 @@ function normalize(raw: any, index: number): Stock {
   if (rankChange >= 20) whyLikes.push("Rank climbing before the crowd sees it");
   else whyRejects.push("Rank movement is not strong yet");
 
-  if (volumeAcceleration >= 60) whyLikes.push("Volume acceleration is waking up");
+  if (volumeAcceleration >= 45) whyLikes.push("Volume acceleration is waking up");
   else whyRejects.push("Volume acceleration still weak");
 
   if (spreadStatus === "GOOD") whyLikes.push("Spread is acceptable");
@@ -213,7 +213,7 @@ function normalize(raw: any, index: number): Stock {
   if (isJunk(ticker)) rejection = "JUNK SYMBOL";
   else if (volume < 100_000) rejection = "LOW VOLUME";
   else if (spreadStatus === "BAD") rejection = "SPREAD RISK";
-  else if (proofScore < 45) rejection = "NO PROOF";
+  else if (proofScore < 30) rejection = "NO PROOF";
 
   return {
     ticker,
