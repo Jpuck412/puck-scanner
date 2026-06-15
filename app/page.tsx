@@ -496,6 +496,12 @@ export default function Home() {
                   {top?.verdict || "WAIT"}
                 </h3>
                 <Row a="Feed" b={status} />
+                <Row a="Data Source" b="POLYGON" />
+                <Row a="Last Scan" b={lastScan} />
+                <Row a="API Status" b={emptyFeed ? "NO LIVE DATA" : "CONNECTED"} />
+                <Row a="Tickers Returned" b={stocks.length} />
+                <Row a="Filter Passed" b={filtered.length} />
+                <Row a="Filter Rejected" b={Math.max(0, stocks.length - filtered.length)} />
                 <Row a="Market Weather" b={marketWeather} />
                 <Row a="Raw Count" b={stocks.length} />
                 <Row a="Showing" b={filtered.length} />
