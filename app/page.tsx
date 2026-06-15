@@ -235,7 +235,6 @@ function normalize(raw: any, index: number): Stock {
     reward,
     rr,
     rvol,
-    floatSize,
     spread,
     speedScore,
     ignitionScore,
