@@ -256,9 +256,9 @@ function normalize(raw: any, index: number): Stock {
 
 function demoStocks(): Stock[] {
   return [
-    { ticker: "TEST", price: 1.42, gain: 18.4, volume: 820_000, floatSize: 8_700_000,
-    { ticker: "DEMO", price: 0.74, gain: 11.2, volume: 430_000, floatSize: 1_500_000,
-    { ticker: "SCAN", price: 2.18, gain: 31.5, volume: 1_200_000, floatSize: 3_200_000,
+ { ticker: "TEST", price: 1.42, gain: 18.4, volume: 820_000, floatSize: 8_700_000 },
+    { ticker: "DEMO", price: 0.74, gain: 11.2, volume: 430_000, floatSize: 1_500_000 },
+    { ticker: "SCAN", price: 2.18, gain: 31.5, volume: 1_200_000, floatSize: 3_200_000 },   
   ].map(normalize);
 }
 
