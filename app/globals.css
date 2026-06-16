@@ -1,0 +1,7 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+body { background: #20242B; color: #E6EAF0; }
+.panel { background: #2A2F38; border: 1px solid #3A404C; }
+.text-accent { color: #4DA3FF; }
+.text-success { color: #00D084; }
