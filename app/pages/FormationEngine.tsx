@@ -1,7 +1,7 @@
 "use client";
 
-import { useAppStore } from "@/lib/store";
-import { Panel, Stat, MiniChart } from "@/components";
+import { useAppStore } from ../lib/store";
+import { Panel, Stat, MiniChart } from ../components";
 
 export function FormationEngine() {
   const { symbols } = useAppStore();
