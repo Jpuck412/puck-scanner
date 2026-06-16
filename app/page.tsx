@@ -1,262 +1,605 @@
-// app/elite/page.tsx
-// Branch: elite-dev-v2
-// PROOF OF STRUCTURE™ ELITE - Single-file drop-in for Phase 1 foundation
-// Assumes existing API routes in repo: /api/scanner, /api/market-intel
-'use client';
+"use client";
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from "react";
 
-/* ============================
-   Types
-   ============================ */
+const THEME = {
+  bg: "#20242B",
+  panel: "#2A2F38",
+  border: "#3A404C",
+  text: "#E6EAF0",
+  text2: "#9AA4B2",
+  blue: "#4DA3FF",
+  success: "#00D084",
+  warning: "#FFB547",
+  danger: "#FF5C5C",
+};
 
-type ConnectionStatus = 'connected' | 'disconnected';
+type RawTicker = any;
 
-interface DataHealth {
-  status: ConnectionStatus;
-  lastUpdate: Date | null;
-  dataAgeMs: number | null;
-  errorMessage?: string;
-}
-
-type RunnerLifecycle =
-  | 'SLEEPING'
-  | 'ACCUMULATING'
-  | 'WAKING'
-  | 'FORMING'
-  | 'IGNITING'
-  | 'RUNNING'
-  | 'EXTENDED'
-  | 'FAILING';
-
-interface ScannerRow {
+type EliteTicker = {
+  raw: RawTicker;
   ticker: string;
-  price: number;
-  gainPct: number;
-  spreadPct: number;
-  speedScore: number;
-  volumeAcceleration: number;
-  floatShares: number;
+  price: number | null;
+  gainPct: number | null;
+  spreadPct: number | null;
+  speedScore: number | null;
+  volumeAcceleration: number | null;
+  floatShares: number | null;
   supportLevel: number | null;
   resistanceLevel: number | null;
-  lifecycle: RunnerLifecycle;
   formationScore: number | null;
   journeyScore: number | null;
+  catalystStrength: number | null;
+  environmentScore: number | null;
+  lifecycle: string | null;
   proofScore: number | null;
-  catalystScore: number | null;
-  environmentScore: number | null;
-  eliteScore: number | null;
-  verdict?: string;
-}
+  verdict: string | null;
+  eliteScore: number;
+};
 
-interface ScannerSnapshot {
-  rows: ScannerRow[];
-  health: DataHealth;
-}
+type MarketSnapshot = {
+  SPY?: any;
+  QQQ?: any;
+  IWM?: any;
+  VIX?: any;
+};
 
-interface MarketIndex {
-  symbol: 'SPY' | 'QQQ' | 'IWM' | 'VIX';
-  lastPrice: number;
-  changePct: number;
-}
-
-interface MarketIntelSnapshot {
-  indices: MarketIndex[];
-  sectorStrength: number | null;
-  marketBreadth: number | null;
-  premarketParticipation: number | null;
-  newsRisk: number | null;
-  spreadEnvironment: number | null;
-  marketRegime: string | null;
-  environmentScore: number | null;
-  health: DataHealth;
-}
-
-interface WatchlistItem {
+type WatchItem = {
   ticker: string;
   notes: string;
   status: string;
-  lifecycle: RunnerLifecycle;
-  eliteScore: number | null;
-}
+  lifecycle: string | null;
+  eliteScore: number;
+};
 
-interface JournalEntry {
+type JournalEntry = {
   id: string;
   date: string;
   time: string;
   ticker: string;
-  entry: string;
-  exit: string;
+  entry?: number | null;
+  exit?: number | null;
   reason: string;
   evidence: string;
   mistake: string;
   lesson: string;
   outcome: string;
-}
-
-/* ============================
-   Theme
-   ============================ */
-
-const theme = {
-  background: '#20242B',
-  panel: '#2A2F38',
-  border: '#3A404C',
-  textPrimary: '#E6EAF0',
-  textSecondary: '#9AA4B2',
-  accentBlue: '#4DA3FF',
-  success: '#00D084',
-  warning: '#FFB547',
-  danger: '#FF5C5C',
 };
 
-/* ============================
-   Scoring Engine
-   ============================ */
+const STORAGE_KEYS = {
+  watchlist: "elite_watchlist",
+  journal: "elite_journal",
+};
 
-interface ScoringInput {
-  spreadPct: number;
-  speedScore: number;
-  volumeAcceleration: number;
-  floatShares: number;
-  supportScore: number;
-  catalystScore: number;
-  environmentScore: number;
-  journeyScore: number;
+function extractTickers(json: any): RawTicker[] {
+  if (!json) return [];
+  if (Array.isArray(json.tickers)) return json.tickers;
+  if (json.data && Array.isArray(json.data.tickers)) return json.data.tickers;
+  if (Array.isArray(json.results)) return json.results;
+  return [];
 }
 
-interface ScoringOutput {
-  spreadScore: number;
-  speedScore: number;
-  volumeAccelerationScore: number;
-  floatScore: number;
-  supportScore: number;
-  catalystScore: number;
-  environmentScore: number;
-  journeyScore: number;
-  formationScore: number;
-  proofScore: number;
-  eliteScore: number;
+function computeEliteScoreFromRaw(raw: RawTicker): number {
+  const spreadPct =
+    typeof raw.spreadPct === "number"
+      ? raw.spreadPct
+      : typeof raw.spread === "number"
+      ? raw.spread
+      : 0;
+
+  const speedScore =
+    typeof raw.speedScore === "number"
+      ? raw.speedScore
+      : typeof raw.speed === "number"
+      ? raw.speed
+      : 0;
+
+  const volumeAcceleration =
+    typeof raw.volumeAcceleration === "number"
+      ? raw.volumeAcceleration
+      : typeof raw.volumeAccel === "number"
+      ? raw.volumeAccel
+      : 0;
+
+  const floatShares =
+    typeof raw.floatShares === "number"
+      ? raw.floatShares
+      : typeof raw.float === "number"
+      ? raw.float
+      : 0;
+
+  const supportScore =
+    typeof raw.supportScore === "number"
+      ? raw.supportScore
+      : typeof raw.support === "number"
+      ? raw.support
+      : 0;
+
+  const catalystStrength =
+    typeof raw.catalystStrength === "number"
+      ? raw.catalystStrength
+      : typeof raw.catalystScore === "number"
+      ? raw.catalystScore
+      : 0;
+
+  const environmentScore =
+    typeof raw.environmentScore === "number"
+      ? raw.environmentScore
+      : typeof raw.envScore === "number"
+      ? raw.envScore
+      : 0;
+
+  const journeyScore =
+    typeof raw.journeyScore === "number"
+      ? raw.journeyScore
+      : typeof raw.lifecycleScore === "number"
+      ? raw.lifecycleScore
+      : 0;
+
+  const spreadScore = 100 - spreadPct * 100;
+
+  return (
+    0.2 * spreadScore +
+    0.2 * speedScore +
+    0.2 * volumeAcceleration +
+    0.1 * (floatShares > 0 ? Math.min(100, 100000000 / floatShares) : 0) +
+    0.1 * supportScore +
+    0.1 * catalystStrength +
+    0.1 * environmentScore +
+    0.1 * journeyScore
+  );
 }
 
-function computeScoring(input: ScoringInput): ScoringOutput {
-  const spreadScore = Math.max(0, Math.min(100, 100 - Math.abs(input.spreadPct) * 8));
-  const speedScore = Math.max(0, Math.min(100, input.speedScore));
-  const volumeAccelerationScore = Math.max(0, Math.min(100, input.volumeAcceleration * 20));
-  const floatScore =
-    input.floatShares > 0 ? Math.max(0, Math.min(100, (50_000_000 / input.floatShares) * 100)) : 0;
-  const supportScore = Math.max(0, Math.min(100, input.supportScore));
-  const catalystScore = Math.max(0, Math.min(100, input.catalystScore));
-  const environmentScore = Math.max(0, Math.min(100, input.environmentScore));
-  const journeyScore = Math.max(0, Math.min(100, input.journeyScore));
+function normalizeTicker(raw: RawTicker): EliteTicker | null {
+  const ticker =
+    raw.ticker ||
+    raw.symbol ||
+    raw.T ||
+    raw["ticker"] ||
+    raw["symbol"] ||
+    null;
 
-  const formationScore = Math.round(
-    (spreadScore * 0.2 + speedScore * 0.2 + volumeAccelerationScore * 0.2 + supportScore * 0.2 + floatScore * 0.2) / 1,
-  );
+  if (!ticker) return null;
 
-  const proofScore = Math.round(
-    (formationScore * 0.4 + catalystScore * 0.2 + environmentScore * 0.2 + journeyScore * 0.2) / 1,
-  );
+  const price =
+    typeof raw.price === "number"
+      ? raw.price
+      : typeof raw.last === "number"
+      ? raw.last
+      : typeof raw.close === "number"
+      ? raw.close
+      : typeof raw.c === "number"
+      ? raw.c
+      : null;
 
-  const eliteScore = Math.round(
-    spreadScore * 0.2 +
-      speedScore * 0.2 +
-      volumeAccelerationScore * 0.2 +
-      floatScore * 0.1 +
-      supportScore * 0.1 +
-      catalystScore * 0.1 +
-      environmentScore * 0.1 +
-      journeyScore * 0.1,
-  );
+  const gainPct =
+    typeof raw.gainPct === "number"
+      ? raw.gainPct
+      : typeof raw.changePercent === "number"
+      ? raw.changePercent
+      : typeof raw.todaysChangePerc === "number"
+      ? raw.todaysChangePerc
+      : null;
+
+  const spreadPct =
+    typeof raw.spreadPct === "number"
+      ? raw.spreadPct
+      : typeof raw.spread === "number"
+      ? raw.spread
+      : null;
+
+  const speedScore =
+    typeof raw.speedScore === "number"
+      ? raw.speedScore
+      : typeof raw.speed === "number"
+      ? raw.speed
+      : null;
+
+  const volumeAcceleration =
+    typeof raw.volumeAcceleration === "number"
+      ? raw.volumeAcceleration
+      : typeof raw.volumeAccel === "number"
+      ? raw.volumeAccel
+      : null;
+
+  const floatShares =
+    typeof raw.floatShares === "number"
+      ? raw.floatShares
+      : typeof raw.float === "number"
+      ? raw.float
+      : null;
+
+  const supportLevel =
+    typeof raw.supportLevel === "number"
+      ? raw.supportLevel
+      : typeof raw.support === "number"
+      ? raw.support
+      : typeof raw.low === "number"
+      ? raw.low
+      : null;
+
+  const resistanceLevel =
+    typeof raw.resistanceLevel === "number"
+      ? raw.resistanceLevel
+      : typeof raw.resistance === "number"
+      ? raw.resistance
+      : typeof raw.high === "number"
+      ? raw.high
+      : null;
+
+  const formationScore =
+    typeof raw.formationScore === "number"
+      ? raw.formationScore
+      : typeof raw.structureScore === "number"
+      ? raw.structureScore
+      : null;
+
+  const journeyScore =
+    typeof raw.journeyScore === "number"
+      ? raw.journeyScore
+      : typeof raw.lifecycleScore === "number"
+      ? raw.lifecycleScore
+      : null;
+
+  const catalystStrength =
+    typeof raw.catalystStrength === "number"
+      ? raw.catalystStrength
+      : typeof raw.catalystScore === "number"
+      ? raw.catalystScore
+      : null;
+
+  const environmentScore =
+    typeof raw.environmentScore === "number"
+      ? raw.environmentScore
+      : typeof raw.envScore === "number"
+      ? raw.envScore
+      : null;
+
+  const lifecycle =
+    raw.lifecycle ||
+    raw.runnerLifecycle ||
+    raw.state ||
+    null;
+
+  const proofScore =
+    typeof raw.proofScore === "number"
+      ? raw.proofScore
+      : null;
+
+  const verdict =
+    raw.verdict ||
+    (proofScore !== null && proofScore < 50 ? "NO PROOF = NO TRADE" : null);
+
+  const eliteScore = computeEliteScoreFromRaw(raw);
 
   return {
-    spreadScore,
+    raw,
+    ticker,
+    price,
+    gainPct,
+    spreadPct,
     speedScore,
-    volumeAccelerationScore,
-    floatScore,
-    supportScore,
-    catalystScore,
-    environmentScore,
-    journeyScore,
+    volumeAcceleration,
+    floatShares,
+    supportLevel,
+    resistanceLevel,
     formationScore,
+    journeyScore,
+    catalystStrength,
+    environmentScore,
+    lifecycle,
     proofScore,
+    verdict,
     eliteScore,
   };
 }
 
-/* ============================
-   Lifecycle Engine
-   ============================ */
+function useScanner() {
+  const [tickers, setTickers] = useState<EliteTicker[]>([]);
+  const [loading, setLoading] = useState(true);
 
-function inferLifecycle(row: ScannerRow): RunnerLifecycle {
-  const g = row.gainPct;
-  const v = row.volumeAcceleration;
-  const s = row.speedScore;
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetch("/api/gainers");
+        const json = await res.json();
+        const rawTickers = extractTickers(json);
+        const normalized = rawTickers
+          .map(normalizeTicker)
+          .filter((t): t is EliteTicker => t !== null)
+          .sort((a, b) => b.eliteScore - a.eliteScore);
+        if (!cancelled) setTickers(normalized);
+      } catch (e) {
+        console.error("Scanner API error:", e);
+        if (!cancelled) setTickers([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
-  if (g < -5) return 'FAILING';
-  if (g > 15 && v > 2 && s > 80) return 'RUNNING';
-  if (g > 10 && v > 1.5) return 'IGNITING';
-  if (g > 5 && v > 1) return 'FORMING';
-  if (g > 2) return 'WAKING';
-  if (v > 0.5) return 'ACCUMULATING';
-  return 'SLEEPING';
+  return { tickers, loading };
 }
 
-/* ============================
-   Structure Analysis
-   ============================ */
+function useMarket() {
+  const [snapshot, setSnapshot] = useState<MarketSnapshot>({});
+  const [loading, setLoading] = useState(true);
 
-interface StructureAnalysis {
-  support: number | null;
-  resistance: number | null;
-  rangePosition: string;
-  formationEntry: number | null;
-  aggressiveEntry: number | null;
-  confirmationEntry: number | null;
-  proofEntry: number | null;
-  stop: number | null;
-  target1: number | null;
-  target2: number | null;
-  target3: number | null;
-  riskReward: string;
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetch("/api/market");
+        const json = await res.json();
+        if (!cancelled) {
+          setSnapshot({
+            SPY: json.SPY,
+            QQQ: json.QQQ,
+            IWM: json.IWM,
+            VIX: json.VIX,
+          });
+        }
+      } catch (e) {
+        console.error("Market API error:", e);
+        if (!cancelled) setSnapshot({});
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return { snapshot, loading };
 }
 
-function analyzeStructure(row: ScannerRow): StructureAnalysis {
-  const { price, supportLevel, resistanceLevel } = row;
+function loadWatchlist(): WatchItem[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEYS.watchlist);
+    if (!raw) return [];
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
+}
 
-  const support = supportLevel ?? null;
-  const resistance = resistanceLevel ?? null;
+function saveWatchlist(items: WatchItem[]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(STORAGE_KEYS.watchlist, JSON.stringify(items));
+}
 
-  let rangePosition = 'Unknown';
-  if (support != null && resistance != null) {
-    const range = resistance - support;
-    const pos = price - support;
-    const pct = range > 0 ? (pos / range) * 100 : 0;
-    if (pct < 25) rangePosition = 'Lower Quartile';
-    else if (pct < 50) rangePosition = 'Lower Half';
-    else if (pct < 75) rangePosition = 'Upper Half';
-    else rangePosition = 'Upper Quartile';
+function useWatchlist() {
+  const [items, setItems] = useState<WatchItem[]>([]);
+
+  useEffect(() => {
+    setItems(loadWatchlist());
+  }, []);
+
+  const add = (t: EliteTicker) => {
+    setItems((prev) => {
+      if (prev.some((p) => p.ticker === t.ticker)) return prev;
+      const next = [
+        ...prev,
+        {
+          ticker: t.ticker,
+          notes: "",
+          status: "PLANNED",
+          lifecycle: t.lifecycle,
+          eliteScore: t.eliteScore,
+        },
+      ];
+      saveWatchlist(next);
+      return next;
+    });
+  };
+
+  const remove = (ticker: string) => {
+    setItems((prev) => {
+      const next = prev.filter((p) => p.ticker !== ticker);
+      saveWatchlist(next);
+      return next;
+    });
+  };
+
+  const updateNotes = (ticker: string, notes: string) => {
+    setItems((prev) => {
+      const next = prev.map((p) =>
+        p.ticker === ticker ? { ...p, notes } : p
+      );
+      saveWatchlist(next);
+      return next;
+    });
+  };
+
+  const updateStatus = (ticker: string, status: string) => {
+    setItems((prev) => {
+      const next = prev.map((p) =>
+        p.ticker === ticker ? { ...p, status } : p
+      );
+      saveWatchlist(next);
+      return next;
+    });
+  };
+
+  return { items, add, remove, updateNotes, updateStatus };
+}
+
+function loadJournal(): JournalEntry[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEYS.journal);
+    if (!raw) return [];
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
+}
+
+function saveJournal(entries: JournalEntry[]) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(STORAGE_KEYS.journal, JSON.stringify(entries));
+}
+
+function useJournal() {
+  const [entries, setEntries] = useState<JournalEntry[]>([]);
+
+  useEffect(() => {
+    setEntries(loadJournal());
+  }, []);
+
+  const add = (entry: Omit<JournalEntry, "id">) => {
+    const id = `${entry.ticker}-${Date.now()}`;
+    setEntries((prev) => {
+      const next = [...prev, { ...entry, id }];
+      saveJournal(next);
+      return next;
+    });
+  };
+
+  const remove = (id: string) => {
+    setEntries((prev) => {
+      const next = prev.filter((e) => e.id !== id);
+      saveJournal(next);
+      return next;
+    });
+  };
+
+  return { entries, add, remove };
+}
+
+type WhyContext = {
+  positiveEvidence: string[];
+  negativeEvidence: string[];
+  supportQuality: string;
+  resistanceQuality: string;
+  spreadBehavior: string;
+  speedBehavior: string;
+  volumeBehavior: string;
+  catalystAnalysis: string;
+  environmentAnalysis: string;
+};
+
+function buildWhyContext(t: EliteTicker): WhyContext {
+  const positives: string[] = [];
+  const negatives: string[] = [];
+
+  if (t.supportLevel !== null && t.price !== null && t.price >= t.supportLevel) {
+    positives.push("Support holding above key level.");
+  } else {
+    negatives.push("Price not respecting support.");
   }
 
-  const formationEntry = support != null ? support + (price - support) * 0.25 : null;
-  const aggressiveEntry = support != null ? support + (price - support) * 0.1 : null;
-  const confirmationEntry = resistance != null ? resistance - (resistance - price) * 0.2 : null;
-  const proofEntry = resistance != null ? resistance + (resistance - price) * 0.1 : null;
-
-  const stop = support != null ? support * 0.98 : null;
-  const target1 = resistance != null ? resistance * 1.02 : null;
-  const target2 = resistance != null ? resistance * 1.05 : null;
-  const target3 = resistance != null ? resistance * 1.1 : null;
-
-  let riskReward = 'Unknown';
-  if (stop != null && target1 != null) {
-    const risk = price - stop;
-    const reward = target1 - price;
-    if (risk > 0) {
-      const rr = reward / risk;
-      riskReward = `${rr.toFixed(2)}R`;
-    }
+  if (t.spreadPct !== null && t.spreadPct < 0.01) {
+    positives.push("Spread tight and stable.");
+  } else {
+    negatives.push("Spread wide or unstable.");
   }
+
+  if (t.volumeAcceleration !== null && t.volumeAcceleration > 0) {
+    positives.push("Volume accelerating vs baseline.");
+  } else {
+    negatives.push("Volume not confirming move.");
+  }
+
+  if (t.speedScore !== null && t.speedScore > 0) {
+    positives.push("Speed aligned with direction.");
+  } else {
+    negatives.push("Speed weak or inconsistent.");
+  }
+
+  if (t.catalystStrength !== null && t.catalystStrength > 0) {
+    positives.push("Catalyst present and active.");
+  } else {
+    negatives.push("No clear catalyst.");
+  }
+
+  if (t.environmentScore !== null && t.environmentScore > 50) {
+    positives.push("Market environment supportive.");
+  } else {
+    negatives.push("Environment not supportive.");
+  }
+
+  return {
+    positiveEvidence: positives,
+    negativeEvidence: negatives,
+    supportQuality:
+      t.supportLevel !== null ? "Defined support level from structure." : "Support unclear.",
+    resistanceQuality:
+      t.resistanceLevel !== null ? "Defined resistance level from structure." : "Resistance unclear.",
+    spreadBehavior:
+      t.spreadPct !== null && t.spreadPct < 0.01
+        ? "Tight, institutional spread."
+        : "Wider, less controlled spread.",
+    speedBehavior:
+      t.speedScore !== null && t.speedScore > 0
+        ? "Controlled speed with directional intent."
+        : "Lack of speed or noisy tape.",
+    volumeBehavior:
+      t.volumeAcceleration !== null && t.volumeAcceleration > 0
+        ? "Volume building into move."
+        : "Volume not confirming.",
+    catalystAnalysis:
+      t.catalystStrength !== null && t.catalystStrength > 0
+        ? "Catalyst supports thesis."
+        : "Catalyst absent or weak.",
+    environmentAnalysis:
+      t.environmentScore !== null && t.environmentScore > 50
+        ? "Environment aligned with risk-on behavior."
+        : "Environment mixed or risk-off.",
+  };
+}
+
+function computeStructureLevels(t: EliteTicker) {
+  const support = t.supportLevel;
+  const resistance = t.resistanceLevel;
+  const price = t.price;
+
+  if (support === null || resistance === null || price === null) {
+    return null;
+  }
+
+  const rangePosition =
+    price <= support
+      ? "Bottom of range"
+      : price >= resistance
+      ? "Top of range"
+      : "Mid-range";
+
+  const formationEntry =
+    price > support && price < resistance ? price : null;
+
+  const aggressiveEntry =
+    price > support && t.spreadPct !== null && t.spreadPct < 0.01 ? price : null;
+
+  const confirmationEntry =
+    price > resistance && t.volumeAcceleration !== null && t.volumeAcceleration > 0
+      ? price
+      : null;
+
+  const proofEntry =
+    aggressiveEntry !== null &&
+    t.proofScore !== null &&
+    t.proofScore >= 60
+      ? aggressiveEntry
+      : null;
+
+  const stop = support;
+  const target1 = resistance;
+  const target2 = resistance * 1.03;
+  const target3 = resistance * 1.06;
+
+  const riskReward =
+    stop !== null && target1 !== null
+      ? (target1 - price) / (price - stop)
+      : null;
 
   return {
     support,
@@ -274,1213 +617,1414 @@ function analyzeStructure(row: ScannerRow): StructureAnalysis {
   };
 }
 
-/* ============================
-   Hooks: Scanner & Market Intel
-   ============================ */
+type Tab =
+  | "dashboard"
+  | "scanner"
+  | "formation"
+  | "lifecycle"
+  | "market"
+  | "structure"
+  | "watchlist"
+  | "journal"
+  | "settings";
 
-function initialHealth(label: string): DataHealth {
-  return {
-    status: 'disconnected',
-    lastUpdate: null,
-    dataAgeMs: null,
-    errorMessage: `${label} disconnected`,
-  };
-}
+export default function EliteApp() {
+  const [tab, setTab] = useState<Tab>("dashboard");
+  const { tickers, loading: scannerLoading } = useScanner();
+  const { snapshot, loading: marketLoading } = useMarket();
+  const watchlist = useWatchlist();
+  const journal = useJournal();
+  const [selectedTicker, setSelectedTicker] = useState<EliteTicker | null>(null);
+  const [whyTicker, setWhyTicker] = useState<EliteTicker | null>(null);
 
-function useScanner(): ScannerSnapshot {
-  const [snapshot, setSnapshot] = useState<ScannerSnapshot>({
-    rows: [],
-    health: initialHealth('Scanner'),
-  });
+  const environmentScore = useMemo(() => {
+    if (!tickers.length) return null;
+    const scores = tickers
+      .map((t) => t.environmentScore)
+      .filter((s): s is number => s !== null);
+    if (!scores.length) return null;
+    return scores.reduce((a, b) => a + b, 0) / scores.length;
+  }, [tickers]);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function load() {
-      try {
-        const res = await fetch('/api/scanner', {
-          method: 'GET',
-          headers: { Accept: 'application/json' },
-          cache: 'no-store',
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const json = await res.json();
-        const now = new Date();
-
-        const rows: ScannerRow[] = (json.rows ?? []).map((r: any) => {
-          const base: ScannerRow = {
-            ticker: r.ticker,
-            price: Number(r.price),
-            gainPct: Number(r.gainPct),
-            spreadPct: Number(r.spreadPct),
-            speedScore: Number(r.speedScore),
-            volumeAcceleration: Number(r.volumeAcceleration),
-            floatShares: Number(r.floatShares),
-            supportLevel: r.supportLevel != null ? Number(r.supportLevel) : null,
-            resistanceLevel: r.resistanceLevel != null ? Number(r.resistanceLevel) : null,
-            lifecycle: 'SLEEPING',
-            formationScore: r.formationScore != null ? Number(r.formationScore) : null,
-            journeyScore: r.journeyScore != null ? Number(r.journeyScore) : null,
-            proofScore: r.proofScore != null ? Number(r.proofScore) : null,
-            catalystScore: r.catalystScore != null ? Number(r.catalystScore) : null,
-            environmentScore: r.environmentScore != null ? Number(r.environmentScore) : null,
-            eliteScore: null,
-            verdict: r.verdict,
-          };
-
-          const lifecycle = inferLifecycle(base);
-
-          const scoring = computeScoring({
-            spreadPct: base.spreadPct,
-            speedScore: base.speedScore,
-            volumeAcceleration: base.volumeAcceleration,
-            floatShares: base.floatShares,
-            supportScore: base.supportLevel != null ? 80 : 40,
-            catalystScore: base.catalystScore ?? 0,
-            environmentScore: base.environmentScore ?? 50,
-            journeyScore: base.journeyScore ?? 50,
-          });
-
-          return {
-            ...base,
-            lifecycle,
-            formationScore: scoring.formationScore,
-            proofScore: scoring.proofScore,
-            eliteScore: scoring.eliteScore,
-          };
-        });
-
-        if (!cancelled) {
-          setSnapshot({
-            rows,
-            health: {
-              status: 'connected',
-              lastUpdate: now,
-              dataAgeMs: json.dataAgeMs ?? null,
-            },
-          });
-        }
-      } catch (err: any) {
-        if (!cancelled) {
-          setSnapshot({
-            rows: [],
-            health: {
-              status: 'disconnected',
-              lastUpdate: null,
-              dataAgeMs: null,
-              errorMessage: err?.message ?? 'Scanner disconnected',
-            },
-          });
-        }
-      }
-    }
-
-    load();
-    const interval = setInterval(load, 15_000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, []);
-
-  return snapshot;
-}
-
-function useMarketIntel(): MarketIntelSnapshot {
-  const [snapshot, setSnapshot] = useState<MarketIntelSnapshot>({
-    indices: [],
-    sectorStrength: null,
-    marketBreadth: null,
-    premarketParticipation: null,
-    newsRisk: null,
-    spreadEnvironment: null,
-    marketRegime: null,
-    environmentScore: null,
-    health: initialHealth('Market Intelligence'),
-  });
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function load() {
-      try {
-        const res = await fetch('/api/market-intel', {
-          method: 'GET',
-          headers: { Accept: 'application/json' },
-          cache: 'no-store',
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const json = await res.json();
-        const now = new Date();
-
-        const indices: MarketIndex[] = (json.indices ?? []).map((idx: any) => ({
-          symbol: idx.symbol,
-          lastPrice: Number(idx.lastPrice),
-          changePct: Number(idx.changePct),
-        }));
-
-        setSnapshot({
-          indices,
-          sectorStrength: json.sectorStrength != null ? Number(json.sectorStrength) : null,
-          marketBreadth: json.marketBreadth != null ? Number(json.marketBreadth) : null,
-          premarketParticipation: json.premarketParticipation != null ? Number(json.premarketParticipation) : null,
-          newsRisk: json.newsRisk != null ? Number(json.newsRisk) : null,
-          spreadEnvironment: json.spreadEnvironment != null ? Number(json.spreadEnvironment) : null,
-          marketRegime: json.marketRegime ?? null,
-          environmentScore: json.environmentScore != null ? Number(json.environmentScore) : null,
-          health: {
-            status: 'connected',
-            lastUpdate: now,
-            dataAgeMs: json.dataAgeMs ?? null,
-          },
-        });
-      } catch (err: any) {
-        if (!cancelled) {
-          setSnapshot({
-            indices: [],
-            sectorStrength: null,
-            marketBreadth: null,
-            premarketParticipation: null,
-            newsRisk: null,
-            spreadEnvironment: null,
-            marketRegime: null,
-            environmentScore: null,
-            health: {
-              status: 'disconnected',
-              lastUpdate: null,
-              dataAgeMs: null,
-              errorMessage: err?.message ?? 'Market intelligence disconnected',
-            },
-          });
-        }
-      }
-    }
-
-    load();
-    const interval = setInterval(load, 30_000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, []);
-
-  return snapshot;
-}
-
-/* ============================
-   App Root
-   ============================ */
-
-type PageId =
-  | 'dashboard'
-  | 'scanner'
-  | 'formation'
-  | 'runner'
-  | 'intel'
-  | 'structure'
-  | 'watchlist'
-  | 'journal'
-  | 'settings';
-
-export default function ProofOfStructureElite() {
-  const scanner = useScanner();
-  const intel = useMarketIntel();
-
-  const [activePage, setActivePage] = useState<PageId>('dashboard');
-  const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
-
-  const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
-  const [journal, setJournal] = useState<JournalEntry[]>([]);
-
-  const selectedRow = useMemo(
-    () => scanner.rows.find((r) => r.ticker === selectedTicker) ?? null,
-    [scanner.rows, selectedTicker],
-  );
-
-  function handleWatch(row: ScannerRow) {
-    setWatchlist((prev) => {
-      if (prev.some((w) => w.ticker === row.ticker)) return prev;
-      return [
-        ...prev,
-        {
-          ticker: row.ticker,
-          notes: '',
-          status: 'Active',
-          lifecycle: row.lifecycle,
-          eliteScore: row.eliteScore,
-        },
-      ];
-    });
-    setSelectedTicker(row.ticker);
-    setActivePage('watchlist');
-  }
-
-  function handleWhy(row: ScannerRow) {
-    setSelectedTicker(row.ticker);
-    setActivePage('structure');
-  }
-
-  function handleStructure(row: ScannerRow) {
-    setSelectedTicker(row.ticker);
-    setActivePage('structure');
-  }
-
-  function handleJournal(row: ScannerRow) {
-    setSelectedTicker(row.ticker);
-    setActivePage('journal');
-  }
-
-  function addJournalEntry(entry: Omit<JournalEntry, 'id'>) {
-    const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    setJournal((prev) => [...prev, { ...entry, id }]);
-  }
+  const now = new Date();
+  const defaultDate = now.toISOString().slice(0, 10);
+  const defaultTime = now.toTimeString().slice(0, 5);
 
   return (
     <div
       style={{
-        minHeight: '100vh',
-        backgroundColor: theme.background,
-        color: theme.textPrimary,
-        fontFamily:
-          "system-ui, -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif",
-        display: 'flex',
-        flexDirection: 'column',
-        padding: 16,
+        background: THEME.bg,
+        minHeight: "100vh",
+        display: "flex",
+        color: THEME.text,
       }}
     >
-      <Header intel={intel} />
+      <aside
+        style={{
+          width: 240,
+          background: "#1B1F26",
+          borderRight: `1px solid ${THEME.border}`,
+          padding: 16,
+        }}
+      >
+        <div
+          style={{
+            color: THEME.blue,
+            fontWeight: 700,
+            fontSize: 18,
+            marginBottom: 24,
+          }}
+        >
+          PROOF OF STRUCTURE™ ELITE
+        </div>
+        {[
+          ["dashboard", "Dashboard"],
+          ["scanner", "Scanner"],
+          ["formation", "Formation Engine"],
+          ["lifecycle", "Runner Lifecycle"],
+          ["market", "Market Intelligence"],
+          ["structure", "Structure Analysis"],
+          ["watchlist", "Watchlist"],
+          ["journal", "Journal"],
+          ["settings", "Settings"],
+        ].map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => setTab(key as Tab)}
+            style={{
+              display: "block",
+              width: "100%",
+              textAlign: "left",
+              padding: "8px 10px",
+              marginBottom: 4,
+              borderRadius: 4,
+              border: "none",
+              background:
+                tab === key ? THEME.panel : "transparent",
+              color: tab === key ? THEME.text : THEME.text2,
+              cursor: "pointer",
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </aside>
+
+      <main style={{ flex: 1, padding: 20 }}>
+        {tab === "dashboard" && (
+          <DashboardView
+            tickers={tickers}
+            scannerLoading={scannerLoading}
+            environmentScore={environmentScore}
+          />
+        )}
+
+        {tab === "scanner" && (
+          <ScannerView
+            tickers={tickers}
+            loading={scannerLoading}
+            onWatch={watchlist.add}
+            onWhy={setWhyTicker}
+            onStructure={(t) => {
+              setSelectedTicker(t);
+              setTab("structure");
+            }}
+            onJournal={(t) => {
+              journal.add({
+                date: defaultDate,
+                time: defaultTime,
+                ticker: t.ticker,
+                reason: "Runner observation",
+                evidence: "Live scanner evidence.",
+                mistake: "",
+                lesson: "",
+                outcome: "",
+              });
+              setTab("journal");
+            }}
+          />
+        )}
+
+        {tab === "formation" && (
+          <FormationView tickers={tickers} />
+        )}
+
+        {tab === "lifecycle" && (
+          <LifecycleView tickers={tickers} />
+        )}
+
+        {tab === "market" && (
+          <MarketView
+            snapshot={snapshot}
+            loading={marketLoading}
+            environmentScore={environmentScore}
+          />
+        )}
+
+        {tab === "structure" && (
+          <StructureView
+            tickers={tickers}
+            selected={selectedTicker}
+            onSelect={setSelectedTicker}
+            watchlist={watchlist}
+            journal={journal}
+          />
+        )}
+
+        {tab === "watchlist" && (
+          <WatchlistView watchlist={watchlist} />
+        )}
+
+        {tab === "journal" && (
+          <JournalView journal={journal} />
+        )}
+
+        {tab === "settings" && (
+          <SettingsView />
+        )}
+
+        {whyTicker && (
+          <WhyPanel
+            ticker={whyTicker}
+            onClose={() => setWhyTicker(null)}
+          />
+        )}
+      </main>
+    </div>
+  );
+}
+
+function DashboardView({
+  tickers,
+  scannerLoading,
+  environmentScore,
+}: {
+  tickers: EliteTicker[];
+  scannerLoading: boolean;
+  environmentScore: number | null;
+}) {
+  const topElite = tickers.slice(0, 10);
+
+  return (
+    <div>
+      <h1
+        style={{
+          color: THEME.blue,
+          fontSize: 28,
+          marginBottom: 16,
+        }}
+      >
+        Dashboard
+      </h1>
 
       <div
         style={{
-          display: 'grid',
-          gridTemplateColumns: '260px minmax(0, 1.6fr) 340px',
+          display: "grid",
+          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
           gap: 16,
-          marginTop: 12,
-          flex: 1,
+          marginBottom: 24,
         }}
       >
-        {/* LEFT */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <Panel>
-            <Sidebar activePage={activePage} onChangePage={setActivePage} />
-          </Panel>
-          <Panel>
-            <WatchlistPanel
-              scanner={scanner}
-              watchlist={watchlist}
-              setWatchlist={setWatchlist}
-              onSelectTicker={(t) => {
-                setSelectedTicker(t);
-                setActivePage('scanner');
-              }}
-            />
-          </Panel>
-          <Panel>
-            <MarketIntelPanel intel={intel} />
-          </Panel>
-        </div>
-
-        {/* CENTER */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <Panel>
-            {activePage === 'dashboard' && (
-              <DashboardPage
-                scanner={scanner}
-                intel={intel}
-                onWatch={handleWatch}
-                onWhy={handleWhy}
-                onStructure={handleStructure}
-                onJournal={handleJournal}
-              />
-            )}
-            {activePage === 'scanner' && (
-              <ScannerPage
-                scanner={scanner}
-                onWatch={handleWatch}
-                onWhy={handleWhy}
-                onStructure={handleStructure}
-                onJournal={handleJournal}
-              />
-            )}
-            {activePage === 'formation' && (
-              <FormationPage scanner={scanner} selectedRow={selectedRow} />
-            )}
-            {activePage === 'runner' && <RunnerLifecyclePage scanner={scanner} />}
-            {activePage === 'intel' && <MarketIntelDetailPage intel={intel} />}
-            {activePage === 'structure' && (
-              <StructureAnalysisPage selectedRow={selectedRow} />
-            )}
-            {activePage === 'watchlist' && (
-              <WatchlistDetailPage
-                watchlist={watchlist}
-                setWatchlist={setWatchlist}
-                scanner={scanner}
-                onSelectTicker={(t) => {
-                  setSelectedTicker(t);
-                  setActivePage('scanner');
-                }}
-              />
-            )}
-            {activePage === 'journal' && (
-              <JournalPage
-                journal={journal}
-                addJournalEntry={addJournalEntry}
-                selectedTicker={selectedTicker}
-              />
-            )}
-            {activePage === 'settings' && <SettingsPage />}
-          </Panel>
-        </div>
-
-        {/* RIGHT */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <Panel>
-            <WhyEnginePanel selectedRow={selectedRow} />
-          </Panel>
-          <Panel>
-            <StructureSummaryPanel selectedRow={selectedRow} />
-          </Panel>
-          <Panel>
-            <JournalSummaryPanel journal={journal} selectedTicker={selectedTicker} />
-          </Panel>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ============================
-   Shared UI Components
-   ============================ */
-
-function Panel({ children }: { children: React.ReactNode }) {
-  return (
-    <div
-      style={{
-        backgroundColor: theme.panel,
-        borderRadius: 12,
-        border: `1px solid ${theme.border}`,
-        padding: 12,
-      }}
-    >
-      {children}
-    </div>
-  );
-}
-
-function Header({ intel }: { intel: MarketIntelSnapshot }) {
-  const status = intel.health.status === 'connected' ? 'Connected · Live' : 'Disconnected';
-  const statusColor = intel.health.status === 'connected' ? theme.success : theme.danger;
-  const envScore = intel.environmentScore ?? 0;
-  const regime = intel.marketRegime ?? 'Unknown';
-
-  return (
-    <div
-      style={{
-        backgroundColor: theme.panel,
-        borderRadius: 12,
-        border: `1px solid ${theme.border}`,
-        padding: 10,
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-      }}
-    >
-      <div>
-        <div style={{ fontSize: 14, letterSpacing: 2, textTransform: 'uppercase' }}>
-          PROOF OF STRUCTURE™ ELITE
-        </div>
-        <div style={{ fontSize: 12, color: theme.textSecondary }}>
-          Market intelligence workstation · Evidence over prediction · No proof = no trade
-        </div>
-      </div>
-      <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-        <span
+        <div
           style={{
-            borderRadius: 999,
-            border: `1px solid ${statusColor}`,
-            padding: '4px 10px',
-            fontSize: 11,
-            color: statusColor,
+            background: THEME.panel,
+            border: `1px solid ${THEME.border}`,
+            borderRadius: 8,
+            padding: 16,
           }}
         >
-          {status}
-        </span>
-        <span
+          <div style={{ color: THEME.text2, marginBottom: 8 }}>
+            Environment Score
+          </div>
+          <div style={{ fontSize: 24 }}>
+            {environmentScore !== null ? environmentScore.toFixed(1) : "N/A"}
+          </div>
+        </div>
+
+        <div
           style={{
-            borderRadius: 999,
-            border: `1px solid ${theme.accentBlue}`,
-            padding: '4px 10px',
-            fontSize: 11,
-            color: theme.accentBlue,
+            background: THEME.panel,
+            border: `1px solid ${THEME.border}`,
+            borderRadius: 8,
+            padding: 16,
           }}
         >
-          Environment {envScore}% · {regime}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function Sidebar({
-  activePage,
-  onChangePage,
-}: {
-  activePage: PageId;
-  onChangePage: (p: PageId) => void;
-}) {
-  const items: { id: PageId; label: string; section: string }[] = [
-    { id: 'dashboard', label: 'Dashboard', section: 'Workspace' },
-    { id: 'scanner', label: 'Scanner', section: 'Workspace' },
-    { id: 'formation', label: 'Formation Engine', section: 'Structure' },
-    { id: 'runner', label: 'Runner Lifecycle', section: 'Structure' },
-    { id: 'intel', label: 'Market Intelligence', section: 'Environment' },
-    { id: 'structure', label: 'Structure Analysis', section: 'Risk' },
-    { id: 'watchlist', label: 'Watchlist', section: 'Focus' },
-    { id: 'journal', label: 'Journal', section: 'Discipline' },
-    { id: 'settings', label: 'Settings', section: 'System' },
-  ];
-
-  const sections = Array.from(new Set(items.map((i) => i.section)));
-
-  return (
-    <div>
-      <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 2, color: theme.textSecondary, marginBottom: 6 }}>
-        Navigation
-      </div>
-      {sections.map((section) => (
-        <div key={section} style={{ marginBottom: 8 }}>
-          <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 2, color: theme.textSecondary, marginBottom: 4 }}>
-            {section}
+          <div style={{ color: THEME.text2, marginBottom: 8 }}>
+            Elite Runners
           </div>
-          {items
-            .filter((i) => i.section === section)
-            .map((item) => {
-              const active = item.id === activePage;
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => onChangePage(item.id)}
-                  style={{
-                    width: '100%',
-                    textAlign: 'left',
-                    padding: '6px 8px',
-                    borderRadius: 8,
-                    border: `1px solid ${active ? theme.accentBlue : 'transparent'}`,
-                    backgroundColor: active ? '#323845' : '#262A33',
-                    color: active ? theme.textPrimary : theme.textSecondary,
-                    fontSize: 12,
-                    cursor: 'pointer',
-                    marginBottom: 4,
-                  }}
-                >
-                  {item.label}
-                </button>
-              );
-            })}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/* ============================
-   Pages & Panels
-   ============================ */
-
-function DashboardPage({
-  scanner,
-  intel,
-  onWatch,
-  onWhy,
-  onStructure,
-  onJournal,
-}: {
-  scanner: ScannerSnapshot;
-  intel: MarketIntelSnapshot;
-  onWatch: (row: ScannerRow) => void;
-  onWhy: (row: ScannerRow) => void;
-  onStructure: (row: ScannerRow) => void;
-  onJournal: (row: ScannerRow) => void;
-}) {
-  const topElite = scanner.rows
-    .filter((r) => r.eliteScore != null)
-    .sort((a, b) => (b.eliteScore ?? 0) - (a.eliteScore ?? 0))
-    .slice(0, 10);
-
-  return (
-    <div>
-      <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 2, color: theme.textSecondary, marginBottom: 4 }}>
-        Executive Dashboard
-      </div>
-      <div style={{ fontSize: 11, color: theme.textSecondary, marginBottom: 8 }}>
-        Ranked by Elite Score · Spread · Speed · Volume Acceleration · Structure · Environment
-      </div>
-      <ScannerTable scanner={scanner} onWatch={onWatch} onWhy={onWhy} onStructure={onStructure} onJournal={onJournal} />
-      <div style={{ marginTop: 12 }}>
-        <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 2, color: theme.textSecondary, marginBottom: 4 }}>
-          Top Elite Candidates
-        </div>
-        {topElite.length === 0 ? (
-          <div style={{ fontSize: 11, color: theme.textSecondary }}>No live elite candidates. Check scanner connection.</div>
-        ) : (
-          <div>
-            {topElite.map((row) => (
-              <div key={row.ticker} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, padding: '4px 0', borderBottom: `1px solid ${theme.border}` }}>
-                <div>
-                  <div style={{ color: theme.textPrimary }}>{row.ticker}</div>
-                  <div style={{ color: theme.textSecondary }}>{row.lifecycle} · Proof {row.proofScore ?? '—'}</div>
-                </div>
-                <div style={{ color: theme.accentBlue }}>Elite {row.eliteScore ?? '—'}</div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function ScannerPage({
-  scanner,
-  onWatch,
-  onWhy,
-  onStructure,
-  onJournal,
-}: {
-  scanner: ScannerSnapshot;
-  onWatch: (row: ScannerRow) => void;
-  onWhy: (row: ScannerRow) => void;
-  onStructure: (row: ScannerRow) => void;
-  onJournal: (row: ScannerRow) => void;
-}) {
-  return (
-    <div>
-      <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 2, color: theme.textSecondary, marginBottom: 4 }}>
-        Scanner
-      </div>
-      <div style={{ fontSize: 11, color: theme.textSecondary, marginBottom: 8 }}>
-        Market intelligence scanner · Evidence-driven ranking
-      </div>
-      <ScannerTable scanner={scanner} onWatch={onWatch} onWhy={onWhy} onStructure={onStructure} onJournal={onJournal} />
-    </div>
-  );
-}
-
-function FormationPage({ scanner, selectedRow }: { scanner: ScannerSnapshot; selectedRow: ScannerRow | null }) {
-  const rows = scanner.rows;
-
-  return (
-    <div>
-      <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 2, color: theme.textSecondary, marginBottom: 4 }}>
-        Formation Engine
-      </div>
-      <div style={{ fontSize: 11, color: theme.textSecondary, marginBottom: 8 }}>
-        Runner lifecycle · Structure stages · Formation scoring
-      </div>
-      {selectedRow ? (
-        <div style={{ marginBottom: 10 }}>
-          <div style={{ fontSize: 12, color: theme.textPrimary }}>{selectedRow.ticker}</div>
-          <div style={{ fontSize: 11, color: theme.textSecondary }}>
-            Lifecycle: {selectedRow.lifecycle} · Formation Score: {selectedRow.formationScore ?? '—'}
+          <div style={{ fontSize: 24 }}>
+            {tickers.length}
           </div>
         </div>
-      ) : (
-        <div style={{ fontSize: 11, color: theme.textSecondary, marginBottom: 8 }}>
-          Select a ticker from Scanner or Watchlist to inspect formation.
-        </div>
-      )}
-      <div style={{ fontSize: 11, color: theme.textSecondary, marginBottom: 4 }}>Live runners:</div>
-      <div>
-        {rows.map((row) => (
-          <div key={row.ticker} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, padding: '4px 0', borderBottom: `1px solid ${theme.border}` }}>
-            <div>
-              <div style={{ color: theme.textPrimary }}>{row.ticker}</div>
-              <div style={{ color: theme.textSecondary }}>{row.lifecycle} · Formation {row.formationScore ?? '—'}</div>
-            </div>
-            <div style={{ color: theme.accentBlue }}>Elite {row.eliteScore ?? '—'}</div>
+
+        <div
+          style={{
+            background: THEME.panel,
+            border: `1px solid ${THEME.border}`,
+            borderRadius: 8,
+            padding: 16,
+          }}
+        >
+          <div style={{ color: THEME.text2, marginBottom: 8 }}>
+            Scanner Status
           </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function RunnerLifecyclePage({ scanner }: { scanner: ScannerSnapshot }) {
-  const counts: Record<RunnerLifecycle, number> = {
-    SLEEPING: 0,
-    ACCUMULATING: 0,
-    WAKING: 0,
-    FORMING: 0,
-    IGNITING: 0,
-    RUNNING: 0,
-    EXTENDED: 0,
-    FAILING: 0,
-  };
-
-  scanner.rows.forEach((r) => {
-    counts[r.lifecycle] = (counts[r.lifecycle] ?? 0) + 1;
-  });
-
-  const stages: RunnerLifecycle[] = ['SLEEPING', 'ACCUMULATING', 'WAKING', 'FORMING', 'IGNITING', 'RUNNING', 'EXTENDED', 'FAILING'];
-
-  return (
-    <div>
-      <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 2, color: theme.textSecondary, marginBottom: 4 }}>
-        Runner Lifecycle
-      </div>
-      <div style={{ fontSize: 11, color: theme.textSecondary, marginBottom: 8 }}>
-        Lifecycle distribution · Evidence over prediction · Structure before speed
-      </div>
-      {stages.map((stage) => (
-        <div key={stage} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, padding: '4px 0', borderBottom: `1px solid ${theme.border}` }}>
-          <div style={{ color: theme.textPrimary }}>{stage}</div>
-          <div style={{ color: theme.textSecondary }}>{counts[stage] ?? 0}</div>
+          <div style={{ fontSize: 16 }}>
+            {scannerLoading
+              ? "Loading live data…"
+              : tickers.length
+              ? "Live"
+              : "No qualifying runners"}
+          </div>
         </div>
-      ))}
-    </div>
-  );
-}
-
-function MarketIntelDetailPage({ intel }: { intel: MarketIntelSnapshot }) {
-  return (
-    <div>
-      <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 2, color: theme.textSecondary, marginBottom: 4 }}>
-        Market Intelligence
       </div>
-      <div style={{ fontSize: 11, color: theme.textSecondary, marginBottom: 8 }}>
-        SPY · QQQ · IWM · VIX · Sector strength · Breadth · Regime
-      </div>
-      <MarketIntelPanel intel={intel} />
-    </div>
-  );
-}
 
-function StructureAnalysisPage({ selectedRow }: { selectedRow: ScannerRow | null }) {
-  if (!selectedRow) {
-    return (
-      <div>
-        <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 2, color: theme.textSecondary, marginBottom: 4 }}>
-          Structure Analysis
+      <div
+        style={{
+          background: THEME.panel,
+          border: `1px solid ${THEME.border}`,
+          borderRadius: 8,
+          padding: 16,
+        }}
+      >
+        <div style={{ marginBottom: 8, color: THEME.text2 }}>
+          Top Elite by Score
         </div>
-        <div style={{ fontSize: 11, color: theme.textSecondary }}>Select a ticker from Scanner or Watchlist to analyze structure.</div>
-      </div>
-    );
-  }
-
-  const s = analyzeStructure(selectedRow);
-
-  return (
-    <div>
-      <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 2, color: theme.textSecondary, marginBottom: 4 }}>
-        Structure Analysis · {selectedRow.ticker}
-      </div>
-      <div style={{ fontSize: 11, color: theme.textSecondary, marginBottom: 8 }}>
-        Support, spread, speed, volume acceleration, and structure matter more than resistance.
-      </div>
-      <div style={{ fontSize: 11 }}>
-        <div>Support: {s.support != null ? s.support.toFixed(2) : '—'}</div>
-        <div>Resistance: {s.resistance != null ? s.resistance.toFixed(2) : '—'}</div>
-        <div>Range Position: {s.rangePosition}</div>
-        <div>Formation Entry: {s.formationEntry != null ? s.formationEntry.toFixed(2) : '—'}</div>
-        <div>Aggressive Entry: {s.aggressiveEntry != null ? s.aggressiveEntry.toFixed(2) : '—'}</div>
-        <div>Confirmation Entry: {s.confirmationEntry != null ? s.confirmationEntry.toFixed(2) : '—'}</div>
-        <div>Proof Entry: {s.proofEntry != null ? s.proofEntry.toFixed(2) : '—'}</div>
-        <div>Stop: {s.stop != null ? s.stop.toFixed(2) : '—'}</div>
-        <div>Target 1: {s.target1 != null ? s.target1.toFixed(2) : '—'}</div>
-        <div>Target 2: {s.target2 != null ? s.target2.toFixed(2) : '—'}</div>
-        <div>Target 3: {s.target3 != null ? s.target3.toFixed(2) : '—'}</div>
-        <div>Risk Reward: {s.riskReward}</div>
-      </div>
-    </div>
-  );
-}
-
-function WatchlistDetailPage({
-  watchlist,
-  setWatchlist,
-  scanner,
-  onSelectTicker,
-}: {
-  watchlist: WatchlistItem[];
-  setWatchlist: (w: WatchlistItem[]) => void;
-  scanner: ScannerSnapshot;
-  onSelectTicker: (t: string) => void;
-}) {
-  function remove(ticker: string) {
-    setWatchlist(watchlist.filter((w) => w.ticker !== ticker));
-  }
-
-  function updateNotes(ticker: string, notes: string) {
-    setWatchlist(watchlist.map((w) => (w.ticker === ticker ? { ...w, notes } : w)));
-  }
-
-  const sorted = [...watchlist].sort((a, b) => (b.eliteScore ?? 0) - (a.eliteScore ?? 0));
-
-  return (
-    <div>
-      <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 2, color: theme.textSecondary, marginBottom: 4 }}>
-        Watchlist
-      </div>
-      <div style={{ fontSize: 11, color: theme.textSecondary, marginBottom: 8 }}>
-        Add · Remove · Sort · Filter · Notes · Status · Lifecycle · Elite Score
-      </div>
-      {sorted.length === 0 ? (
-        <div style={{ fontSize: 11, color: theme.textSecondary }}>Use WATCH action in Scanner to add live tickers to the watchlist.</div>
-      ) : (
-        <div>
-          {sorted.map((item) => (
-            <div key={item.ticker} style={{ borderBottom: `1px solid ${theme.border}`, padding: '6px 0', fontSize: 11 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                <div>
-                  <div style={{ color: theme.textPrimary }}>{item.ticker}</div>
-                  <div style={{ color: theme.textSecondary }}>{item.lifecycle} · Elite {item.eliteScore ?? '—'}</div>
-                </div>
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <button onClick={() => onSelectTicker(item.ticker)} style={smallButtonStyle}>Open</button>
-                  <button onClick={() => remove(item.ticker)} style={{ ...smallButtonStyle, border: `1px solid ${theme.danger}`, color: theme.danger }}>Remove</button>
-                </div>
-              </div>
-              <textarea value={item.notes} onChange={(e) => updateNotes(item.ticker, e.target.value)} placeholder="Notes" style={textareaStyle} />
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function JournalPage({ journal, addJournalEntry, selectedTicker }: { journal: JournalEntry[]; addJournalEntry: (e: Omit<JournalEntry, 'id'>) => void; selectedTicker: string | null }) {
-  const [form, setForm] = useState<Omit<JournalEntry, 'id'>>({
-    date: '',
-    time: '',
-    ticker: selectedTicker ?? '',
-    entry: '',
-    exit: '',
-    reason: '',
-    evidence: '',
-    mistake: '',
-    lesson: '',
-    outcome: '',
-  });
-
-  useEffect(() => {
-    if (selectedTicker) {
-      setForm((prev) => ({ ...prev, ticker: selectedTicker }));
-    }
-  }, [selectedTicker]);
-
-  function submit() {
-    if (!form.ticker) return;
-    const now = new Date();
-    const date = form.date || now.toISOString().slice(0, 10);
-    const time = form.time || now.toTimeString().slice(0, 5);
-    addJournalEntry({ ...form, date, time });
-    setForm({
-      date: '',
-      time: '',
-      ticker: selectedTicker ?? '',
-      entry: '',
-      exit: '',
-      reason: '',
-      evidence: '',
-      mistake: '',
-      lesson: '',
-      outcome: '',
-    });
-  }
-
-  return (
-    <div>
-      <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 2, color: theme.textSecondary, marginBottom: 4 }}>
-        Journal
-      </div>
-      <div style={{ fontSize: 11, color: theme.textSecondary, marginBottom: 8 }}>
-        Date · Time · Ticker · Entry · Exit · Reason · Evidence · Mistake · Lesson · Outcome
-      </div>
-      <div style={{ fontSize: 11, marginBottom: 8 }}>
-        <div style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
-          <input placeholder="Date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} style={inputStyle} />
-          <input placeholder="Time" value={form.time} onChange={(e) => setForm({ ...form, time: e.target.value })} style={inputStyle} />
-          <input placeholder="Ticker" value={form.ticker} onChange={(e) => setForm({ ...form, ticker: e.target.value })} style={inputStyle} />
-        </div>
-        <textarea placeholder="Entry" value={form.entry} onChange={(e) => setForm({ ...form, entry: e.target.value })} style={textareaStyle} />
-        <textarea placeholder="Exit" value={form.exit} onChange={(e) => setForm({ ...form, exit: e.target.value })} style={textareaStyle} />
-        <textarea placeholder="Reason" value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} style={textareaStyle} />
-        <textarea placeholder="Evidence" value={form.evidence} onChange={(e) => setForm({ ...form, evidence: e.target.value })} style={textareaStyle} />
-        <textarea placeholder="Mistake" value={form.mistake} onChange={(e) => setForm({ ...form, mistake: e.target.value })} style={textareaStyle} />
-        <textarea placeholder="Lesson" value={form.lesson} onChange={(e) => setForm({ ...form, lesson: e.target.value })} style={textareaStyle} />
-        <textarea placeholder="Outcome" value={form.outcome} onChange={(e) => setForm({ ...form, outcome: e.target.value })} style={textareaStyle} />
-        <button onClick={submit} style={{ marginTop: 6, fontSize: 11, padding: '4px 10px', borderRadius: 8, border: `1px solid ${theme.accentBlue}`, backgroundColor: '#323845', color: theme.accentBlue, cursor: 'pointer' }}>
-          Save Entry
-        </button>
-      </div>
-      <div style={{ fontSize: 11, color: theme.textSecondary, marginBottom: 4 }}>Recent entries:</div>
-      <div style={{ maxHeight: 160, overflowY: 'auto', fontSize: 11 }}>
-        {journal.length === 0 ? (
-          <div style={{ color: theme.textSecondary }}>No journal entries yet.</div>
-        ) : (
-          journal.slice().reverse().map((e) => (
-            <div key={e.id} style={{ borderBottom: `1px solid ${theme.border}`, padding: '4px 0' }}>
-              <div style={{ color: theme.textPrimary }}>{e.date} {e.time} · {e.ticker}</div>
-              <div style={{ color: theme.textSecondary }}>Outcome: {e.outcome || '—'}</div>
-            </div>
-          ))
-        )}
-      </div>
-    </div>
-  );
-}
-
-function SettingsPage() {
-  return (
-    <div>
-      <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 2, color: theme.textSecondary, marginBottom: 4 }}>
-        Settings
-      </div>
-      <div style={{ fontSize: 11, color: theme.textSecondary }}>
-        elite-dev-v2 branch · Do not alter production · Configuration lives in environment and API routes.
-      </div>
-    </div>
-  );
-}
-
-/* ============================
-   Scanner Table Component
-   ============================ */
-
-function ScannerTable({
-  scanner,
-  onWatch,
-  onWhy,
-  onStructure,
-  onJournal,
-}: {
-  scanner: ScannerSnapshot;
-  onWatch: (row: ScannerRow) => void;
-  onWhy: (row: ScannerRow) => void;
-  onStructure: (row: ScannerRow) => void;
-  onJournal: (row: ScannerRow) => void;
-}) {
-  const { rows, health } = scanner;
-  const statusColor = health.status === 'connected' ? theme.success : theme.danger;
-
-  return (
-    <>
-      <div style={{ overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
-            <tr>
-              {[
-                'Ticker',
-                'Price',
-                'Gain',
-                'Spread',
-                'Speed',
-                'Volume Accel',
-                'Float',
-                'Support',
-                'Resistance',
-                'Lifecycle',
-                'Formation',
-                'Journey',
-                'Proof',
-                'Catalyst',
-                'Environment',
-                'Elite',
-                'Verdict',
-                'Actions',
-              ].map((h) => (
-                <th key={h} style={{ textAlign: 'left', padding: '4px 6px', borderBottom: `1px solid ${theme.border}`, color: theme.textSecondary, whiteSpace: 'nowrap' }}>
-                  {h}
-                </th>
-              ))}
+            <tr style={{ color: THEME.text2 }}>
+              <th>Ticker</th>
+              <th>Price</th>
+              <th>Gain</th>
+              <th>Elite Score</th>
+              <th>Lifecycle</th>
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 ? (
-              <tr>
-                <td colSpan={18} style={{ padding: 6, color: theme.textSecondary }}>
-                  {health.status === 'connected' ? 'No live scanner rows returned.' : 'Disconnected · No live data.'}
+            {topElite.map((t) => (
+              <tr
+                key={t.ticker}
+                style={{
+                  borderTop: `1px solid ${THEME.border}`,
+                }}
+              >
+                <td>{t.ticker}</td>
+                <td>{t.price !== null ? t.price.toFixed(2) : "N/A"}</td>
+                <td
+                  style={{
+                    color:
+                      t.gainPct !== null && t.gainPct >= 0
+                        ? THEME.success
+                        : THEME.danger,
+                  }}
+                >
+                  {t.gainPct !== null ? `${t.gainPct.toFixed(2)}%` : "N/A"}
                 </td>
+                <td style={{ color: THEME.blue }}>
+                  {t.eliteScore.toFixed(1)}
+                </td>
+                <td>{t.lifecycle || "N/A"}</td>
               </tr>
-            ) : (
-              rows.map((row) => (
-                <tr key={row.ticker}>
-                  <td style={cellStyle}>{row.ticker}</td>
-                  <td style={cellStyle}>{row.price.toFixed(2)}</td>
-                  <td style={{ ...cellStyle, color: row.gainPct >= 0 ? theme.success : theme.danger }}>{row.gainPct.toFixed(2)}%</td>
-                  <td style={cellStyle}>{row.spreadPct.toFixed(2)}%</td>
-                  <td style={cellStyle}>{row.speedScore.toFixed(0)}</td>
-                  <td style={cellStyle}>{row.volumeAcceleration.toFixed(2)}</td>
-                  <td style={cellStyle}>{row.floatShares.toLocaleString()}</td>
-                  <td style={cellStyle}>{row.supportLevel != null ? row.supportLevel.toFixed(2) : '—'}</td>
-                  <td style={cellStyle}>{row.resistanceLevel != null ? row.resistanceLevel.toFixed(2) : '—'}</td>
-                  <td style={cellStyle}>{row.lifecycle}</td>
-                  <td style={cellStyle}>{row.formationScore != null ? row.formationScore.toFixed(0) : '—'}</td>
-                  <td style={cellStyle}>{row.journeyScore != null ? row.journeyScore.toFixed(0) : '—'}</td>
-                  <td style={cellStyle}>{row.proofScore != null ? row.proofScore.toFixed(0) : '—'}</td>
-                  <td style={cellStyle}>{row.catalystScore != null ? row.catalystScore.toFixed(0) : '—'}</td>
-                  <td style={cellStyle}>{row.environmentScore != null ? row.environmentScore.toFixed(0) : '—'}</td>
-                  <td style={cellStyle}>{row.eliteScore != null ? row.eliteScore.toFixed(0) : '—'}</td>
-                  <td style={cellStyle}>{row.verdict ?? '—'}</td>
-                  <td style={cellStyle}>
-                    <div style={{ display: 'flex', gap: 4 }}>
-                      <ActionButton label="WATCH" onClick={() => onWatch(row)} />
-                      <ActionButton label="WHY" onClick={() => onWhy(row)} />
-                      <ActionButton label="STRUCTURE" onClick={() => onStructure(row)} />
-                      <ActionButton label="JOURNAL" onClick={() => onJournal(row)} />
-                    </div>
-                  </td>
-                </tr>
-              ))
-            )}
+            ))}
           </tbody>
         </table>
       </div>
-      <div style={{ marginTop: 6, display: 'flex', justifyContent: 'space-between', fontSize: 11, color: theme.textSecondary }}>
-        <span style={{ borderRadius: 999, border: `1px solid ${statusColor}`, padding: '2px 8px', color: statusColor }}>
-          {health.status === 'connected' ? 'Connected' : 'Disconnected'}
-        </span>
-        <span>Last Update: {health.lastUpdate ? health.lastUpdate.toLocaleTimeString() : 'N/A'}</span>
-        <span>Data Age: {health.dataAgeMs != null ? `${Math.round(health.dataAgeMs / 1000)}s` : 'Unknown'}</span>
-      </div>
-    </>
+    </div>
   );
 }
 
-function ActionButton({ label, onClick }: { label: string; onClick: () => void }) {
-  return (
-    <button onClick={onClick} style={{ fontSize: 10, padding: '2px 6px', borderRadius: 6, border: `1px solid ${theme.accentBlue}`, backgroundColor: '#323845', color: theme.accentBlue, cursor: 'pointer' }}>
-      {label}
-    </button>
-  );
-}
-
-/* ============================
-   Right Column Panels
-   ============================ */
-
-function WhyEnginePanel({ selectedRow }: { selectedRow: ScannerRow | null }) {
+function ScannerView({
+  tickers,
+  loading,
+  onWatch,
+  onWhy,
+  onStructure,
+  onJournal,
+}: {
+  tickers: EliteTicker[];
+  loading: boolean;
+  onWatch: (t: EliteTicker) => void;
+  onWhy: (t: EliteTicker) => void;
+  onStructure: (t: EliteTicker) => void;
+  onJournal: (t: EliteTicker) => void;
+}) {
   return (
     <div>
-      <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 2, color: theme.textSecondary, marginBottom: 4 }}>WHY Engine</div>
-      <div style={{ fontSize: 11, color: theme.textSecondary, marginBottom: 8 }}>Evidence discipline · What supports and invalidates the thesis</div>
-      {selectedRow ? (
-        <div style={{ fontSize: 11 }}>
-          <div style={{ marginBottom: 6 }}>
-            <strong>Positive Evidence</strong>
-            <div>Spread {selectedRow.spreadPct.toFixed(2)}% · Speed {selectedRow.speedScore.toFixed(0)} · Volume Accel {selectedRow.volumeAcceleration.toFixed(2)}</div>
+      <h1
+        style={{
+          color: THEME.blue,
+          fontSize: 28,
+          marginBottom: 16,
+        }}
+      >
+        Scanner
+      </h1>
+
+      <div
+        style={{
+          background: THEME.panel,
+          border: `1px solid ${THEME.border}`,
+          borderRadius: 8,
+          padding: 16,
+        }}
+      >
+        {loading && (
+          <div style={{ marginBottom: 12 }}>
+            Loading live runners…
           </div>
-          <div style={{ marginBottom: 6 }}>
-            <strong>Negative Evidence</strong>
-            <div>Lifecycle {selectedRow.lifecycle} · Proof {selectedRow.proofScore ?? '—'} · Elite {selectedRow.eliteScore ?? '—'}</div>
+        )}
+
+        {!loading && !tickers.length && (
+          <div style={{ marginBottom: 12 }}>
+            No live runners meeting Elite criteria.
           </div>
-          <div style={{ marginBottom: 6 }}>
-            <strong>Support Quality</strong>
-            <div>Support {selectedRow.supportLevel != null ? selectedRow.supportLevel.toFixed(2) : '—'}</div>
+        )}
+
+        {!!tickers.length && (
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ color: THEME.text2 }}>
+                <th>Ticker</th>
+                <th>Price</th>
+                <th>Gain</th>
+                <th>Spread</th>
+                <th>Speed</th>
+                <th>Vol Accel</th>
+                <th>Float</th>
+                <th>Support</th>
+                <th>Resistance</th>
+                <th>Lifecycle</th>
+                <th>Formation</th>
+                <th>Journey</th>
+                <th>Proof</th>
+                <th>Catalyst</th>
+                <th>Env</th>
+                <th>Elite</th>
+                <th>Verdict</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tickers.map((t) => (
+                <tr
+                  key={t.ticker}
+                  style={{
+                    borderTop: `1px solid ${THEME.border}`,
+                  }}
+                >
+                  <td>{t.ticker}</td>
+                  <td>{t.price !== null ? t.price.toFixed(2) : "N/A"}</td>
+                  <td
+                    style={{
+                      color:
+                        t.gainPct !== null && t.gainPct >= 0
+                          ? THEME.success
+                          : THEME.danger,
+                    }}
+                  >
+                    {t.gainPct !== null ? `${t.gainPct.toFixed(2)}%` : "N/A"}
+                  </td>
+                  <td>
+                    {t.spreadPct !== null
+                      ? `${(t.spreadPct * 100).toFixed(2)}%`
+                      : "N/A"}
+                  </td>
+                  <td>{t.speedScore ?? "N/A"}</td>
+                  <td>{t.volumeAcceleration ?? "N/A"}</td>
+                  <td>
+                    {t.floatShares !== null
+                      ? `${(t.floatShares / 1_000_000).toFixed(1)}M`
+                      : "N/A"}
+                  </td>
+                  <td>
+                    {t.supportLevel !== null
+                      ? t.supportLevel.toFixed(2)
+                      : "N/A"}
+                  </td>
+                  <td>
+                    {t.resistanceLevel !== null
+                      ? t.resistanceLevel.toFixed(2)
+                      : "N/A"}
+                  </td>
+                  <td>{t.lifecycle || "N/A"}</td>
+                  <td>{t.formationScore ?? "N/A"}</td>
+                  <td>{t.journeyScore ?? "N/A"}</td>
+                  <td>{t.proofScore ?? "N/A"}</td>
+                  <td>{t.catalystStrength ?? "N/A"}</td>
+                  <td>{t.environmentScore ?? "N/A"}</td>
+                  <td style={{ color: THEME.blue }}>
+                    {t.eliteScore.toFixed(1)}
+                  </td>
+                  <td>{t.verdict || "N/A"}</td>
+                  <td>
+                    <button
+                      onClick={() => onWatch(t)}
+                      style={{
+                        background: THEME.blue,
+                        color: THEME.bg,
+                        padding: "4px 8px",
+                        borderRadius: 4,
+                        border: "none",
+                        marginRight: 4,
+                        cursor: "pointer",
+                      }}
+                    >
+                      WATCH
+                    </button>
+                    <button
+                      onClick={() => onWhy(t)}
+                      style={{
+                        background: THEME.panel,
+                        color: THEME.text2,
+                        padding: "4px 8px",
+                        borderRadius: 4,
+                        border: `1px solid ${THEME.border}`,
+                        marginRight: 4,
+                        cursor: "pointer",
+                      }}
+                    >
+                      WHY
+                    </button>
+                    <button
+                      onClick={() => onStructure(t)}
+                      style={{
+                        background: THEME.panel,
+                        color: THEME.text2,
+                        padding: "4px 8px",
+                        borderRadius: 4,
+                        border: `1px solid ${THEME.border}`,
+                        marginRight: 4,
+                        cursor: "pointer",
+                      }}
+                    >
+                      STRUCTURE
+                    </button>
+                    <button
+                      onClick={() => onJournal(t)}
+                      style={{
+                        background: THEME.panel,
+                        color: THEME.text2,
+                        padding: "4px 8px",
+                        borderRadius: 4,
+                        border: `1px solid ${THEME.border}`,
+                        cursor: "pointer",
+                      }}
+                    >
+                      JOURNAL
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function FormationView({ tickers }: { tickers: EliteTicker[] }) {
+  return (
+    <div>
+      <h1
+        style={{
+          color: THEME.blue,
+          fontSize: 28,
+          marginBottom: 16,
+        }}
+      >
+        Formation Engine
+      </h1>
+
+      <div
+        style={{
+          background: THEME.panel,
+          border: `1px solid ${THEME.border}`,
+          borderRadius: 8,
+          padding: 16,
+        }}
+      >
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr style={{ color: THEME.text2 }}>
+              <th>Ticker</th>
+              <th>Price</th>
+              <th>Support</th>
+              <th>Resistance</th>
+              <th>Range Position</th>
+              <th>Formation Score</th>
+            </tr>
+          </thead>
+          <tbody>
+            {tickers.map((t) => {
+              const levels = computeStructureLevels(t);
+              return (
+                <tr
+                  key={t.ticker}
+                  style={{
+                    borderTop: `1px solid ${THEME.border}`,
+                  }}
+                >
+                  <td>{t.ticker}</td>
+                  <td>{t.price !== null ? t.price.toFixed(2) : "N/A"}</td>
+                  <td>
+                    {levels?.support !== null
+                      ? levels.support.toFixed(2)
+                      : "N/A"}
+                  </td>
+                  <td>
+                    {levels?.resistance !== null
+                      ? levels.resistance.toFixed(2)
+                      : "N/A"}
+                  </td>
+                  <td>{levels?.rangePosition ?? "N/A"}</td>
+                  <td>{t.formationScore ?? "N/A"}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function LifecycleView({ tickers }: { tickers: EliteTicker[] }) {
+  const counts = tickers.reduce<Record<string, number>>((acc, t) => {
+    const key = t.lifecycle || "UNKNOWN";
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+
+  const order = [
+    "SLEEPING",
+    "ACCUMULATING",
+    "WAKING",
+    "FORMING",
+    "IGNITING",
+    "RUNNING",
+    "EXTENDED",
+    "FAILING",
+    "UNKNOWN",
+  ];
+
+  return (
+    <div>
+      <h1
+        style={{
+          color: THEME.blue,
+          fontSize: 28,
+          marginBottom: 16,
+        }}
+      >
+        Runner Lifecycle
+      </h1>
+
+      <div
+        style={{
+          background: THEME.panel,
+          border: `1px solid ${THEME.border}`,
+          borderRadius: 8,
+          padding: 16,
+        }}
+      >
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr style={{ color: THEME.text2 }}>
+              <th>Lifecycle</th>
+              <th>Count</th>
+            </tr>
+          </thead>
+          <tbody>
+            {order.map((state) => (
+              <tr
+                key={state}
+                style={{
+                  borderTop: `1px solid ${THEME.border}`,
+                }}
+              >
+                <td>{state}</td>
+                <td>{counts[state] || 0}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function MarketView({
+  snapshot,
+  loading,
+  environmentScore,
+}: {
+  snapshot: MarketSnapshot;
+  loading: boolean;
+  environmentScore: number | null;
+}) {
+  const keys: (keyof MarketSnapshot)[] = ["SPY", "QQQ", "IWM", "VIX"];
+
+  return (
+    <div>
+      <h1
+        style={{
+          color: THEME.blue,
+          fontSize: 28,
+          marginBottom: 16,
+        }}
+      >
+        Market Intelligence
+      </h1>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+          gap: 16,
+          marginBottom: 24,
+        }}
+      >
+        {keys.map((k) => {
+          const data = snapshot[k];
+          const price =
+            data && typeof data.price === "number"
+              ? data.price
+              : data && typeof data.last === "number"
+              ? data.last
+              : null;
+          const change =
+            data && typeof data.changePct === "number"
+              ? data.changePct
+              : null;
+
+          return (
+            <div
+              key={k}
+              style={{
+                background: THEME.panel,
+                border: `1px solid ${THEME.border}`,
+                borderRadius: 8,
+                padding: 16,
+              }}
+            >
+              <div style={{ color: THEME.text2, marginBottom: 8 }}>
+                {k}
+              </div>
+              <div style={{ fontSize: 20 }}>
+                {price !== null ? price.toFixed(2) : "N/A"}
+              </div>
+              <div
+                style={{
+                  marginTop: 4,
+                  color:
+                    change !== null && change >= 0
+                      ? THEME.success
+                      : THEME.danger,
+                }}
+              >
+                {change !== null ? `${change.toFixed(2)}%` : ""}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div
+        style={{
+          background: THEME.panel,
+          border: `1px solid ${THEME.border}`,
+          borderRadius: 8,
+          padding: 16,
+        }}
+      >
+        <div style={{ color: THEME.text2, marginBottom: 8 }}>
+          Environment Score
+        </div>
+        <div style={{ fontSize: 24 }}>
+          {environmentScore !== null ? environmentScore.toFixed(1) : "N/A"}
+        </div>
+      </div>
+
+      {loading && (
+        <div style={{ marginTop: 12 }}>
+          Loading live market snapshot…
+        </div>
+      )}
+
+      {!loading && !snapshot.SPY && !snapshot.QQQ && !snapshot.IWM && !snapshot.VIX && (
+        <div style={{ marginTop: 12 }}>
+          No live market data returned from /api/market.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StructureView({
+  tickers,
+  selected,
+  onSelect,
+  watchlist,
+  journal,
+}: {
+  tickers: EliteTicker[];
+  selected: EliteTicker | null;
+  onSelect: (t: EliteTicker | null) => void;
+  watchlist: ReturnType<typeof useWatchlist>;
+  journal: ReturnType<typeof useJournal>;
+}) {
+  const levels = selected ? computeStructureLevels(selected) : null;
+  const now = new Date();
+  const defaultDate = now.toISOString().slice(0, 10);
+  const defaultTime = now.toTimeString().slice(0, 5);
+
+  return (
+    <div>
+      <h1
+        style={{
+          color: THEME.blue,
+          fontSize: 28,
+          marginBottom: 16,
+        }}
+      >
+        Structure Analysis
+      </h1>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "260px minmax(0, 1fr)",
+          gap: 16,
+        }}
+      >
+        <div
+          style={{
+            background: THEME.panel,
+            border: `1px solid ${THEME.border}`,
+            borderRadius: 8,
+            padding: 16,
+          }}
+        >
+          <div style={{ marginBottom: 8, color: THEME.text2 }}>
+            Select Ticker
           </div>
-          <div style={{ marginBottom: 6 }}>
-            <strong>Resistance Quality</strong>
-            <div>Resistance {selectedRow.resistanceLevel != null ? selectedRow.resistanceLevel.toFixed(2) : '—'}</div>
+          <div
+            style={{
+              maxHeight: 400,
+              overflowY: "auto",
+            }}
+          >
+            {tickers.map((t) => (
+              <button
+                key={t.ticker}
+                onClick={() => onSelect(t)}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  textAlign: "left",
+                  padding: "6px 8px",
+                  marginBottom: 4,
+                  borderRadius: 4,
+                  border: "none",
+                  background:
+                    selected?.ticker === t.ticker
+                      ? THEME.panel
+                      : "transparent",
+                  color:
+                    selected?.ticker === t.ticker
+                      ? THEME.text
+                      : THEME.text2,
+                  cursor: "pointer",
+                }}
+              >
+                {t.ticker} — {t.eliteScore.toFixed(1)}
+              </button>
+            ))}
           </div>
-          <div style={{ marginBottom: 6 }}>
-            <strong>Spread Behavior</strong>
-            <div>{selectedRow.spreadPct.toFixed(2)}% spread</div>
+        </div>
+
+        <div
+          style={{
+            background: THEME.panel,
+            border: `1px solid ${THEME.border}`,
+            borderRadius: 8,
+            padding: 16,
+          }}
+        >
+          {!selected && (
+            <div>Select a ticker to analyze structure.</div>
+          )}
+
+          {selected && levels && (
+            <>
+              <div
+                style={{
+                  marginBottom: 12,
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                }}
+              >
+                <div>
+                  <div style={{ color: THEME.text2 }}>
+                    {selected.ticker}
+                  </div>
+                  <div style={{ fontSize: 20 }}>
+                    {selected.price !== null
+                      ? selected.price.toFixed(2)
+                      : "N/A"}
+                  </div>
+                </div>
+                <div>
+                  <button
+                    onClick={() => watchlist.add(selected)}
+                    style={{
+                      background: THEME.blue,
+                      color: THEME.bg,
+                      padding: "4px 8px",
+                      borderRadius: 4,
+                      border: "none",
+                      marginRight: 4,
+                      cursor: "pointer",
+                    }}
+                  >
+                    APPLY TO WATCHLIST
+                  </button>
+                  <button
+                    onClick={() =>
+                      journal.add({
+                        date: defaultDate,
+                        time: defaultTime,
+                        ticker: selected.ticker,
+                        entry: levels.aggressiveEntry ?? undefined,
+                        exit: levels.stop ?? undefined,
+                        reason: "Structure-based plan",
+                        evidence: "Support, spread, speed, volume, structure.",
+                        mistake: "",
+                        lesson: "",
+                        outcome: "",
+                      })
+                    }
+                    style={{
+                      background: THEME.panel,
+                      color: THEME.text2,
+                      padding: "4px 8px",
+                      borderRadius: 4,
+                      border: `1px solid ${THEME.border}`,
+                      cursor: "pointer",
+                    }}
+                  >
+                    SEND TO JOURNAL
+                  </button>
+                </div>
+              </div>
+
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <tbody>
+                  <tr>
+                    <td style={{ color: THEME.text2 }}>Support</td>
+                    <td>
+                      {levels.support !== null
+                        ? levels.support.toFixed(2)
+                        : "N/A"}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style={{ color: THEME.text2 }}>Resistance</td>
+                    <td>
+                      {levels.resistance !== null
+                        ? levels.resistance.toFixed(2)
+                        : "N/A"}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style={{ color: THEME.text2 }}>Range Position</td>
+                    <td>{levels.rangePosition}</td>
+                  </tr>
+                  <tr>
+                    <td style={{ color: THEME.text2 }}>Formation Entry</td>
+                    <td>
+                      {levels.formationEntry !== null
+                        ? levels.formationEntry.toFixed(2)
+                        : "N/A"}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style={{ color: THEME.text2 }}>Aggressive Entry</td>
+                    <td>
+                      {levels.aggressiveEntry !== null
+                        ? levels.aggressiveEntry.toFixed(2)
+                        : "N/A"}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style={{ color: THEME.text2 }}>Confirmation Entry</td>
+                    <td>
+                      {levels.confirmationEntry !== null
+                        ? levels.confirmationEntry.toFixed(2)
+                        : "N/A"}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style={{ color: THEME.text2 }}>Proof Entry</td>
+                    <td>
+                      {levels.proofEntry !== null
+                        ? levels.proofEntry.toFixed(2)
+                        : "NO PROOF = NO TRADE"}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style={{ color: THEME.text2 }}>Stop</td>
+                    <td>
+                      {levels.stop !== null
+                        ? levels.stop.toFixed(2)
+                        : "N/A"}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style={{ color: THEME.text2 }}>Target 1</td>
+                    <td>
+                      {levels.target1 !== null
+                        ? levels.target1.toFixed(2)
+                        : "N/A"}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style={{ color: THEME.text2 }}>Target 2</td>
+                    <td>
+                      {levels.target2 !== null
+                        ? levels.target2.toFixed(2)
+                        : "N/A"}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style={{ color: THEME.text2 }}>Target 3</td>
+                    <td>
+                      {levels.target3 !== null
+                        ? levels.target3.toFixed(2)
+                        : "N/A"}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style={{ color: THEME.text2 }}>Risk Reward</td>
+                    <td>
+                      {levels.riskReward !== null
+                        ? levels.riskReward.toFixed(2)
+                        : "N/A"}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <div
+                style={{
+                  marginTop: 12,
+                  color: THEME.warning,
+                }}
+              >
+                Resistance alone never creates entries. Support, spread, speed,
+                volume acceleration, and structure must align.
+              </div>
+            </>
+          )}
+
+          {selected && !levels && (
+            <div>
+              Structure levels cannot be computed from current data.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WatchlistView({
+  watchlist,
+}: {
+  watchlist: ReturnType<typeof useWatchlist>;
+}) {
+  const { items, remove, updateNotes, updateStatus } = watchlist;
+
+  return (
+    <div>
+      <h1
+        style={{
+          color: THEME.blue,
+          fontSize: 28,
+          marginBottom: 16,
+        }}
+      >
+        Watchlist
+      </h1>
+
+      <div
+        style={{
+          background: THEME.panel,
+          border: `1px solid ${THEME.border}`,
+          borderRadius: 8,
+          padding: 16,
+        }}
+      >
+        {!items.length && (
+          <div>No tickers in watchlist.</div>
+        )}
+
+        {!!items.length && (
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ color: THEME.text2 }}>
+                <th>Ticker</th>
+                <th>Status</th>
+                <th>Lifecycle</th>
+                <th>Elite Score</th>
+                <th>Notes</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item) => (
+                <tr
+                  key={item.ticker}
+                  style={{
+                    borderTop: `1px solid ${THEME.border}`,
+                  }}
+                >
+                  <td>{item.ticker}</td>
+                  <td>
+                    <select
+                      value={item.status}
+                      onChange={(e) =>
+                        updateStatus(item.ticker, e.target.value)
+                      }
+                      style={{
+                        background: THEME.bg,
+                        color: THEME.text,
+                        border: `1px solid ${THEME.border}`,
+                        borderRadius: 4,
+                        padding: "2px 4px",
+                      }}
+                    >
+                      <option value="PLANNED">PLANNED</option>
+                      <option value="ACTIVE">ACTIVE</option>
+                      <option value="CLOSED">CLOSED</option>
+                      <option value="INVALIDATED">INVALIDATED</option>
+                    </select>
+                  </td>
+                  <td>{item.lifecycle || "N/A"}</td>
+                  <td style={{ color: THEME.blue }}>
+                    {item.eliteScore.toFixed(1)}
+                  </td>
+                  <td>
+                    <textarea
+                      value={item.notes}
+                      onChange={(e) =>
+                        updateNotes(item.ticker, e.target.value)
+                      }
+                      rows={2}
+                      style={{
+                        width: "100%",
+                        background: THEME.bg,
+                        color: THEME.text,
+                        border: `1px solid ${THEME.border}`,
+                        borderRadius: 4,
+                      }}
+                    />
+                  </td>
+                  <td>
+                    <button
+                      onClick={() => remove(item.ticker)}
+                      style={{
+                        background: THEME.danger,
+                        color: THEME.bg,
+                        padding: "4px 8px",
+                        borderRadius: 4,
+                        border: "none",
+                        cursor: "pointer",
+                      }}
+                    >
+                      REMOVE
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function JournalView({
+  journal,
+}: {
+  journal: ReturnType<typeof useJournal>;
+}) {
+  const { entries, remove } = journal;
+
+  return (
+    <div>
+      <h1
+        style={{
+          color: THEME.blue,
+          fontSize: 28,
+          marginBottom: 16,
+        }}
+      >
+        Journal
+      </h1>
+
+      <div
+        style={{
+          background: THEME.panel,
+          border: `1px solid ${THEME.border}`,
+          borderRadius: 8,
+          padding: 16,
+        }}
+      >
+        {!entries.length && (
+          <div>No journal entries yet.</div>
+        )}
+
+        {!!entries.length && (
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ color: THEME.text2 }}>
+                <th>Date</th>
+                <th>Time</th>
+                <th>Ticker</th>
+                <th>Entry</th>
+                <th>Exit</th>
+                <th>Reason</th>
+                <th>Evidence</th>
+                <th>Mistake</th>
+                <th>Lesson</th>
+                <th>Outcome</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {entries.map((e) => (
+                <tr
+                  key={e.id}
+                  style={{
+                    borderTop: `1px solid ${THEME.border}`,
+                  }}
+                >
+                  <td>{e.date}</td>
+                  <td>{e.time}</td>
+                  <td>{e.ticker}</td>
+                  <td>
+                    {e.entry !== undefined && e.entry !== null
+                      ? e.entry.toFixed(2)
+                      : "N/A"}
+                  </td>
+                  <td>
+                    {e.exit !== undefined && e.exit !== null
+                      ? e.exit.toFixed(2)
+                      : "N/A"}
+                  </td>
+                  <td>{e.reason}</td>
+                  <td>{e.evidence}</td>
+                  <td>{e.mistake}</td>
+                  <td>{e.lesson}</td>
+                  <td>{e.outcome}</td>
+                  <td>
+                    <button
+                      onClick={() => remove(e.id)}
+                      style={{
+                        background: THEME.danger,
+                        color: THEME.bg,
+                        padding: "4px 8px",
+                        borderRadius: 4,
+                        border: "none",
+                        cursor: "pointer",
+                      }}
+                    >
+                      DELETE
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SettingsView() {
+  return (
+    <div>
+      <h1
+        style={{
+          color: THEME.blue,
+          fontSize: 28,
+          marginBottom: 16,
+        }}
+      >
+        Settings
+      </h1>
+
+      <div
+        style={{
+          background: THEME.panel,
+          border: `1px solid ${THEME.border}`,
+          borderRadius: 8,
+          padding: 16,
+        }}
+      >
+        <div style={{ color: THEME.text2, marginBottom: 8 }}>
+          Scanner & Risk Preferences
+        </div>
+        <ul style={{ marginLeft: 16 }}>
+          <li>Elite Score is primary ranking metric.</li>
+          <li>Evidence over prediction. No proof = no trade.</li>
+          <li>Resistance alone never creates entries.</li>
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+function WhyPanel({
+  ticker,
+  onClose,
+}: {
+  ticker: EliteTicker;
+  onClose: () => void;
+}) {
+  const ctx = buildWhyContext(ticker);
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.6)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 50,
+      }}
+    >
+      <div
+        style={{
+          width: "80%",
+          maxWidth: 900,
+          background: THEME.panel,
+          border: `1px solid ${THEME.border}`,
+          borderRadius: 8,
+          padding: 16,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            marginBottom: 12,
+          }}
+        >
+          <div>
+            <div style={{ color: THEME.text2 }}>
+              WHY — {ticker.ticker}
+            </div>
+            <div style={{ fontSize: 18 }}>
+              What evidence supports this thesis?
+            </div>
           </div>
-          <div style={{ marginBottom: 6 }}>
-            <strong>Speed Behavior</strong>
-            <div>Speed {selectedRow.speedScore.toFixed(0)}</div>
-          </div>
-          <div style={{ marginBottom: 6 }}>
-            <strong>Volume Behavior</strong>
-            <div>Volume Accel {selectedRow.volumeAcceleration.toFixed(2)}</div>
-          </div>
-          <div style={{ marginBottom: 6 }}>
-            <strong>Catalyst Analysis</strong>
-            <div>Catalyst {selectedRow.catalystScore ?? '—'}</div>
-          </div>
-          <div style={{ marginBottom: 6 }}>
-            <strong>Environment Analysis</strong>
-            <div>Environment {selectedRow.environmentScore ?? '—'}</div>
-          </div>
-          <div style={{ marginTop: 6 }}>
-            <strong>Question:</strong> What evidence supports this thesis?
+          <button
+            onClick={onClose}
+            style={{
+              background: "transparent",
+              color: THEME.text2,
+              border: "none",
+              cursor: "pointer",
+              fontSize: 18,
+            }}
+          >
+            ✕
+          </button>
+        </div>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+            gap: 16,
+            marginBottom: 16,
+          }}
+        >
+          <div>
+            <div style={{ color: THEME.success, marginBottom: 8 }}>
+              Positive Evidence
+            </div>
+            <ul>
+              {ctx.positiveEvidence.map((p, i) => (
+                <li key={i}>{p}</li>
+              ))}
+            </ul>
           </div>
           <div>
-            <strong>Invalidation:</strong> What evidence disproves this thesis?
+            <div style={{ color: THEME.danger, marginBottom: 8 }}>
+              Negative Evidence (Invalidation)
+            </div>
+            <ul>
+              {ctx.negativeEvidence.map((n, i) => (
+                <li key={i}>{n}</li>
+              ))}
+            </ul>
           </div>
         </div>
-      ) : (
-        <div style={{ fontSize: 11, color: theme.textSecondary }}>Select a ticker to inspect WHY evidence.</div>
-      )}
-    </div>
-  );
-}
 
-function StructureSummaryPanel({ selectedRow }: { selectedRow: ScannerRow | null }) {
-  if (!selectedRow) {
-    return (
-      <div>
-        <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 2, color: theme.textSecondary, marginBottom: 4 }}>Structure Summary</div>
-        <div style={{ fontSize: 11, color: theme.textSecondary }}>Select a ticker to view structure summary.</div>
-      </div>
-    );
-  }
-
-  const s = analyzeStructure(selectedRow);
-
-  return (
-    <div>
-      <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 2, color: theme.textSecondary, marginBottom: 4 }}>Structure Summary · {selectedRow.ticker}</div>
-      <div style={{ fontSize: 11 }}>
-        <div>Support: {s.support != null ? s.support.toFixed(2) : '—'}</div>
-        <div>Resistance: {s.resistance != null ? s.resistance.toFixed(2) : '—'}</div>
-        <div>Range Position: {s.rangePosition}</div>
-        <div>Risk Reward: {s.riskReward}</div>
-      </div>
-    </div>
-  );
-}
-
-function JournalSummaryPanel({ journal, selectedTicker }: { journal: JournalEntry[]; selectedTicker: string | null }) {
-  const filtered = selectedTicker ? journal.filter((e) => e.ticker === selectedTicker) : journal;
-
-  return (
-    <div>
-      <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 2, color: theme.textSecondary, marginBottom: 4 }}>Journal Summary</div>
-      <div style={{ fontSize: 11, color: theme.textSecondary, marginBottom: 6 }}>{selectedTicker ? `Entries for ${selectedTicker}` : 'All entries · Filtered by selection'}</div>
-      <div style={{ maxHeight: 140, overflowY: 'auto', fontSize: 11 }}>
-        {filtered.length === 0 ? (
-          <div style={{ color: theme.textSecondary }}>No entries.</div>
-        ) : (
-          filtered.slice().reverse().map((e) => (
-            <div key={e.id} style={{ borderBottom: `1px solid ${theme.border}`, padding: '4px 0' }}>
-              <div style={{ color: theme.textPrimary }}>{e.date} {e.time} · {e.ticker}</div>
-              <div style={{ color: theme.textSecondary }}>Outcome: {e.outcome || '—'}</div>
-            </div>
-          ))
-        )}
-      </div>
-    </div>
-  );
-}
-
-/* ============================
-   Left Column Panels
-   ============================ */
-
-function WatchlistPanel({ scanner, watchlist, setWatchlist, onSelectTicker }: { scanner: ScannerSnapshot; watchlist: WatchlistItem[]; setWatchlist: (w: WatchlistItem[]) => void; onSelectTicker: (t: string) => void }) {
-  const focus = scanner.rows.slice(0, 10);
-
-  function addFromScanner(row: ScannerRow) {
-    if (watchlist.some((w) => w.ticker === row.ticker)) return;
-    setWatchlist([...watchlist, { ticker: row.ticker, notes: '', status: 'Active', lifecycle: row.lifecycle, eliteScore: row.eliteScore }]);
-  }
-
-  return (
-    <div>
-      <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 2, color: theme.textSecondary, marginBottom: 4 }}>Watchlist</div>
-      <div style={{ fontSize: 11, color: theme.textSecondary, marginBottom: 8 }}>Live candidates · No synthetic symbols · WATCH action adds from scanner</div>
-      {focus.length === 0 ? (
-        <div style={{ fontSize: 11, color: theme.textSecondary }}>No live scanner rows. Check connection.</div>
-      ) : (
-        <div style={{ fontSize: 11 }}>
-          {focus.map((row) => (
-            <div key={row.ticker} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: `1px solid ${theme.border}` }}>
-              <div>
-                <div style={{ color: theme.textPrimary }}>{row.ticker}</div>
-                <div style={{ color: theme.textSecondary }}>{row.price.toFixed(2)} · <span style={{ color: row.gainPct >= 0 ? theme.success : theme.danger }}>{row.gainPct.toFixed(2)}%</span></div>
-              </div>
-              <div style={{ display: 'flex', gap: 4 }}>
-                <button onClick={() => onSelectTicker(row.ticker)} style={smallButtonStyle}>Open</button>
-                <button onClick={() => addFromScanner(row)} style={smallButtonStyle}>Watch</button>
-              </div>
-            </div>
-          ))}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+            gap: 16,
+          }}
+        >
+          <div>
+            <div style={{ color: THEME.text2 }}>Support Quality</div>
+            <div>{ctx.supportQuality}</div>
+          </div>
+          <div>
+            <div style={{ color: THEME.text2 }}>Resistance Quality</div>
+            <div>{ctx.resistanceQuality}</div>
+          </div>
+          <div>
+            <div style={{ color: THEME.text2 }}>Spread Behavior</div>
+            <div>{ctx.spreadBehavior}</div>
+          </div>
+          <div>
+            <div style={{ color: THEME.text2 }}>Speed Behavior</div>
+            <div>{ctx.speedBehavior}</div>
+          </div>
+          <div>
+            <div style={{ color: THEME.text2 }}>Volume Behavior</div>
+            <div>{ctx.volumeBehavior}</div>
+          </div>
+          <div>
+            <div style={{ color: THEME.text2 }}>Catalyst Analysis</div>
+            <div>{ctx.catalystAnalysis}</div>
+          </div>
+          <div>
+            <div style={{ color: THEME.text2 }}>Environment Analysis</div>
+            <div>{ctx.environmentAnalysis}</div>
+          </div>
         </div>
-      )}
-    </div>
-  );
-}
 
-function MarketIntelPanel({ intel }: { intel: MarketIntelSnapshot }) {
-  const { indices, health } = intel;
-  const statusColor = health.status === 'connected' ? theme.success : theme.danger;
-
-  return (
-    <div>
-      <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 2, color: theme.textSecondary, marginBottom: 4 }}>Market Intelligence</div>
-      <div style={{ fontSize: 11, color: theme.textSecondary, marginBottom: 8 }}>SPY · QQQ · IWM · VIX · Sector strength · Breadth · Regime</div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 6, marginBottom: 8, fontSize: 11 }}>
-        {indices.length === 0 ? (
-          <div style={{ color: theme.textSecondary }}>No live environment data.</div>
-        ) : (
-          indices.map((idx) => (
-            <div key={idx.symbol} style={{ borderRadius: 8, border: `1px solid ${theme.border}`, padding: 6, backgroundColor: '#262A33' }}>
-              <div style={{ color: theme.textPrimary }}>{idx.symbol}</div>
-              <div style={{ color: theme.textSecondary }}>{idx.lastPrice.toFixed(2)} · <span style={{ color: idx.changePct >= 0 ? theme.success : theme.danger }}>{idx.changePct.toFixed(2)}%</span></div>
-            </div>
-          ))
-        )}
-      </div>
-      <div style={{ fontSize: 11 }}>
-        <div>Sector Strength: {intel.sectorStrength != null ? intel.sectorStrength : '—'}</div>
-        <div>Market Breadth: {intel.marketBreadth != null ? intel.marketBreadth : '—'}</div>
-        <div>Premarket Participation: {intel.premarketParticipation != null ? intel.premarketParticipation : '—'}</div>
-        <div>News Risk: {intel.newsRisk != null ? intel.newsRisk : '—'}</div>
-        <div>Spread Environment: {intel.spreadEnvironment != null ? intel.spreadEnvironment : '—'}</div>
-        <div>Market Regime: {intel.marketRegime ?? '—'}</div>
-        <div>Environment Score: {intel.environmentScore != null ? intel.environmentScore : '—'}</div>
-      </div>
-      <div style={{ marginTop: 6, fontSize: 11, color: theme.textSecondary, display: 'flex', justifyContent: 'space-between' }}>
-        <span style={{ borderRadius: 999, border: `1px solid ${statusColor}`, padding: '2px 8px', color: statusColor }}>{health.status === 'connected' ? 'Connected' : 'Disconnected'}</span>
-        <span>Last Update: {health.lastUpdate ? health.lastUpdate.toLocaleTimeString() : 'N/A'}</span>
-        <span>Data Age: {health.dataAgeMs != null ? `${Math.round(health.dataAgeMs / 1000)}s` : 'Unknown'}</span>
+        <div
+          style={{
+            marginTop: 16,
+            color: THEME.warning,
+          }}
+        >
+          Evidence over prediction. No proof = no trade.
+        </div>
       </div>
     </div>
   );
 }
-
-/* ============================
-   Small Styles
-   ============================ */
-
-const cellStyle: React.CSSProperties = {
-  padding: '4px 6px',
-  borderBottom: `1px solid ${theme.border}`,
-  color: theme.textSecondary,
-  whiteSpace: 'nowrap',
-};
-
-const inputStyle: React.CSSProperties = {
-  flex: 1,
-  borderRadius: 6,
-  border: `1px solid ${theme.border}`,
-  backgroundColor: '#262A33',
-  color: theme.textSecondary,
-  fontSize: 11,
-  padding: 4,
-};
-
-const textareaStyle: React.CSSProperties = {
-  width: '100%',
-  borderRadius: 8,
-  border: `1px solid ${theme.border}`,
-  backgroundColor: '#262A33',
-  color: theme.textSecondary,
-  fontSize: 11,
-  padding: 6,
-  resize: 'vertical',
-  marginBottom: 4,
-};
-
-const smallButtonStyle: React.CSSProperties = {
-  fontSize: 10,
-  padding: '2px 6px',
-  borderRadius: 6,
-  border: `1px solid ${theme.accentBlue}`,
-  backgroundColor: '#323845',
-  color: theme.accentBlue,
-  cursor: 'pointer',
-};
