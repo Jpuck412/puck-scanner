@@ -6,15 +6,11 @@ import React, { useEffect, useMemo, useState } from "react";
  * PROOF OF STRUCTURE™ ELITE
  * Clean, compile-ready app/page.tsx
  *
- * - TypeScript-safe: no duplicate identifiers or object literal keys
- * - React imported to avoid JSX namespace errors during build
- * - Light rustic theme with blue accents
- * - Core modules: Scanner, WHY modal, Structure modal, Watchlist, Journal
+ * - React imported to avoid JSX namespace errors
+ * - No duplicate identifiers or object keys
+ * - Valid numeric literals only
+ * - market.qqq (not market.qq)
  */
-
-/* ---------------------------
-   Types
-   --------------------------- */
 
 type Lifecycle =
   | "SLEEPING"
@@ -34,8 +30,8 @@ interface TickerRow {
   spreadPct: number;
   speedScore: number;
   volumeAccelScore: number;
-  floatSize: number; // in millions (integer)
-  floatScore: number; // 0-100
+  floatSize: number;
+  floatScore: number;
   support?: number;
   resistance?: number;
   tapeScore: number;
@@ -62,10 +58,6 @@ interface JournalEntry {
   lesson?: string;
   outcome?: string;
 }
-
-/* ---------------------------
-   Helpers & Scoring
-   --------------------------- */
 
 const clamp = (v: number, a = 0, b = 100) => Math.max(a, Math.min(b, v));
 const formatPct = (v: number) => `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
@@ -156,10 +148,6 @@ function eliteComposite(inputs: {
   return Math.round(elite * 100) / 100;
 }
 
-/* ---------------------------
-   Environment
-   --------------------------- */
-
 function computeEnv(params: {
   spyPct: number;
   qqqPct: number;
@@ -186,10 +174,6 @@ function computeEnv(params: {
   const color = score > 65 ? "GREEN" : score > 40 ? "YELLOW" : "RED";
   return { score, color } as const;
 }
-
-/* ---------------------------
-   Sample Data (valid numeric literals)
-   --------------------------- */
 
 const SAMPLE_TICKERS = ["ARCX", "BLDR", "CENX", "DYNX", "EQRN", "FARO", "GLEN", "HELD"];
 
@@ -262,13 +246,6 @@ function makeSampleRows(): TickerRow[] {
   });
 }
 
-function scoreVolAccel(ratio: number) {
-  if (ratio < 0.6) return 20;
-  if (ratio < 1) return 45;
-  if (ratio < 2) return 72;
-  return 94;
-}
-
 function pickLifecycle(gain: number, formation: number, tape: number, volRatio: number): Lifecycle {
   if (formation < 30 && gain < 0) return "FAILING";
   if (formation < 35 && gain < 1) return "SLEEPING";
@@ -280,10 +257,6 @@ function pickLifecycle(gain: number, formation: number, tape: number, volRatio: 
   if (gain >= 80) return "EXTENDED";
   return "ACCUMULATING";
 }
-
-/* ---------------------------
-   Persistence helpers
-   --------------------------- */
 
 const WATCH_KEY = "ps_elite_watch_v1";
 const JOURNAL_KEY = "ps_elite_journal_v1";
@@ -311,9 +284,23 @@ function saveJournal(entries: JournalEntry[]) {
   localStorage.setItem(JOURNAL_KEY, JSON.stringify(entries));
 }
 
-/* ---------------------------
-   Page component (client)
-   --------------------------- */
+function lifecycleColor(l: Lifecycle) {
+  switch (l) {
+    case "SLEEPING":
+    case "ACCUMULATING":
+      return "#c08c2b";
+    case "WAKING":
+    case "FORMING":
+    case "IGNITING":
+    case "RUNNING":
+      return "#0e7a55";
+    case "EXTENDED":
+    case "FAILING":
+      return "#b33a3a";
+    default:
+      return "#999";
+  }
+}
 
 export default function Page(): React.ReactElement {
   const [rows, setRows] = useState<TickerRow[]>(() => makeSampleRows());
@@ -330,9 +317,8 @@ export default function Page(): React.ReactElement {
     () => ({ spy: 0.12, qqq: 0.22, iwm: -0.03, vix: 16, sectorStrength: 10, premarket: 45, newsRisk: "MEDIUM" as const, spreadEnv: "MODERATE" as const }),
     []
   );
-  const env = useMemo(() => computeEnv({ spyPct: market.spy, qqqPct: market.qq, iwmPct: market.iwm, vix: market.vix, sectorStrength: market.sectorStrength, premarket: market.premarket, newsRisk: market.newsRisk, spreadEnv: market.spreadEnv }), [market]);
+  const env = useMemo(() => computeEnv({ spyPct: market.spy, qqqPct: market.qqq, iwmPct: market.iwm, vix: market.vix, sectorStrength: market.sectorStrength, premarket: market.premarket, newsRisk: market.newsRisk, spreadEnv: market.spreadEnv }), [market]);
 
-  // simulation updates
   useEffect(() => {
     const id = setInterval(() => {
       setRows((prev) =>
@@ -396,8 +382,8 @@ export default function Page(): React.ReactElement {
     return () => clearInterval(id);
   }, [refreshSec]);
 
-  useEffect(() => { saveWatchlist(watchlist); }, [watchlist]);
-  useEffect(() => { saveJournal(journal); }, [journal]);
+  useEffect(() => saveWatchlist(watchlist), [watchlist]);
+  useEffect(() => saveJournal(journal), [journal]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toUpperCase();
@@ -411,7 +397,6 @@ export default function Page(): React.ReactElement {
     return list;
   }, [rows, search, sortKey]);
 
-  // modal states
   const [whyState, setWhyState] = useState<{ row: TickerRow; analysis: ReturnType<typeof whyAnalyze> } | null>(null);
   const [structureState, setStructureState] = useState<{ row: TickerRow; out: ReturnType<typeof runStructure> } | null>(null);
 
@@ -517,7 +502,7 @@ export default function Page(): React.ReactElement {
           </div>
           <div className="market">
             <div>SPY {market.spy}%</div>
-            <div>QQQ {market.qq}%</div>
+            <div>QQQ {market.qqq}%</div>
             <div className="env">{env.color}</div>
           </div>
         </header>
@@ -619,7 +604,6 @@ export default function Page(): React.ReactElement {
         </div>
       </aside>
 
-      {/* WHY modal */}
       {whyState && (
         <div className="modalBack" onClick={() => setWhyState(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -654,7 +638,6 @@ export default function Page(): React.ReactElement {
         </div>
       )}
 
-      {/* Structure modal */}
       {structureState && (
         <div className="modalBack" onClick={() => setStructureState(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -734,6 +717,8 @@ export default function Page(): React.ReactElement {
         .ticker { color:var(--blue); font-weight:700; font-size:18px; }
         .big { font-weight:700; font-size:16px; }
         .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px; }
+        .muted { color:var(--muted); font-size:12px; }
+        .small { font-size:12px; }
 
         .modalBack { position:fixed; inset:0; background: rgba(4,20,45,0.35); display:flex; align-items:center; justify-content:center; z-index:1200; }
         .modal { background:var(--panel); padding:18px; border-radius:8px; width:820px; max-height:80vh; overflow:auto; border:1px solid rgba(9,48,90,0.04); }
@@ -744,6 +729,8 @@ export default function Page(): React.ReactElement {
         .verdict.wait { color:#9a6a00; background: rgba(245,166,35,0.06); padding:4px 8px; border-radius:6px; font-weight:700; }
         .verdict.no { color:#8b2b2b; background: rgba(180,60,60,0.04); padding:4px 8px; border-radius:6px; font-weight:700; }
 
+        .jItem { padding:8px 0; border-bottom:1px dashed rgba(9,48,90,0.02); }
+
         @media (max-width: 1100px) {
           .app { grid-template-columns: 1fr; grid-template-rows: auto 1fr auto; }
           .right { display:none; }
@@ -751,26 +738,4 @@ export default function Page(): React.ReactElement {
       `}</style>
     </div>
   );
-}
-
-/* ---------------------------
-   Utilities outside component
-   --------------------------- */
-
-function lifecycleColor(l: Lifecycle) {
-  switch (l) {
-    case "SLEEPING":
-    case "ACCUMULATING":
-      return "#c08c2b";
-    case "WAKING":
-    case "FORMING":
-    case "IGNITING":
-    case "RUNNING":
-      return "#0e7a55";
-    case "EXTENDED":
-    case "FAILING":
-      return "#b33a3a";
-    default:
-      return "#999";
-  }
 }
