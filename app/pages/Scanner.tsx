@@ -1,7 +1,7 @@
 "use client";
 
-import { useAppStore } from "@/lib/store";
-import { Panel, Table, Badge, Modal } from "@/components";
+import { useAppStore } from ../lib/store";
+import { Panel, Table, Badge, Modal } from ../components";
 import { useState } from "react";
 
 export function Scanner() {
