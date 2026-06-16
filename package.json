@@ -1,24 +1,28 @@
 {
-  "name": "proof-of-structure-elite",
-  "version": "1.0.0",
-  "private": true,
-  "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "next lint"
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": false,
+    "noEmit": true,
+    "incremental": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./*"]
+    },
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ]
   },
-  "dependencies": {
-    "next": "15.5.7",
-    "react": "19.1.0",
-    "react-dom": "19.1.0",
-    "zustand": "^4.4.0",
-    "axios": "^1.6.0",
-    "date-fns": "^2.30.0"
-  },
-  "devDependencies": {
-    "typescript": "^5.8.3",
-    "@types/react": "^19.1.8",
-    "@types/node": "^22.15.30"
-  }
+  "include": ["next-env.d.ts", ".next/types/**/*.ts", "**/*.ts", "**/*.tsx"],
+  "exclude": ["node_modules"]
 }
