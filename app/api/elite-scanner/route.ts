@@ -1,10 +1,10 @@
 export async function GET() {
   try {
-    const upstream = await fetch("https://puck-scanner.vercel.app/api/gainers", {
+    const response = await fetch("https://puck-scanner.vercel.app/api/gainers", {
       cache: "no-store",
     });
 
-    const data = await upstream.json();
+    const data = await response.json();
 
     return Response.json(data, {
       status: 200,
@@ -12,14 +12,17 @@ export async function GET() {
         "Cache-Control": "no-store",
       },
     });
-  } catch (error) {
+  } catch {
     return Response.json(
       {
         ok: false,
-        source: "proxy",
-        error: "Failed to reach live scanner API",
+        source: "elite-scanner-proxy",
+        count: 0,
         tickers: [],
-        data: { tickers: [] },
+        data: {
+          tickers: [],
+        },
+        error: "Live scanner API unavailable",
       },
       { status: 200 }
     );
