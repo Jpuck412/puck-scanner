@@ -84,7 +84,7 @@ type Structure = {
   resistance: number;
 };
 
-const API = "/api/gainers";
+const API = "/api/elite-scanner";
 
 function num(v: unknown): number {
   const n = Number(v);
