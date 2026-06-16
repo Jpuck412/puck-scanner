@@ -1,7 +1,7 @@
 "use client";
 
-import { useAppStore } from "@/lib/store";
-import { Panel, Stat, Table, Badge } from "@/components";
+import { useAppStore } from "../lib/store";
+import { Panel, Stat, Table, Badge } from "../components";
 
 export function Dashboard() {
   const { symbols, environment, setPage } = useAppStore();
