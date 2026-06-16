@@ -3,128 +3,242 @@
 import { useAppStore } from "../lib/store";
 import { Panel, Stat, Table, Badge } from "../components";
 
+function money(value: number): string {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return "N/A";
+  return "$" + n.toFixed(n < 1 ? 4 : 2);
+}
+
+function pct(value: number): string {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "N/A";
+  return `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`;
+}
+
+function vol(value: number): string {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return "N/A";
+  if (n >= 1_000_000_000) return (n / 1_000_000_000).toFixed(2) + "B";
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + "K";
+  return Math.round(n).toString();
+}
+
 export function Dashboard() {
-  const { symbols, environment, setPage } = useAppStore();
+  const {
+    ranked,
+    formation,
+    rejected,
+    selected,
+    apiStatus,
+    source,
+    lastUpdate,
+    loadScanner,
+    addWatch,
+    addJournal,
+    setSelectedTicker,
+  } = useAppStore();
 
-  const topCandidate = symbols.sort((a, b) => b.scores.eliteScore - a.scores.eliteScore)[0];
-  const topFormation = symbols.sort((a, b) => b.scores.formationScore - a.scores.formationScore)[0];
-  const topVolume = symbols.sort((a, b) => b.scores.volumeAccelerationScore - a.scores.volumeAccelerationScore)[0];
+  const rows = Array.isArray(ranked) ? ranked : [];
+  const formationRows = Array.isArray(formation) ? formation : [];
+  const rejectedRows = Array.isArray(rejected) ? rejected : [];
 
-  const passing = symbols.filter((s) => s.verdict === "YES").length;
-  const rejected = symbols.filter((s) => s.rejection).length;
+  const topElite = rows[0];
+  const topFormation = formationRows[0];
+  const topVolume = [...rows].sort(
+    (a: any, b: any) =>
+      Number(b?.volumeAccelerationScore || 0) -
+      Number(a?.volumeAccelerationScore || 0)
+  )[0];
+  const topFloat = [...rows].sort(
+    (a: any, b: any) =>
+      Number(b?.floatScore || 0) - Number(a?.floatScore || 0)
+  )[0];
+  const topRisk = rejectedRows[0];
+
+  function chooseWhy(stock: any) {
+    if (stock?.ticker && typeof setSelectedTicker === "function") {
+      setSelectedTicker(stock.ticker);
+    }
+  }
+
+  function watch(stock: any) {
+    if (stock && typeof addWatch === "function") {
+      addWatch(stock);
+    }
+  }
+
+  function journal(stock: any) {
+    if (stock && typeof addJournal === "function") {
+      addJournal(stock);
+    }
+  }
 
   return (
-    <div style={{ display: "grid", gap: "20px" }}>
-      <Panel title="COMMAND CENTER" subtitle="Executive Overview">
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "12px" }}>
-          <Stat label="TOTAL SCANNED" value={symbols.length} />
-          <Stat label="PASSING VERDICT" value={passing} color="success" />
-          <Stat label="REJECTED" value={rejected} color="danger" />
-          <Stat label="ENV. SIGNAL" value={environment?.signal || "--"} color={environment?.signal === "GREEN" ? "success" : environment?.signal === "RED" ? "danger" : "warning"} />
+    <div className="dashboardPage">
+      <div className="pageHeader">
+        <div>
+          <h1>Command Center</h1>
+          <p>PROOF OF STRUCTURE™ ELITE · Evidence Before Entry</p>
         </div>
-      </Panel>
 
-      <Panel title="ENVIRONMENT ANALYSIS" subtitle="Market Regime">
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: "12px" }}>
-          <Stat label="SPY" value={environment ? (environment.spy.gain >= 0 ? "+" : "") + environment.spy.gain.toFixed(2) + "%" : "--"} color={environment && environment.spy.gain >= 0 ? "success" : "danger"} />
-          <Stat label="QQQ" value={environment ? (environment.qqq.gain >= 0 ? "+" : "") + environment.qqq.gain.toFixed(2) + "%" : "--"} color={environment && environment.qqq.gain >= 0 ? "success" : "danger"} />
-          <Stat label="IWM" value={environment ? (environment.iwm.gain >= 0 ? "+" : "") + environment.iwm.gain.toFixed(2) + "%" : "--"} color={environment && environment.iwm.gain >= 0 ? "success" : "danger"} />
-          <Stat label="VIX" value={environment ? environment.vix.price.toFixed(2) : "--"} />
-          <Stat label="BREADTH" value={environment ? environment.breadth.upDownRatio.toFixed(2) : "--"} />
-          <Stat label="REGIME" value={environment?.marketRegime || "--"} />
-        </div>
-      </Panel>
-
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "20px" }}>
-        <Panel title="TOP ELITE CANDIDATE" subtitle={topCandidate?.ticker || "None"}>
-          {topCandidate ? (
-            <>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "12px" }}>
-                <span>Elite Score</span>
-                <strong style={{ color: "var(--accent-blue)", fontSize: "18px" }}>{topCandidate.scores.eliteScore.toFixed(1)}</strong>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "12px" }}>
-                <span>Price</span>
-                <strong>${topCandidate.marketData.quote.price.toFixed(2)}</strong>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "12px" }}>
-                <span>Verdict</span>
-                <Badge text={topCandidate.verdict} type={topCandidate.verdict === "YES" ? "success" : topCandidate.verdict === "WAIT" ? "warning" : "danger"} />
-              </div>
-              <button onClick={() => setPage("scanner")} style={{ width: "100%", marginTop: "12px" }}>
-                VIEW SCANNER
-              </button>
-            </>
-          ) : (
-            <div style={{ color: "var(--text-secondary)" }}>No data available</div>
-          )}
-        </Panel>
-
-        <Panel title="TOP FORMATION QUALITY" subtitle={topFormation?.ticker || "None"}>
-          {topFormation ? (
-            <>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "12px" }}>
-                <span>Formation Score</span>
-                <strong style={{ color: "var(--success)" }}>{topFormation.scores.formationScore.toFixed(1)}</strong>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "12px" }}>
-                <span>Support</span>
-                <strong>${topFormation.structure.support.toFixed(2)}</strong>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "12px" }}>
-                <span>Resistance</span>
-                <strong>${topFormation.structure.resistance.toFixed(2)}</strong>
-              </div>
-              <button onClick={() => setPage("formation")} style={{ width: "100%", marginTop: "12px" }}>
-                ANALYZE
-              </button>
-            </>
-          ) : (
-            <div style={{ color: "var(--text-secondary)" }}>No data available</div>
-          )}
-        </Panel>
-
-        <Panel title="TOP VOLUME ACCELERATION" subtitle={topVolume?.ticker || "None"}>
-          {topVolume ? (
-            <>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "12px" }}>
-                <span>Volume Score</span>
-                <strong style={{ color: "var(--warning)" }}>{topVolume.scores.volumeAccelerationScore.toFixed(1)}</strong>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "12px" }}>
-                <span>Volume</span>
-                <strong>{(topVolume.marketData.quote.volume / 1_000_000).toFixed(1)}M</strong>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "12px" }}>
-                <span>Speed</span>
-                <strong>{topVolume.scores.speedScore.toFixed(1)}</strong>
-              </div>
-              <button onClick={() => setPage("scanner")} style={{ width: "100%", marginTop: "12px" }}>
-                VIEW
-              </button>
-            </>
-          ) : (
-            <div style={{ color: "var(--text-secondary)" }}>No data available</div>
-          )}
-        </Panel>
+        <button onClick={loadScanner}>SCAN NOW</button>
       </div>
 
-      <Panel title="LIFECYCLE DISTRIBUTION" subtitle="Runner Stages">
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(8, 1fr)", gap: "12px" }}>
-          {[
-            { stage: "SLEEPING", count: symbols.filter((s) => s.lifecycle === "SLEEPING").length },
-            { stage: "ACCUMULATING", count: symbols.filter((s) => s.lifecycle === "ACCUMULATING").length },
-            { stage: "WAKING", count: symbols.filter((s) => s.lifecycle === "WAKING").length },
-            { stage: "FORMING", count: symbols.filter((s) => s.lifecycle === "FORMING").length },
-            { stage: "IGNITING", count: symbols.filter((s) => s.lifecycle === "IGNITING").length },
-            { stage: "RUNNING", count: symbols.filter((s) => s.lifecycle === "RUNNING").length },
-            { stage: "EXTENDED", count: symbols.filter((s) => s.lifecycle === "EXTENDED").length },
-            { stage: "FAILING", count: symbols.filter((s) => s.lifecycle === "FAILING").length },
-          ].map((item) => (
-            <Stat key={item.stage} label={item.stage} value={item.count} size="small" />
-          ))}
-        </div>
+      <div className="statGrid">
+        <Stat
+          title="API Status"
+          value={<Badge value={apiStatus || "UNKNOWN"} />}
+          sub={lastUpdate || "NEVER"}
+        />
+
+        <Stat
+          title="Data Source"
+          value={source || "UNKNOWN"}
+          sub="Live scanner endpoint"
+        />
+
+        <Stat
+          title="Top Elite Candidate"
+          value={topElite?.ticker || "NONE"}
+          sub={topElite ? `Elite ${topElite.eliteScore}` : "No live symbols"}
+        />
+
+        <Stat
+          title="Top Formation"
+          value={topFormation?.ticker || "NONE"}
+          sub={
+            topFormation
+              ? `Formation ${topFormation.formationScore}`
+              : "No formation candidate"
+          }
+        />
+
+        <Stat
+          title="Volume Acceleration"
+          value={topVolume?.ticker || "NONE"}
+          sub={
+            topVolume
+              ? `Vol Accel ${topVolume.volumeAccelerationScore}`
+              : "No live symbols"
+          }
+        />
+
+        <Stat
+          title="Float Opportunity"
+          value={topFloat?.ticker || "NONE"}
+          sub={topFloat ? `Float Score ${topFloat.floatScore}` : "No live symbols"}
+        />
+
+        <Stat
+          title="Risk Warning"
+          value={topRisk?.ticker || "NONE"}
+          sub={topRisk ? topRisk.lifecycle : "No active warnings"}
+        />
+
+        <Stat
+          title="Total Symbols"
+          value={rows.length}
+          sub={`${rejectedRows.length} rejected`}
+        />
+      </div>
+
+      <Panel title="Live Intelligence Grid">
+        <Table>
+          <thead>
+            <tr>
+              <th>Ticker</th>
+              <th>Price</th>
+              <th>Gain</th>
+              <th>Spread</th>
+              <th>Speed</th>
+              <th>Vol Accel</th>
+              <th>Float</th>
+              <th>Support</th>
+              <th>Resistance</th>
+              <th>Lifecycle</th>
+              <th>Formation</th>
+              <th>Journey</th>
+              <th>Proof</th>
+              <th>Elite</th>
+              <th>Verdict</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {rows.length === 0 ? (
+              <tr>
+                <td colSpan={16}>NO LIVE DATA</td>
+              </tr>
+            ) : (
+              rows.map((stock: any) => (
+                <tr key={`${stock.ticker}-${stock.price}-${stock.volume}`}>
+                  <td>{stock.ticker}</td>
+                  <td>{money(stock.price)}</td>
+                  <td>{pct(stock.gain)}</td>
+                  <td>{stock.spread ? money(stock.spread) : "N/A"}</td>
+                  <td>{stock.speedScore ?? "N/A"}</td>
+                  <td>{stock.volumeAccelerationScore ?? "N/A"}</td>
+                  <td>{vol(stock.float)}</td>
+                  <td>{money(stock.support)}</td>
+                  <td>{money(stock.resistance)}</td>
+                  <td>
+                    <Badge value={stock.lifecycle || "UNKNOWN"} />
+                  </td>
+                  <td>{stock.formationScore ?? "N/A"}</td>
+                  <td>{stock.journeyScore ?? "N/A"}</td>
+                  <td>{stock.proofScore ?? "N/A"}</td>
+                  <td>{stock.eliteScore ?? "N/A"}</td>
+                  <td>
+                    <Badge value={stock.verdict || "WAIT"} />
+                  </td>
+                  <td>
+                    <div className="actionRow">
+                      <button onClick={() => watch(stock)}>WATCH</button>
+                      <button onClick={() => chooseWhy(stock)}>WHY</button>
+                      <button onClick={() => journal(stock)}>JOURNAL</button>
+                    </div>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </Table>
+      </Panel>
+
+      <Panel title="Selected Ticker Intelligence">
+        {!selected ? (
+          <p>No symbol selected. Scanner is waiting for live API data.</p>
+        ) : (
+          <div className="selectedGrid">
+            <div>
+              <strong>{selected.ticker}</strong>
+              <p>{selected.invalidation || "No invalidation data available."}</p>
+            </div>
+
+            <div>
+              <h3>Positive Evidence</h3>
+              <ul>
+                {(selected.positiveEvidence || []).map((item: string) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+
+            <div>
+              <h3>Negative Evidence</h3>
+              <ul>
+                {(selected.negativeEvidence || []).map((item: string) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        )}
       </Panel>
     </div>
   );
 }
+
+export default Dashboard;
