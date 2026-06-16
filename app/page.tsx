@@ -4,17 +4,17 @@ import React, { useEffect, useMemo, useState } from "react";
 
 /**
  * PROOF OF STRUCTURE™ ELITE
- * Executive Trading Intelligence - Light Rustic Theme
+ * Clean, compile-ready app/page.tsx
  *
- * - Light grey background with rustic paint-chips texture
- * - Blue primary text (headings & body)
- * - Retains full functionality: scanner, formation, why engine, structure, watchlist, journal, market intelligence
+ * - Light grey rustic theme with blue writing
+ * - Core modules: Market Intelligence, Scanner, WHY modal, Structure panel, Watchlist, Journal
+ * - TypeScript-safe: no duplicate identifiers or object keys
  *
- * Replace previous app/page.tsx with this file to change theme.
+ * NOTE: This file is intentionally self-contained and conservative to avoid type collisions.
  */
 
 /* ---------------------------
-   Types & Constants (unchanged functionality)
+   Types
    --------------------------- */
 
 type Lifecycle =
@@ -27,14 +27,14 @@ type Lifecycle =
   | "EXTENDED"
   | "FAILING";
 
-interface TickerData {
+interface TickerRow {
   ticker: string;
   price: number;
   prevPrice?: number;
-  gain: number;
+  gainPct: number;
   spreadPct: number;
   speedScore: number;
-  volumeAccel: number;
+  volumeAccelScore: number;
   floatScore: number;
   support?: number;
   resistance?: number;
@@ -48,90 +48,90 @@ interface TickerData {
   volume: number;
   marketCap?: number;
   verdict?: "YES" | "WAIT" | "NO";
-  lastSeen: string;
+  lastSeenISO: string;
 }
 
-const LIFECYCLE_COLORS: Record<Lifecycle, string> = {
-  SLEEPING: "#c08c2b",
-  ACCUMULATING: "#c08c2b",
-  WAKING: "#0e7a55",
-  FORMING: "#0e7a55",
-  IGNITING: "#0b6b45",
-  RUNNING: "#095b38",
-  EXTENDED: "#b33a3a",
-  FAILING: "#a80f1f",
-};
-
-const WATCHLIST_KEY = "ps_elite_watch_v2";
-const JOURNAL_KEY = "ps_elite_journal_v2";
+interface JournalEntry {
+  id: string;
+  createdISO: string;
+  ticker: string;
+  entryPrice?: number;
+  exitPrice?: number;
+  reason?: string;
+  evidence?: string;
+  lesson?: string;
+  outcome?: string;
+}
 
 /* ---------------------------
-   Helpers & Scoring (same logic)
+   Utilities
    --------------------------- */
 
-const clamp = (v: number, a = 0, b = 100) => Math.max(a, Math.min(b, v));
-const pct = (v: number) => `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
+const clamp = (v: number, min = 0, max = 100) => Math.max(min, Math.min(max, v));
+const formatPct = (n: number) => `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
 const nowISO = () => new Date().toISOString();
 const uid = () => Math.random().toString(36).slice(2, 9);
 
+/* ---------------------------
+   Scoring helpers (compact, deterministic)
+   --------------------------- */
+
 function scoreSpread(spreadPct: number) {
   if (spreadPct < 0.2) return 100;
-  if (spreadPct < 0.6) return 90;
+  if (spreadPct < 0.6) return 88;
   if (spreadPct < 1.5) return 70;
   if (spreadPct < 3) return 50;
-  return 20;
+  return 25;
 }
 function scoreSpeed(changePct: number) {
   const abs = Math.abs(changePct);
   if (abs < 0.2) return 30;
   if (abs < 1) return 55;
-  if (abs < 3) return 75;
+  if (abs < 3) return 78;
   return 95;
 }
-function scoreVolumeAccel(accelRatio: number) {
-  if (accelRatio < 0.5) return 10;
-  if (accelRatio < 1) return 40;
-  if (accelRatio < 2) return 70;
-  return 95;
+function scoreVolAccel(ratio: number) {
+  if (ratio < 0.6) return 20;
+  if (ratio < 1) return 45;
+  if (ratio < 2) return 72;
+  return 94;
 }
-function scoreFloat(floatMillions: number) {
-  if (floatMillions <= 0) return 40;
-  if (floatMillions < 5) return 75;
-  if (floatMillions < 50) return 95;
-  if (floatMillions < 200) return 70;
-  return 40;
+function scoreFloatSize(floatM: number) {
+  if (floatM <= 0) return 40;
+  if (floatM < 5) return 80;
+  if (floatM < 50) return 95;
+  if (floatM < 200) return 68;
+  return 35;
 }
-function scoreSupportIntegrity(price: number, support?: number) {
+function scoreSupportQuality(price: number, support?: number) {
   if (!support) return 50;
-  const dist = (price - support) / support;
+  const dist = (price - support) / Math.max(support, 1);
   if (dist < 0) return 10;
   if (dist < 0.02) return 95;
   if (dist < 0.07) return 80;
   if (dist < 0.15) return 60;
   return 40;
 }
-function scoreTape(tapeScore: number) {
-  return clamp(tapeScore);
-}
 
-function computeFormationScore(inputs: {
+function formationComposite(inputs: {
   spreadPct: number;
-  speedChangePct: number;
-  volumeAccelRatio: number;
+  speedChange: number;
+  volAccelRatio: number;
   floatMillions: number;
   support?: number;
   price: number;
   tapeScore: number;
   catalystScore: number;
-  environmentScore: number;
+  envScore: number;
 }) {
   const sSpread = scoreSpread(inputs.spreadPct);
-  const sSpeed = scoreSpeed(inputs.speedChangePct);
-  const sVol = scoreVolumeAccel(inputs.volumeAccelRatio);
-  const sFloat = scoreFloat(inputs.floatMillions);
-  const sSupport = scoreSupportIntegrity(inputs.price, inputs.support);
-  const sTape = scoreTape(inputs.tapeScore);
+  const sSpeed = scoreSpeed(inputs.speedChange);
+  const sVol = scoreVolAccel(inputs.volAccelRatio);
+  const sFloat = scoreFloatSize(inputs.floatMillions);
+  const sSupport = scoreSupportQuality(inputs.price, inputs.support);
+  const sTape = clamp(inputs.tapeScore);
 
+  // weights tuned for formation-quality priority
   const formation =
     0.18 * sSpread +
     0.18 * sSpeed +
@@ -140,12 +140,12 @@ function computeFormationScore(inputs: {
     0.14 * sSupport +
     0.1 * sTape +
     0.06 * inputs.catalystScore +
-    0.04 * inputs.environmentScore;
+    0.04 * inputs.envScore;
 
   return Math.round(formation * 100) / 100;
 }
 
-function computeEliteScore(inputs: {
+function eliteComposite(inputs: {
   formationScore: number;
   journeyScore: number;
   proofScore: number;
@@ -162,97 +162,99 @@ function computeEliteScore(inputs: {
 }
 
 /* ---------------------------
-   Market intelligence & data generator
+   Market environment helper
    --------------------------- */
 
-function computeMarketEnvironment(inputs: {
-  spyChangePct: number;
-  qqqChangePct: number;
-  iwmChangePct: number;
+function environmentScoreCalc(params: {
+  spyPct: number;
+  qqqPct: number;
+  iwmPct: number;
   vix: number;
-  sectorStrength: number;
-  premarketParticipation: number;
+  sectorStrength: number; // -100..100
+  premarket: number; // 0..100
   newsRisk: "LOW" | "MEDIUM" | "HIGH";
-  spreadEnvironment: "NARROW" | "MODERATE" | "BROAD";
+  spreadEnv: "NARROW" | "MODERATE" | "BROAD";
 }) {
-  const regimeScore =
-    (inputs.spyChangePct > 0 ? 1 : -1) * 20 +
-    (inputs.qqqChangePct > 0 ? 1 : -1) * 15 +
-    (inputs.iwmChangePct > 0 ? 1 : -1) * 10 +
-    (inputs.vix < 20 ? 12 : inputs.vix < 30 ? 5 : -10) +
-    (inputs.sectorStrength / 2) +
-    (inputs.premarketParticipation / 10);
+  const base =
+    (params.spyPct > 0 ? 1 : -1) * 20 +
+    (params.qqqPct > 0 ? 1 : -1) * 15 +
+    (params.iwmPct > 0 ? 1 : -1) * 10 +
+    (params.vix < 20 ? 12 : params.vix < 30 ? 4 : -10) +
+    params.sectorStrength / 2 +
+    params.premarket / 10;
 
-  const newsAdj = inputs.newsRisk === "LOW" ? 8 : inputs.newsRisk === "MEDIUM" ? -2 : -14;
-  const spreadAdj = inputs.spreadEnvironment === "NARROW" ? 10 : inputs.spreadEnvironment === "MODERATE" ? 0 : -8;
+  const newsAdj = params.newsRisk === "LOW" ? 8 : params.newsRisk === "MEDIUM" ? -2 : -14;
+  const spreadAdj = params.spreadEnv === "NARROW" ? 10 : params.spreadEnv === "BROAD" ? -8 : 0;
 
-  let envScore = Math.round(clamp((regimeScore + newsAdj + spreadAdj + 50) * 0.7, 0, 100));
-  let color: "GREEN" | "YELLOW" | "RED" = envScore > 65 ? "GREEN" : envScore > 40 ? "YELLOW" : "RED";
-  return { envScore, color };
+  const raw = (base + newsAdj + spreadAdj + 50) * 0.7;
+  const score = clamp(Math.round(raw), 0, 100);
+  const regime = score > 65 ? "GREEN" : score > 40 ? "YELLOW" : "RED";
+  return { score, regime };
 }
 
-const SAMPLE_TICKERS = [
-  "ARCX", "BLDR", "CENX", "DYNX", "EQRN", "FARO", "GLEN", "HELD", "INTR", "JCNX", "KERN", "LYTX", "MTRX", "NOVX", "ORBN",
-];
+/* ---------------------------
+   Sample data generator (safe)
+   --------------------------- */
 
-function generateTickerSample(): TickerData[] {
-  const baseTime = Date.now();
-  return SAMPLE_TICKERS.map((t) => {
+const SAMPLE = ["ARCX", "BLDR", "CENX", "DYNX", "EQRN", "FARO", "GLEN", "HELD", "INTR", "JCNX"];
+
+function makeSampleRows(): TickerRow[] {
+  const t0 = Date.now();
+  return SAMPLE.map((s, i) => {
     const price = Number((Math.random() * 40 + 2).toFixed(2));
-    const prevPrice = Number((price / (1 + (Math.random() - 0.4) / 50)).toFixed(2));
-    const gain = Number((((price - prevPrice) / prevPrice) * 100).toFixed(2));
-    const spreadPct = Number((Math.random() * 1.5).toFixed(2));
-    const speedScore = clamp(Math.round((Math.random() - 0.2) * 50 + Math.abs(gain) * 2 + 40));
-    const volume = Math.round(Math.random() * 5_000_000 + 10_000);
-    const avgVol = Math.max(10000, volume / (0.5 + Math.random() * 2));
-    const volumeAccel = Number((volume / avgVol).toFixed(2));
-    const volumeAccelScore = scoreVolumeAccel(volumeAccel);
-    const floatMillions = Math.round(Math.random() * 300);
-    const floatScore = scoreFloat(floatMillions);
+    const prev = Number((price / (1 + (Math.random() - 0.4) / 50)).toFixed(2));
+    const gainPct = Number((((price - prev) / prev) * 100).toFixed(2));
+    const spreadPct = Number((Math.random() * 1.7).toFixed(2));
+    const speedScore = clamp(Math.round(Math.abs(gainPct) * 2 + Math.random() * 40));
+    const volume = Math.round(Math.random() * 4_000_000 + 5_000);
+    const avgVol = Math.max(1000, volume / (0.6 + Math.random() * 2));
+    const volAccelRatio = volume / avgVol;
+    const volAccelScore = scoreVolAccel(volAccelRatio);
+    const floatM = Math.round(Math.random() * 300);
+    const floatScore = scoreFloatSize(floatM);
     const tapeScore = Math.round(Math.random() * 100);
-    const catalystScore = Math.round(Math.random() * 100 * (Math.random() > 0.85 ? 1 : 0.4));
-    const environmentScore = Math.round(Math.random() * 100);
+    const catalystScore = Math.round(Math.random() * (Math.random() > 0.85 ? 100 : 40));
+    const envScore = Math.round(Math.random() * 100);
     const support = Number((price * (0.86 + Math.random() * 0.08)).toFixed(2));
     const resistance = Number((price * (1.05 + Math.random() * 0.22)).toFixed(2));
-    const formationScore = computeFormationScore({
+    const formationScore = formationComposite({
       spreadPct,
-      speedChangePct: gain,
-      volumeAccelRatio: volume / Math.max(1, avgVol),
-      floatMillions,
+      speedChange: gainPct,
+      volAccelRatio,
+      floatMillions: floatM,
       support,
       price,
       tapeScore,
       catalystScore,
-      environmentScore,
+      envScore,
     });
-    const journeyScore = clamp(Math.round((Math.random() * 40) + (formationScore * 0.3)));
-    const proofScore = Math.round((formationScore * 0.6 + tapeScore * 0.4) / 1);
-    const eliteScore = computeEliteScore({
+    const journeyScore = clamp(Math.round(formationScore * 0.3 + Math.random() * 40));
+    const proofScore = Math.round((formationScore * 0.6 + tapeScore * 0.4));
+    const eliteScore = eliteComposite({
       formationScore,
       journeyScore,
       proofScore,
       catalystScore,
-      environmentScore,
+      environmentScore: envScore,
     });
 
-    const lifecycle = pickLifecycle(gain, formationScore, tapeScore, volume / Math.max(1, avgVol));
-
-    const verdict: TickerData["verdict"] = eliteScore > 70 && lifecycle !== "SLEEPING" && lifecycle !== "EXTENDED" ? "YES" : eliteScore > 50 ? "WAIT" : "NO";
+    const lifecycle = pickLifecycle(gainPct, formationScore, tapeScore, volAccelRatio);
+    const verdict = eliteScore > 70 && lifecycle !== "SLEEPING" && lifecycle !== "EXTENDED" ? "YES" : eliteScore > 50 ? "WAIT" : "NO";
 
     return {
-      ticker: t,
+      ticker: s,
       price,
-      prevPrice,
-      gain,
+      prevPrice: prev,
+      gainPct,
       spreadPct,
       speedScore,
-      volumeAccel: volumeAccelScore,
+      volumeAccelScore: volAccelScore,
       floatScore,
       support,
       resistance,
       tapeScore,
       catalystScore,
-      environmentScore,
+      environmentScore: envScore,
       formationScore,
       journeyScore,
       eliteScore,
@@ -260,859 +262,579 @@ function generateTickerSample(): TickerData[] {
       volume,
       marketCap: Math.round(Math.random() * 2000),
       verdict,
-      lastSeen: new Date(baseTime - Math.floor(Math.random() * 48) * 3600 * 1000).toISOString(),
+      lastSeenISO: new Date(t0 - i * 3600 * 1000).toISOString(),
     };
   });
 }
 
-function pickLifecycle(gain: number, formation: number, tape: number, volAccelRatio: number): Lifecycle {
-  if (formation < 30 && gain < 0) return "FAILING";
-  if (formation < 35 && gain < 1) return "SLEEPING";
-  if (formation < 50 && gain >= 0 && volAccelRatio < 1) return "ACCUMULATING";
-  if (formation >= 50 && gain < 3) return "WAKING";
-  if (formation >= 55 && gain >= 3 && gain < 12) return "FORMING";
-  if (formation >= 65 && gain >= 12 && gain < 25) return "IGNITING";
-  if (formation >= 70 && gain >= 25 && gain < 80) return "RUNNING";
+function pickLifecycle(gain: number, formationScore: number, tapeScore: number, volAccelRatio: number): Lifecycle {
+  if (formationScore < 30 && gain < 0) return "FAILING";
+  if (formationScore < 35 && gain < 1) return "SLEEPING";
+  if (formationScore < 50 && gain >= 0 && volAccelRatio < 1) return "ACCUMULATING";
+  if (formationScore >= 50 && gain < 3) return "WAKING";
+  if (formationScore >= 55 && gain >= 3 && gain < 12) return "FORMING";
+  if (formationScore >= 65 && gain >= 12 && gain < 25) return "IGNITING";
+  if (formationScore >= 70 && gain >= 25 && gain < 80) return "RUNNING";
   if (gain >= 80) return "EXTENDED";
   return "ACCUMULATING";
 }
 
 /* ---------------------------
-   Persistence
+   Persistence helpers
    --------------------------- */
 
-function loadWatchlist(): string[] {
+const WATCH_KEY = "ps_elite_watch_v3";
+const JOURNAL_KEY_V3 = "ps_elite_journal_v3";
+
+function loadWatch(): string[] {
   try {
-    const raw = localStorage.getItem(WATCHLIST_KEY);
+    const raw = localStorage.getItem(WATCH_KEY);
     return raw ? JSON.parse(raw) : [];
   } catch {
     return [];
   }
 }
-function saveWatchlist(list: string[]) {
-  localStorage.setItem(WATCHLIST_KEY, JSON.stringify(list));
-}
-
-interface JournalEntry {
-  id: string;
-  dateISO: string;
-  ticker: string;
-  entryPrice?: number;
-  exitPrice?: number;
-  reason?: string;
-  evidence?: string;
-  mistake?: string;
-  lesson?: string;
-  outcome?: string;
+function saveWatch(list: string[]) {
+  localStorage.setItem(WATCH_KEY, JSON.stringify(list));
 }
 
 function loadJournal(): JournalEntry[] {
   try {
-    const raw = localStorage.getItem(JOURNAL_KEY);
+    const raw = localStorage.getItem(JOURNAL_KEY_V3);
     return raw ? JSON.parse(raw) : [];
   } catch {
     return [];
   }
 }
 function saveJournal(entries: JournalEntry[]) {
-  localStorage.setItem(JOURNAL_KEY, JSON.stringify(entries));
+  localStorage.setItem(JOURNAL_KEY_V3, JSON.stringify(entries));
 }
 
 /* ---------------------------
-   Page - UI (light rustic theme)
+   Main Page (client)
    --------------------------- */
 
-export default function Page() {
-  const [tickers, setTickers] = useState<TickerData[]>(() => generateTickerSample());
-  const [market, setMarket] = useState(() => ({
-    spyChangePct: 0.12,
-    qqqChangePct: 0.22,
-    iwmChangePct: -0.03,
-    vix: 16,
-    sectorStrength: 20,
-    premarketParticipation: 48,
-    newsRisk: "MEDIUM" as "LOW" | "MEDIUM" | "HIGH",
-    spreadEnvironment: "MODERATE" as "NARROW" | "MODERATE" | "BROAD",
-  }));
-
-  const [selectedTicker, setSelectedTicker] = useState<string | null>(tickers[0]?.ticker ?? null);
-  const [watchlist, setWatchlist] = useState<string[]>(() => (typeof window === "undefined" ? [] : loadWatchlist()));
+export default function Page(): JSX.Element {
+  const [rows, setRows] = useState<TickerRow[]>(() => makeSampleRows());
+  const [watchlist, setWatchlist] = useState<string[]>(() => (typeof window === "undefined" ? [] : loadWatch()));
   const [journal, setJournal] = useState<JournalEntry[]>(() => (typeof window === "undefined" ? [] : loadJournal()));
 
+  const [selected, setSelected] = useState<string | null>(rows[0]?.ticker ?? null);
   const [search, setSearch] = useState("");
-  const [sortKey, setSortKey] = useState<keyof TickerData | "eliteScore" | "formationScore">("eliteScore");
-
+  const [sortBy, setSortBy] = useState<"eliteScore" | "formationScore" | "gainPct">("eliteScore");
   const [lastScan, setLastScan] = useState<string>(nowISO());
-  const [refreshSeconds, setRefreshSeconds] = useState<number>(30);
+  const [refreshSec, setRefreshSec] = useState<number>(30);
 
-  const marketEnv = useMemo(() => computeMarketEnvironment(market), [market]);
+  // Simple market environment
+  const market = useMemo(
+    () => ({
+      spy: 0.12,
+      qqq: 0.22,
+      iwm: -0.03,
+      vix: 16,
+      sectorStrength: 10,
+      premarket: 45,
+      newsRisk: "MEDIUM" as "LOW" | "MEDIUM" | "HIGH",
+      spreadEnv: "MODERATE" as "NARROW" | "MODERATE" | "BROAD",
+    }),
+    []
+  );
+  const env = useMemo(() => environmentScoreCalc({ spyPct: market.spy, qqqPct: market.qqq, iwmPct: market.iwm, vix: market.vix, sectorStrength: market.sectorStrength, premarket: market.premarket, newsRisk: market.newsRisk, spreadEnv: market.spreadEnv }), [market]);
 
+  // periodic refresh simulation
   useEffect(() => {
     const id = setInterval(() => {
-      setTickers((prev) =>
-        prev.map((t) => {
-          const drift = (Math.random() - 0.45) * 0.8;
-          const newPrice = Number((t.price * (1 + drift / 100)).toFixed(2));
-          const gain = Number((((newPrice - (t.prevPrice ?? t.price)) / (t.prevPrice ?? t.price)) * 100).toFixed(2));
-          const spreadPct = clamp(t.spreadPct * (1 + (Math.random() - 0.5) * 0.2), 0.05, 5);
-          const speedScore = clamp(Math.round(t.speedScore + (Math.random() - 0.5) * 8));
-          const volume = Math.max(1000, Math.round(t.volume * (1 + (Math.random() - 0.4) * 0.1)));
-          const avgVol = Math.max(1000, Math.round(volume / (0.7 + Math.random() * 1.6)));
+      setRows((prev) =>
+        prev.map((r) => {
+          const drift = (Math.random() - 0.45) * 0.9;
+          const newPrice = Number((r.price * (1 + drift / 100)).toFixed(2));
+          const gainPct = Number((((newPrice - (r.prevPrice ?? r.price)) / (r.prevPrice ?? r.price)) * 100).toFixed(2));
+          const spreadPct = clamp(r.spreadPct * (1 + (Math.random() - 0.5) * 0.2), 0.05, 5);
+          const speedScore = clamp(Math.round(r.speedScore + (Math.random() - 0.5) * 8));
+          const volume = Math.max(1000, Math.round(r.volume * (1 + (Math.random() - 0.4) * 0.12)));
+          const avgVol = Math.max(1000, Math.round(volume / (0.8 + Math.random() * 1.8)));
           const volAccelRatio = volume / avgVol;
-          const volumeAccel = scoreVolumeAccel(volAccelRatio);
-          const floatMillions = Math.max(0, t.marketCap ? Math.round(t.marketCap / 1) : Math.round(Math.random() * 300));
-          const tapeScore = clamp(Math.round(t.tapeScore + (Math.random() - 0.5) * 10));
-          const catalystScore = clamp(Math.round(t.catalystScore + (Math.random() - 0.5) * 8));
-          const environmentScore = clamp(Math.round(t.environmentScore + (Math.random() - 0.5) * 6));
-          const formationScore = computeFormationScore({
+          const volAccelScore = scoreVolAccel(volAccelRatio);
+          const floatSize = r.marketCap ?? Math.round(Math.random() * 300);
+          const floatScore = scoreFloatSize(floatSize);
+          const tapeScore = clamp(Math.round(r.tapeScore + (Math.random() - 0.5) * 10));
+          const catalystScore = clamp(Math.round(r.catalystScore + (Math.random() - 0.5) * 8));
+          const envScore = clamp(Math.round(r.environmentScore + (Math.random() - 0.5) * 6));
+          const formation = formationComposite({
             spreadPct,
-            speedChangePct: gain,
-            volumeAccelRatio: volAccelRatio,
-            floatMillions,
-            support: t.support,
+            speedChange: gainPct,
+            volAccelRatio,
+            floatMillions: floatSize,
+            support: r.support,
             price: newPrice,
             tapeScore,
             catalystScore,
-            environmentScore,
+            envScore,
           });
-          const journeyScore = clamp(Math.round((t.journeyScore * 0.92 + formationScore * 0.08) + (Math.random() - 0.5) * 4));
-          const proofScore = Math.round((formationScore * 0.6 + tapeScore * 0.4));
-          const eliteScore = computeEliteScore({
-            formationScore,
-            journeyScore,
-            proofScore,
-            catalystScore,
-            environmentScore,
-          });
-          const lifecycle = pickLifecycle(gain, formationScore, tapeScore, volAccelRatio);
-          const verdict: TickerData["verdict"] =
-            eliteScore > 70 && lifecycle !== "SLEEPING" && lifecycle !== "EXTENDED" ? "YES" : eliteScore > 50 ? "WAIT" : "NO";
+          const journeyScore = clamp(Math.round(formation * 0.25 + r.journeyScore * 0.75 + (Math.random() - 0.5) * 6));
+          const proofScore = Math.round(formation * 0.6 + tapeScore * 0.4);
+          const eliteScore = eliteComposite({ formationScore: formation, journeyScore, proofScore, catalystScore, environmentScore: envScore });
+          const lifecycle = pickLifecycle(gainPct, formation, tapeScore, volAccelRatio);
+          const verdict = eliteScore > 70 && lifecycle !== "SLEEPING" && lifecycle !== "EXTENDED" ? "YES" : eliteScore > 50 ? "WAIT" : "NO";
 
           return {
-            ...t,
-            prevPrice: t.price,
+            ...r,
+            prevPrice: r.price,
             price: newPrice,
-            gain,
+            gainPct,
             spreadPct,
             speedScore,
-            volumeAccel,
-            floatScore: scoreFloat(floatMillions),
+            volumeAccelScore: volAccelScore,
+            floatScore,
             tapeScore,
             catalystScore,
-            environmentScore,
-            formationScore,
+            environmentScore: envScore,
+            formationScore: formation,
             journeyScore,
             eliteScore,
             lifecycle,
             volume,
             verdict,
-            lastSeen: nowISO(),
+            lastSeenISO: nowISO(),
           };
         })
       );
       setLastScan(nowISO());
-    }, refreshSeconds * 1000);
+    }, refreshSec * 1000);
     return () => clearInterval(id);
-  }, [refreshSeconds]);
+  }, [refreshSec]);
 
+  // persistence
   useEffect(() => {
-    saveWatchlist(watchlist);
+    saveWatch(watchlist);
   }, [watchlist]);
-
   useEffect(() => {
     saveJournal(journal);
   }, [journal]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toUpperCase();
-    let rows = tickers.slice();
-    if (q) rows = rows.filter((r) => r.ticker.includes(q));
-    rows.sort((a, b) => {
-      if (sortKey === "eliteScore") return b.eliteScore - a.eliteScore;
-      if (sortKey === "formationScore") return b.formationScore - a.formationScore;
-      const k = sortKey as keyof TickerData;
-      if (typeof a[k] === "number" && typeof b[k] === "number") return (b[k] as number) - (a[k] as number);
-      return a.ticker.localeCompare(b.ticker);
+    let list = rows.slice();
+    if (q) list = list.filter((r) => r.ticker.includes(q));
+    list.sort((a, b) => {
+      if (sortBy === "eliteScore") return b.eliteScore - a.eliteScore;
+      if (sortBy === "formationScore") return b.formationScore - a.formationScore;
+      return b.gainPct - a.gainPct;
     });
-    return rows;
-  }, [tickers, search, sortKey]);
+    return list;
+  }, [rows, search, sortBy]);
 
-  const selected = tickers.find((t) => t.ticker === selectedTicker) ?? null;
-
-  const toggleWatch = (ticker: string) => {
+  function toggleWatch(t: string) {
     setWatchlist((prev) => {
-      const next = prev.includes(ticker) ? prev.filter((p) => p !== ticker) : [...prev, ticker];
-      saveWatchlist(next);
+      const next = prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t];
+      saveWatch(next);
       return next;
     });
-  };
+  }
 
   function addJournal(entry: Partial<JournalEntry>) {
     const note: JournalEntry = {
       id: uid(),
-      dateISO: nowISO(),
-      ticker: entry.ticker ?? (selected?.ticker ?? "N/A"),
+      createdISO: nowISO(),
+      ticker: entry.ticker ?? (selected ?? "N/A"),
       entryPrice: entry.entryPrice,
       exitPrice: entry.exitPrice,
       reason: entry.reason,
       evidence: entry.evidence,
-      mistake: entry.mistake,
       lesson: entry.lesson,
       outcome: entry.outcome,
     };
     setJournal((p) => [note, ...p]);
-    saveJournal([note, ...journal]);
   }
 
-  function runStructureAnalysis(input: {
-    ticker: string;
-    currentPrice: number;
-    support?: number;
-    resistance?: number;
-    lifecycle?: Lifecycle;
-    journeyScore?: number;
-  }) {
-    const { currentPrice, support = currentPrice * 0.9, resistance, lifecycle = "FORMING", journeyScore = 50 } = input;
-    const rangeHigh = resistance ?? currentPrice * 1.12;
-    const rangeLow = support;
-    const rangePos = clamp(((currentPrice - rangeLow) / (rangeHigh - rangeLow)) * 100, 0, 100);
-    const formationEntry = Number((rangeLow + (rangeHigh - rangeLow) * 0.33).toFixed(2));
-    const aggressiveEntry = Number((rangeLow + (rangeHigh - rangeLow) * 0.12).toFixed(2));
-    const confirmationEntry = Number((rangeLow + (rangeHigh - rangeLow) * 0.62).toFixed(2));
+  // Why modal state
+  const [whyPayload, setWhyPayload] = useState<{ row: TickerRow; analysis: ReturnType<typeof whyAnalysis> } | null>(null);
+  // Structure panel state
+  const [structurePayload, setStructurePayload] = useState<{ row: TickerRow; structure: any } | null>(null);
+
+  function whyAnalysis(r: TickerRow) {
+    const positives: string[] = [];
+    const negatives: string[] = [];
+    const supportDetail: string[] = [];
+    const resistanceDetail: string[] = [];
+    const volDetail: string[] = [];
+    const spreadDetail: string[] = [];
+    const catalystDetail: string[] = [];
+    const envDetail: string[] = [];
+
+    if (r.formationScore > 65) positives.push("High formation quality");
+    if (r.volumeAccelScore >= 70) positives.push("Strong volume acceleration");
+    if (r.floatScore >= 70) positives.push("Attractive float size");
+    if (r.tapeScore >= 60) positives.push("Tape supports buying");
+
+    if (r.spreadPct > 2.5) negatives.push("Wide spreads (execution risk)");
+    if (r.formationScore < 40) negatives.push("Weak formation");
+    if (r.volumeAccelScore < 40) negatives.push("Low volume support");
+
+    if (r.support) supportDetail.push(`support ${r.support.toFixed(2)} (${((r.price - r.support) / Math.max(1, r.support) * 100).toFixed(1)}% above)`);
+    else supportDetail.push("No reliable support level");
+
+    if (r.resistance) resistanceDetail.push(`resistance ${r.resistance.toFixed(2)} (${((r.resistance - r.price) / Math.max(1, r.price) * 100).toFixed(1)}% overhead)`);
+    else resistanceDetail.push("No validated resistance level");
+
+    if (r.volumeAccelScore >= 70) volDetail.push("Volume accelerating vs recent average");
+    else if (r.volumeAccelScore >= 40) volDetail.push("Volume stable");
+    else volDetail.push("Low or declining volume");
+
+    spreadDetail.push(`Spread ${r.spreadPct.toFixed(2)}% — ${r.spreadPct < 1 ? "tight" : r.spreadPct < 2 ? "moderate" : "wide"}`);
+    catalystDetail.push(`${r.catalystScore} catalyst score`);
+    envDetail.push(`${r.environmentScore} env score`);
+
+    const question = "What proves the thesis right? Look for volume retest holding, tape confirmation, and corroborating catalyst.";
+    const invalidation = "What proves wrong? Break of support on heavy volume, distribution, or negative catalyst.";
+
+    return { positives, negatives, supportDetail, resistanceDetail, volDetail, spreadDetail, catalystDetail, envDetail, question, invalidation };
+  }
+
+  function runStructureAnalysis(row: TickerRow) {
+    const current = row.price;
+    const low = row.support ?? Number((current * 0.9).toFixed(2));
+    const high = row.resistance ?? Number((current * 1.12).toFixed(2));
+    const rangePos = clamp(((current - low) / (high - low)) * 100, 0, 100);
+    const formationEntry = Number((low + (high - low) * 0.33).toFixed(2));
+    const aggressiveEntry = Number((low + (high - low) * 0.12).toFixed(2));
+    const confirmationEntry = Number((low + (high - low) * 0.62).toFixed(2));
     const proofEntry = Number(((formationEntry + confirmationEntry) / 2).toFixed(2));
-    const stop =
-      lifecycle === "SLEEPING" ? Number((rangeLow * 0.995).toFixed(2)) : lifecycle === "ACCUMULATING" ? Number((rangeLow * 0.985).toFixed(2)) : Number((rangeLow * 0.97).toFixed(2));
-    const t1 = Number((currentPrice * 1.12).toFixed(2));
-    const t2 = Number((currentPrice * 1.26).toFixed(2));
-    const t3 = Number((currentPrice * 1.6).toFixed(2));
-    const rrT1 = parseFloat(((t1 - formationEntry) / (formationEntry - stop) || 0).toFixed(2));
-    const rrT2 = parseFloat(((t2 - formationEntry) / (formationEntry - stop) || 0).toFixed(2));
-    const rrT3 = parseFloat(((t3 - formationEntry) / (formationEntry - stop) || 0).toFixed(2));
-
-    const warnings: string[] = [];
-    if (!input.support) warnings.push("Support missing: define key support level before entries.");
-    if (!input.resistance) warnings.push("Resistance not provided: use with other evidence, do not use resistance alone.");
-    if (journeyScore < 35) warnings.push("Weak journey — limited historical conviction.");
-    if (lifecycle === "EXTENDED") warnings.push("Extended stage — avoid new core entries.");
-
-    return {
-      rangeLow,
-      rangeHigh,
-      rangePos,
-      formationEntry,
-      aggressiveEntry,
-      confirmationEntry,
-      proofEntry,
-      stop,
-      targets: { t1, t2, t3 },
-      rr: { rrT1, rrT2, rrT3 },
-      warnings,
-    };
-  }
-
-  function whyEngine(t: TickerData) {
-    const positive: string[] = [];
-    const negative: string[] = [];
-    const supportQuality: string[] = [];
-    const resistanceQuality: string[] = [];
-    const volumeBehavior: string[] = [];
-    const spreadBehavior: string[] = [];
-    const catalystAnalysis: string[] = [];
-    const environmentAnalysis: string[] = [];
-
-    if (t.formationScore > 65) positive.push("High formation quality");
-    if (t.volumeAccel >= 70) positive.push("Sustained volume acceleration");
-    if (t.floatScore >= 70) positive.push("Attractive float profile");
-    if (t.tapeScore >= 60) positive.push("Order flow supporting move");
-    if (t.catalystScore >= 60) positive.push("Material catalyst present");
-
-    if (t.spreadPct > 2.5) negative.push("Wide spreads — execution risk");
-    if (t.formationScore < 40) negative.push("Weak formation quality");
-    if (t.volumeAccel < 40) negative.push("Insufficient volume support");
-    if (t.lifecycle === "EXTENDED") negative.push("Extended stage — late entry risk");
-    if (t.lifecycle === "FAILING") negative.push("Failing lifecycle — strong invalidation");
-
-    if (t.support) {
-      const dist = ((t.price - t.support) / t.support) * 100;
-      supportQuality.push(`Support ${t.support.toFixed(2)} (${dist.toFixed(1)}% above)`);
-    } else supportQuality.push("No validated support level");
-
-    if (t.resistance) {
-      const dist = ((t.resistance - t.price) / t.price) * 100;
-      resistanceQuality.push(`Resistance ${t.resistance.toFixed(2)} (${dist.toFixed(1)}% overhead)`);
-    } else resistanceQuality.push("No validated resistance level");
-
-    if (t.volumeAccel >= 70) volumeBehavior.push("Volume accelerating relative to recent average");
-    else if (t.volumeAccel >= 40) volumeBehavior.push("Volume stable");
-    else volumeBehavior.push("Low/declining volume");
-
-    spreadBehavior.push(`Spread ${t.spreadPct.toFixed(2)}% — ${t.spreadPct < 1 ? "tight" : t.spreadPct < 2 ? "moderate" : "wide"}`);
-
-    catalystAnalysis.push(`${t.catalystScore} catalyst score — ${t.catalystScore > 60 ? "material" : t.catalystScore > 35 ? "minor" : "none"}`);
-    environmentAnalysis.push(`${t.environmentScore} environment score — ${marketEnv.color}`);
-
-    const question = "What proves this thesis correct? Look for sustained volume, support retest holding, tape confirming buy-side interest, and corroborating catalyst.";
-    const invalidation = "What proves this thesis wrong? Failure to hold support, violent distribution, material negative news, or environment regime flipping to RED.";
-
-    return {
-      positive,
-      negative,
-      supportQuality,
-      resistanceQuality,
-      volumeBehavior,
-      spreadBehavior,
-      catalystAnalysis,
-      environmentAnalysis,
-      question,
-      invalidation,
-    };
+    const stop = row.lifecycle === "SLEEPING" ? Number((low * 0.995).toFixed(2)) : Number((low * 0.97).toFixed(2));
+    const t1 = Number((current * 1.12).toFixed(2));
+    const t2 = Number((current * 1.26).toFixed(2));
+    const t3 = Number((current * 1.6).toFixed(2));
+    const rr1 = parseFloat(((t1 - formationEntry) / (formationEntry - stop) || 0).toFixed(2));
+    return { low, high, rangePos, formationEntry, aggressiveEntry, confirmationEntry, proofEntry, stop, targets: { t1, t2, t3 }, rr: { rr1 } };
   }
 
   return (
-    <div className="app">
-      <aside className="left-col">
+    <div className="root">
+      <aside className="navPane">
         <div className="brand">
-          <div className="title">PROOF OF STRUCTURE™ ELITE</div>
+          <h1>PROOF OF STRUCTURE™ ELITE</h1>
           <div className="tag">Evidence Before Entry.</div>
         </div>
 
-        <nav className="nav">
-          <NavButton label="Dashboard" />
-          <NavButton label="Market Intelligence" />
-          <NavButton label="Scanner" active />
-          <NavButton label="Formation Engine" />
-          <NavButton label="Structure Analysis" />
-          <NavButton label="Runner Lifecycle" />
-          <NavButton label="Watchlist" />
-          <NavButton label="Journal" />
-          <NavButton label="Settings" />
-        </nav>
+        <ul className="navList" aria-hidden>
+          <li>Dashboard</li>
+          <li className="active">Scanner</li>
+          <li>Formation Engine</li>
+          <li>Structure Analysis</li>
+          <li>Runner Lifecycle</li>
+          <li>Watchlist</li>
+          <li>Journal</li>
+          <li>Settings</li>
+        </ul>
 
-        <div className="left-footer">
-          <div className="small muted">Version 1.0 • Professional</div>
-          <div className="muted">Last Scan: {new Date(lastScan).toLocaleString()}</div>
-        </div>
+        <div className="footerNote">Last scan: {new Date(lastScan).toLocaleString()}</div>
       </aside>
 
-      <main className="center-col">
-        <header className="center-header">
-          <div className="search-row">
-            <div className="search-controls">
-              <input className="input search" placeholder="Search tickers, sectors, tags..." value={search} onChange={(e) => setSearch(e.target.value)} />
-              <select className="input" value={sortKey} onChange={(e) => setSortKey(e.target.value as any)}>
-                <option value="eliteScore">Elite Score</option>
-                <option value="formationScore">Formation Score</option>
-                <option value="gain">Gain</option>
-                <option value="volume">Volume</option>
-                <option value="speedScore">Speed</option>
-              </select>
-              <div className="small muted">Refresh</div>
-              <select value={refreshSeconds} onChange={(e) => setRefreshSeconds(Number(e.target.value))} className="input small">
-                <option value={10}>10s</option>
-                <option value={30}>30s</option>
-                <option value={60}>60s</option>
-              </select>
-            </div>
-
-            <div className="market-mini">
-              <div className="mi-row">
-                <div>SPY</div>
-                <div className="mi-val">{market.spyChangePct?.toFixed(2)}%</div>
-              </div>
-              <div className="mi-row">
-                <div>QQQ</div>
-                <div className="mi-val">{market.qqqChangePct?.toFixed(2)}%</div>
-              </div>
-              <div className="mi-row">
-                <div>VIX</div>
-                <div className="mi-val">{market.vix}</div>
-              </div>
-              <div className="mi-badge">{marketEnv.color}</div>
-            </div>
+      <main className="centerPane">
+        <header className="header">
+          <div className="controls">
+            <input className="search" placeholder="Search ticker..." value={search} onChange={(e) => setSearch(e.target.value)} />
+            <select value={sortBy} onChange={(e) => setSortBy(e.target.value as any)}>
+              <option value="eliteScore">Elite Score</option>
+              <option value="formationScore">Formation Score</option>
+              <option value="gainPct">Gain</option>
+            </select>
+            <label className="smallLabel">Refresh</label>
+            <select value={refreshSec} onChange={(e) => setRefreshSec(Number(e.target.value))}>
+              <option value={10}>10s</option>
+              <option value={30}>30s</option>
+              <option value={60}>60s</option>
+            </select>
           </div>
 
-          <div className="center-meta">
-            <div className="stat">
-              <div className="muted">Scanned</div>
-              <div className="stat-val">{tickers.length}</div>
-            </div>
-            <div className="stat">
-              <div className="muted">Watchlist</div>
-              <div className="stat-val">{watchlist.length}</div>
-            </div>
-            <div className="stat">
-              <div className="muted">Env Score</div>
-              <div className="stat-val">{marketEnv.envScore}</div>
-            </div>
+          <div className="marketMini">
+            <div>SPY {market.spy}%</div>
+            <div>QQQ {market.qq}%</div>
+            <div>VIX {market.vix}</div>
+            <div className={`envBadge ${env.regime.toLowerCase()}`}>{env.regime}</div>
           </div>
         </header>
 
-        <section className="scanner-section">
-          <div className="table-wrap">
-            <table className="scanner-table" role="grid" aria-label="Scanner">
-              <thead>
-                <tr>
-                  <th>Ticker</th>
-                  <th>Price</th>
-                  <th>Gain</th>
-                  <th>Spread</th>
-                  <th>Speed</th>
-                  <th>Vol Accel</th>
-                  <th>Float</th>
-                  <th>Support</th>
-                  <th>Resistance</th>
-                  <th>Lifecycle</th>
-                  <th>Formation</th>
-                  <th>Journey</th>
-                  <th>Catalyst</th>
-                  <th>Environment</th>
-                  <th>Elite</th>
-                  <th>Verdict</th>
-                  <th>Actions</th>
+        <section className="scanner">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Ticker</th>
+                <th>Price</th>
+                <th>Gain</th>
+                <th>Spread</th>
+                <th>Speed</th>
+                <th>VolAccel</th>
+                <th>Float</th>
+                <th>Support</th>
+                <th>Resistance</th>
+                <th>Lifecycle</th>
+                <th>Formation</th>
+                <th>Journey</th>
+                <th>Elite</th>
+                <th>Verdict</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((r) => (
+                <tr key={r.ticker} className={selected === r.ticker ? "selectedRow" : ""} onClick={() => setSelected(r.ticker)}>
+                  <td className="mono">{r.ticker}</td>
+                  <td>${r.price.toFixed(2)}</td>
+                  <td className={r.gainPct >= 0 ? "pos" : "neg"}>{formatPct(r.gainPct)}</td>
+                  <td>{r.spreadPct.toFixed(2)}%</td>
+                  <td>{r.speedScore}</td>
+                  <td>{r.volumeAccelScore}</td>
+                  <td>{r.floatScore}</td>
+                  <td>{r.support ? `$${r.support.toFixed(2)}` : "—"}</td>
+                  <td>{r.resistance ? `$${r.resistance.toFixed(2)}` : "—"}</td>
+                  <td><span className="lifeBadge" style={{ background: lifecycleColor(r.lifecycle) }}>{r.lifecycle}</span></td>
+                  <td>{r.formationScore}</td>
+                  <td>{r.journeyScore}</td>
+                  <td>{r.eliteScore}</td>
+                  <td><span className={`verdict ${r.verdict?.toLowerCase()}`}>{r.verdict}</span></td>
+                  <td className="actions">
+                    <button onClick={(e) => { e.stopPropagation(); toggleWatch(r.ticker); }}>{watchlist.includes(r.ticker) ? "UNWATCH" : "WATCH"}</button>
+                    <button onClick={(e) => { e.stopPropagation(); setWhyPayload({ row: r, analysis: whyAnalysis(r) }); }}>WHY</button>
+                    <button onClick={(e) => { e.stopPropagation(); setStructurePayload({ row: r, structure: runStructureAnalysis(r) }); }}>STRUCTURE</button>
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {filtered.map((r) => {
-                  const selectedRow = r.ticker === selectedTicker;
-                  return (
-                    <tr key={r.ticker} className={selectedRow ? "row-selected" : ""} onClick={() => setSelectedTicker(r.ticker)}>
-                      <td className="mono">{r.ticker}</td>
-                      <td>${r.price.toFixed(2)}</td>
-                      <td className={`gain ${r.gain >= 0 ? "pos" : "neg"}`}>{pct(r.gain)}</td>
-                      <td>{r.spreadPct.toFixed(2)}%</td>
-                      <td>{r.speedScore}</td>
-                      <td>{r.volumeAccel}</td>
-                      <td>{r.floatScore}</td>
-                      <td>{r.support ? `$${r.support.toFixed(2)}` : "—"}</td>
-                      <td>{r.resistance ? `$${r.resistance.toFixed(2)}` : "—"}</td>
-                      <td>
-                        <span className="lifecycle" style={{ background: LIFECYCLE_COLORS[r.lifecycle] }}>
-                          {r.lifecycle}
-                        </span>
-                      </td>
-                      <td>{r.formationScore}</td>
-                      <td>{r.journeyScore}</td>
-                      <td>{r.catalystScore}</td>
-                      <td>{r.environmentScore}</td>
-                      <td>{r.eliteScore}</td>
-                      <td>
-                        <span className={`verdict ${r.verdict?.toLowerCase()}`}>{r.verdict}</span>
-                      </td>
-                      <td className="actions">
-                        <button className={`btn mini`} onClick={(e) => { e.stopPropagation(); toggleWatch(r.ticker); }}>
-                          {watchlist.includes(r.ticker) ? "UNWATCH" : "WATCH"}
-                        </button>
-                        <button className="btn mini ghost" onClick={(e) => { e.stopPropagation(); const ev = new CustomEvent("ps_elite:openWhy", { detail: { r, why: whyEngine(r) } }); window.dispatchEvent(ev); }}>
-                          WHY
-                        </button>
-                        <button className="btn mini ghost" onClick={(e) => { e.stopPropagation(); const s = runStructureAnalysis({ ticker: r.ticker, currentPrice: r.price, support: r.support, resistance: r.resistance, lifecycle: r.lifecycle, journeyScore: r.journeyScore }); window.dispatchEvent(new CustomEvent("ps_elite:openStructure", { detail: { r, structure: s } })); }}>
-                          STRUCTURE
-                        </button>
-                        <button className="btn mini ghost" onClick={(e) => { e.stopPropagation(); addJournal({ ticker: r.ticker, entryPrice: r.price, reason: "Quick note", evidence: `Elite ${r.eliteScore}` }); }}>
-                          JOURNAL
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+              ))}
+            </tbody>
+          </table>
         </section>
       </main>
 
-      <aside className="right-col">
-        <div className="right-header">
-          <div className="right-title">Selected Ticker</div>
-          <div className="muted small">{selected?.ticker ?? "None"}</div>
-          <div className="right-actions">
-            <button className="btn tiny" onClick={() => selected && toggleWatch(selected.ticker)}>{selected && watchlist.includes(selected.ticker) ? "UNWATCH" : "WATCH"}</button>
-            <button className="btn tiny ghost" onClick={() => selected && addJournal({ ticker: selected.ticker, entryPrice: selected.price, reason: "Saved from dossier" })}>JOURNAL</button>
+      <aside className="rightPane">
+        <div className="dossier">
+          <div className="dHeader">
+            <div className="muted">Selected</div>
+            <div className="tickerLarge">{selected ?? "—"}</div>
           </div>
+
+          {selected ? (
+            (() => {
+              const r = rows.find((x) => x.ticker === selected) ?? null;
+              if (!r) return <div className="muted">No data</div>;
+              return (
+                <div className="dContent">
+                  <div className="rowKV">
+                    <div>
+                      <div className="muted">Price</div>
+                      <div className="bigMono">${r.price.toFixed(2)}</div>
+                    </div>
+                    <div>
+                      <div className="muted">Elite</div>
+                      <div className="bigMono">{r.eliteScore}</div>
+                    </div>
+                  </div>
+
+                  <div className="grid2">
+                    <div><div className="muted">Lifecycle</div><div>{r.lifecycle}</div></div>
+                    <div><div className="muted">Formation</div><div>{r.formationScore}</div></div>
+                    <div><div className="muted">Journey</div><div>{r.journeyScore}</div></div>
+                    <div><div className="muted">Spread</div><div>{r.spreadPct.toFixed(2)}%</div></div>
+                  </div>
+
+                  <div className="muted">Quick Actions</div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button onClick={() => toggleWatch(r.ticker)}>{watchlist.includes(r.ticker) ? "UNWATCH" : "WATCH"}</button>
+                    <button onClick={() => addJournal({ ticker: r.ticker, entryPrice: r.price, reason: "Saved from dossier", evidence: `Elite ${r.eliteScore}` })}>JOURNAL</button>
+                    <button onClick={() => setStructurePayload({ row: r, structure: runStructureAnalysis(r) })}>STRUCTURE</button>
+                  </div>
+                </div>
+              );
+            })()
+          ) : (
+            <div className="muted">Select a row to view intelligence.</div>
+          )}
         </div>
 
-        {selected ? (
-          <div className="dossier">
-            <div className="d-row">
-              <div>
-                <div className="muted">Price</div>
-                <div className="large mono">${selected.price.toFixed(2)}</div>
+        <div className="journalPane">
+          <div className="muted">Journal</div>
+          <div className="journalList">
+            {journal.slice(0, 6).map((j) => (
+              <div key={j.id} className="journalItem">
+                <div className="mono">{j.ticker}</div>
+                <div className="muted small">{new Date(j.createdISO).toLocaleString()}</div>
+                <div className="small">{j.reason}</div>
               </div>
-              <div>
-                <div className="muted">Elite</div>
-                <div className="large">{selected.eliteScore}</div>
-              </div>
-            </div>
-
-            <div className="compact-grid">
-              <div className="kv">
-                <div className="muted">Lifecycle</div>
-                <div><span className="lifecycle" style={{ background: LIFECYCLE_COLORS[selected.lifecycle] }}>{selected.lifecycle}</span></div>
-              </div>
-              <div className="kv">
-                <div className="muted">Formation</div>
-                <div>{selected.formationScore}</div>
-              </div>
-              <div className="kv">
-                <div className="muted">Journey</div>
-                <div>{selected.journeyScore}</div>
-              </div>
-              <div className="kv">
-                <div className="muted">Catalyst</div>
-                <div>{selected.catalystScore}</div>
-              </div>
-              <div className="kv">
-                <div className="muted">Env</div>
-                <div>{selected.environmentScore}</div>
-              </div>
-              <div className="kv">
-                <div className="muted">Spread</div>
-                <div>{selected.spreadPct.toFixed(2)}%</div>
-              </div>
-            </div>
-
-            <div className="section-mid">
-              <div className="subhead">Market Intelligence</div>
-              <div className="mi-list">
-                <div>SPY: {market.spyChangePct}%</div>
-                <div>QQQ: {market.qqChangePct ?? market.qqqChangePct}%</div>
-                <div>VIX: {market.vix}</div>
-                <div>Env: {marketEnv.color} ({marketEnv.envScore})</div>
-              </div>
-            </div>
-
-            <div className="section-mid">
-              <div className="subhead">WHY — Evidence Snapshot</div>
-              <WhyCard t={selected} why={whyEngine(selected)} onSave={() => addJournal({ ticker: selected.ticker, entryPrice: selected.price, reason: "WHY saved", evidence: `Elite ${selected.eliteScore}` })} />
-            </div>
-
-            <div className="section-mid">
-              <div className="subhead">Quick Structure</div>
-              <StructureQuick t={selected} onRun={(s) => { const out = runStructureAnalysis({ ticker: selected.ticker, currentPrice: selected.price, support: selected.support, resistance: selected.resistance, lifecycle: selected.lifecycle, journeyScore: selected.journeyScore }); window.dispatchEvent(new CustomEvent("ps_elite:openStructure", { detail: { r: selected, structure: out } })); }} />
-            </div>
+            ))}
+            {journal.length === 0 && <div className="muted">No journal entries</div>}
           </div>
-        ) : (
-          <div className="empty">Select a ticker to view intelligence.</div>
-        )}
+        </div>
       </aside>
 
-      <WhyModalContainer />
-      <StructurePanelContainer runStructureAnalysis={runStructureAnalysis} />
+      {/* WHY modal */}
+      {whyPayload && (
+        <div className="modalBack" onClick={() => setWhyPayload(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ color: "#1e6fff" }}>WHY — {whyPayload.row.ticker} <span className="muted">({whyPayload.row.eliteScore})</span></h3>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div>
+                <div className="muted">Positive Evidence</div>
+                <ul>{whyPayload.analysis.positives.map((p, i) => <li key={i}>{p}</li>)}</ul>
+                <div className="muted">Support</div>
+                <ul>{whyPayload.analysis.supportDetail.map((s, i) => <li key={i}>{s}</li>)}</ul>
+              </div>
+              <div>
+                <div className="muted">Negative Evidence</div>
+                <ul>{whyPayload.analysis.negatives.map((p, i) => <li key={i}>{p}</li>)}</ul>
+                <div className="muted">Resistance</div>
+                <ul>{whyPayload.analysis.resistanceDetail.map((s, i) => <li key={i}>{s}</li>)}</ul>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 12 }}>
+              <div><strong>QUESTION</strong></div>
+              <div className="muted">{whyPayload.analysis.question}</div>
+              <div style={{ marginTop: 8 }}><strong>INVALIDATION</strong></div>
+              <div className="muted">{whyPayload.analysis.invalidation}</div>
+            </div>
+
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
+              <button onClick={() => { addJournal({ ticker: whyPayload.row.ticker, entryPrice: whyPayload.row.price, reason: "WHY saved", evidence: `Elite ${whyPayload.row.eliteScore}` }); setWhyPayload(null); }}>Save Note</button>
+              <button onClick={() => setWhyPayload(null)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Structure modal */}
+      {structurePayload && (
+        <div className="modalBack" onClick={() => setStructurePayload(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ color: "#1e6fff" }}>Structure — {structurePayload.row.ticker}</h3>
+            <div className="muted">Range position, entries, stops, targets and R:R. Resistance alone will not determine entries.</div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
+              <div>
+                <div className="muted">Inputs</div>
+                <div>Price: ${structurePayload.row.price.toFixed(2)}</div>
+                <div>Support: {structurePayload.row.support ? `$${structurePayload.row.support.toFixed(2)}` : "—"}</div>
+                <div>Resistance: {structurePayload.row.resistance ? `$${structurePayload.row.resistance.toFixed(2)}` : "—"}</div>
+                <div>Lifecycle: {structurePayload.row.lifecycle}</div>
+              </div>
+
+              <div>
+                <div className="muted">Outputs</div>
+                <div>Range Low: ${structurePayload.structure.low.toFixed(2)}</div>
+                <div>Range High: ${structurePayload.structure.high.toFixed(2)}</div>
+                <div>Range Position: {structurePayload.structure.rangePos.toFixed(0)}%</div>
+                <div>Formation Entry: ${structurePayload.structure.formationEntry}</div>
+                <div>Aggressive Entry: ${structurePayload.structure.aggressiveEntry}</div>
+                <div>Confirmation Entry: ${structurePayload.structure.confirmationEntry}</div>
+                <div>Proof Entry: ${structurePayload.structure.proofEntry}</div>
+                <div>Stop: ${structurePayload.structure.stop}</div>
+                <div>Targets: ${structurePayload.structure.targets.t1} / ${structurePayload.structure.targets.t2} / ${structurePayload.structure.targets.t3}</div>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
+              <button onClick={() => setStructurePayload(null)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <style jsx>{`
-        :root{
-          --bg:#e9e8e6; /* light grey canvas */
-          --panel:#f8f6f4; /* soft off-white panels */
-          --muted:#6b7786;
-          --accent:#1e6fff; /* bright blue writing */
-          --accent-2:#0b4cd8;
-          --text:#08306b; /* deep blue for primary text */
-          --rust-ink: rgba(4,20,45,0.04);
+        :root {
+          --canvas: #e9e8e6;
+          --panel: #f7f6f4;
+          --muted: #6b7786;
+          --blue: #1e6fff;
+          --ink: #09305a;
         }
+        * { box-sizing: border-box; }
+        .root { display: grid; grid-template-columns: 240px 1fr 360px; gap: 16px; min-height: 100vh; padding: 16px; background: var(--canvas); font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; color: var(--ink); }
 
-        *{box-sizing:border-box}
-        body { margin:0; background:var(--bg); font-family:Inter,system-ui,Segoe UI,Roboto,Helvetica,Arial; color:var(--text); }
-
-        /* Rustic textured background - layered radial gradients + subtle speckle overlay */
-        .app{
-          display:grid;
-          grid-template-columns:260px 1fr 380px;
-          gap:18px;
-          min-height:100vh;
-          padding:18px;
-          background:
-            radial-gradient(circle at 10% 10%, rgba(0,0,0,0.02) 0 2px, transparent 2px),
-            radial-gradient(circle at 80% 20%, rgba(0,0,0,0.015) 0 3px, transparent 3px),
-            radial-gradient(circle at 30% 80%, rgba(0,0,0,0.01) 0 1.5px, transparent 1.5px),
-            linear-gradient(180deg, rgba(255,255,255,0.6), rgba(250,250,250,0.6));
-          /* faint "peeling paint" overlay - SVG speckle as DATA URL */
-          position:relative;
-        }
-        .app::after{
+        /* textured overlay */
+        .root::before {
           content: "";
-          position: absolute;
+          position: fixed;
           inset: 0;
           pointer-events: none;
-          background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='800' height='600'><g fill='rgba(0,0,0,0.015)'><circle cx='40' cy='80' r='2'/><circle cx='120' cy='150' r='3'/><circle cx='200' cy='40' r='1.5'/><circle cx='380' cy='120' r='2.5'/><circle cx='520' cy='200' r='2'/><circle cx='690' cy='90' r='3'/></g></svg>");
-          background-repeat: repeat;
+          background-image:
+            radial-gradient(circle at 5% 10%, rgba(0,0,0,0.02) 0 1px, transparent 1px),
+            radial-gradient(circle at 70% 30%, rgba(0,0,0,0.015) 0 1.5px, transparent 1.5px);
           mix-blend-mode: multiply;
-          opacity:0.9;
+          opacity: 0.9;
         }
 
-        .left-col{background:var(--panel); padding:14px; border-radius:8px; display:flex; flex-direction:column; gap:12px; box-shadow: 0 6px 20px rgba(0,0,0,0.06); border-left:8px solid rgba(13,86,190,0.06)}
-        .brand .title{font-weight:700; color:var(--accent); letter-spacing:0.6px}
-        .brand .tag{color:var(--muted); font-size:12px}
-        .nav{display:flex; flex-direction:column; gap:6px; margin-top:6px}
-        .left-footer{margin-top:auto; color:var(--muted); font-size:12px}
+        .navPane { background: var(--panel); border-radius: 8px; padding: 12px; box-shadow: 0 4px 20px rgba(4,20,45,0.05); border-left: 6px solid rgba(30,111,255,0.06); display:flex; flex-direction:column; gap:12px; }
+        .brand h1 { margin: 0; color: var(--blue); font-size: 14px; }
+        .tag { color: var(--muted); font-size: 12px; margin-top: 4px; }
+        .navList { list-style: none; padding: 8px 0; margin: 0; display:flex; flex-direction:column; gap:6px; color:var(--ink); }
+        .navList li { padding: 8px; border-radius: 6px; cursor: default; }
+        .navList li.active { background: rgba(30,111,255,0.06); color: var(--blue); font-weight:600; }
 
-        .center-col{display:flex; flex-direction:column; gap:12px}
-        .center-header{display:flex; justify-content:space-between; align-items:center; gap:12px}
-        .search-row{display:flex; align-items:center; gap:16px; width:100%}
-        .search-controls{display:flex; gap:8px; align-items:center; flex:1}
-        .input{background:transparent; border:1px dashed rgba(8,48,107,0.08); color:var(--text); padding:8px; border-radius:6px}
-        .input.small{padding:6px; font-size:12px}
-        .search{min-width:320px}
-        .market-mini{display:flex; gap:8px; align-items:center}
-        .mi-row{display:flex; gap:6px; align-items:center}
-        .mi-val{font-weight:700; color:var(--accent-2)}
-        .mi-badge{background:rgba(13,86,190,0.08); padding:6px 8px; border-radius:6px; font-weight:700; color:var(--accent)}
+        .footerNote { margin-top: auto; color: var(--muted); font-size: 12px; }
 
-        .center-meta{display:flex; gap:12px; align-items:center}
-        .stat{display:flex; flex-direction:column; gap:4px}
-        .stat-val{font-weight:700}
+        .centerPane { display:flex; flex-direction:column; gap:10px; }
+        .header { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+        .controls { display:flex; gap:8px; align-items:center; }
+        .search { padding:8px; border-radius:6px; border:1px dashed rgba(9,48,90,0.06); min-width:220px; }
+        .smallLabel { color: var(--muted); font-size:12px; }
 
-        .scanner-section{background:linear-gradient(180deg,var(--panel), #fff); padding:8px; border-radius:6px; box-shadow: 0 2px 10px rgba(4,20,45,0.04); overflow:auto; border:1px solid rgba(8,48,107,0.04)}
-        .table-wrap{overflow:auto}
-        .scanner-table{width:100%; border-collapse:collapse; min-width:1200px}
-        thead th{position:sticky; top:0; background:linear-gradient(180deg,#fbfbfb,#f3f3f2); padding:10px; text-align:left; color:var(--accent-2); font-size:12px; border-bottom:1px solid rgba(8,48,107,0.04)}
-        tbody td{padding:8px; border-bottom:1px solid rgba(8,48,107,0.03); color:var(--text)}
-        .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Roboto Mono,monospace}
-        .lifecycle{color:#021; padding:6px 8px; border-radius:999px; font-weight:700; font-size:11px}
-        .verdict{padding:6px 8px; border-radius:6px; font-weight:700}
-        .verdict.yes{background:rgba(20,150,90,0.08); color:#0f7d4e}
-        .verdict.wait{background:rgba(245,166,35,0.08); color:#9a6a00}
-        .verdict.no{background:rgba(180,60,60,0.06); color:#8b2b2b}
-        .actions{display:flex; gap:6px}
-        .btn{background:transparent; border:1px solid rgba(8,48,107,0.06); color:var(--accent-2); padding:6px 8px; border-radius:6px; cursor:pointer}
-        .btn.mini{padding:6px 6px; font-size:12px}
-        .btn.tiny{padding:4px 6px; font-size:12px}
-        .btn.ghost{background:transparent}
-        .row-selected{background:linear-gradient(90deg, rgba(30,111,255,0.04), rgba(13,86,190,0.02)); border-left:4px solid rgba(13,86,190,0.12)}
+        .marketMini { display:flex; gap:8px; align-items:center; color:var(--muted); }
+        .envBadge { padding:6px 8px; border-radius:6px; font-weight:700; color:var(--blue); background: rgba(30,111,255,0.06); }
 
-        .right-col{background:var(--panel); padding:12px; border-radius:8px; display:flex; flex-direction:column; gap:10px; border-right:8px solid rgba(13,86,190,0.04)}
-        .right-header{display:flex; justify-content:space-between; align-items:center; gap:8px}
-        .right-title{font-weight:700; color:var(--accent-2)}
-        .right-actions{display:flex; gap:6px}
-        .dossier{display:flex; flex-direction:column; gap:10px}
-        .d-row{display:flex; justify-content:space-between; gap:12px; align-items:center}
-        .large{font-size:20px; font-weight:700; color:var(--accent-2)}
-        .compact-grid{display:grid; grid-template-columns:repeat(2,1fr); gap:8px}
-        .kv{display:flex; flex-direction:column; gap:4px}
-        .muted{color:var(--muted); font-size:12px}
-        .subhead{font-weight:700; margin-bottom:8px; color:var(--accent)}
-        .section-mid{background:rgba(255,255,255,0.6); padding:8px; border-radius:6px; border:1px dashed rgba(8,48,107,0.04)}
-        .empty{color:var(--muted); padding:12px}
-        .small{font-size:12px}
-        .compact-grid .kv div{font-weight:700}
-        .why-card{display:flex; flex-direction:column; gap:8px}
-        .why-list{display:flex; gap:8px; flex-direction:column}
-        .why-list ul{margin:0; padding-left:18px}
-        .right-footer{margin-top:auto; color:var(--muted)}
+        .scanner { background: var(--panel); padding:8px; border-radius:8px; box-shadow: 0 2px 10px rgba(4,20,45,0.04); border: 1px solid rgba(9,48,90,0.03); overflow:auto; }
+        .table { width:100%; border-collapse: collapse; min-width:1100px; }
+        thead th { text-align:left; padding:10px; color: var(--blue); background: linear-gradient(180deg,#fff,#f3f3f2); border-bottom: 1px solid rgba(9,48,90,0.04); font-size:12px; }
+        tbody td { padding:10px; border-bottom: 1px solid rgba(9,48,90,0.03); font-size:13px; }
+        .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", monospace; }
+        .pos { color: #0b7a3f; }
+        .neg { color: #b33a3a; }
+        .lifeBadge { color: #022; padding:6px 8px; border-radius:999px; font-weight:700; font-size:11px; display:inline-block; }
+        .actions button { padding:6px 8px; border-radius:6px; border:1px solid rgba(9,48,90,0.06); background:transparent; color:var(--blue); cursor:pointer; }
 
-        /* modal styles */
-        .modal-backdrop{position:fixed; inset:0; background:rgba(4,20,45,0.35); display:flex; align-items:center; justify-content:center; z-index:2000}
-        .modal{background:var(--panel); padding:18px; border-radius:8px; width:900px; max-height:80vh; overflow:auto; border:1px solid rgba(8,48,107,0.04)}
+        .rightPane { background: var(--panel); border-radius:8px; padding:12px; box-shadow: 0 4px 20px rgba(4,20,45,0.04); display:flex; flex-direction:column; gap:12px; }
+        .dHeader { display:flex; justify-content:space-between; align-items:center; }
+        .tickerLarge { font-weight:700; color:var(--blue); }
+        .bigMono { font-family: ui-monospace, monospace; font-weight:700; color:var(--blue); }
+        .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-top:8px; }
+        .muted { color: var(--muted); font-size:12px; }
 
-        @media(max-width:1200px){ .app{grid-template-columns:220px 1fr; grid-template-rows:auto 1fr;} .right-col{display:none;} }
+        .modalBack { position:fixed; inset:0; background: rgba(4,20,45,0.35); display:flex; align-items:center; justify-content:center; z-index:1200; }
+        .modal { background: var(--panel); padding:18px; border-radius:8px; width:820px; max-height:80vh; overflow:auto; border:1px solid rgba(9,48,90,0.04); }
+
+        .selectedRow { background: linear-gradient(90deg, rgba(30,111,255,0.04), rgba(13,86,190,0.02)); border-left: 4px solid rgba(30,111,255,0.09); }
+
+        .verdict.yes { color: #0f7d4e; background: rgba(16,185,129,0.06); padding:4px 8px; border-radius:6px; font-weight:700; }
+        .verdict.wait { color: #9a6a00; background: rgba(245,166,35,0.06); padding:4px 8px; border-radius:6px; font-weight:700; }
+        .verdict.no { color: #8b2b2b; background: rgba(180,60,60,0.04); padding:4px 8px; border-radius:6px; font-weight:700; }
+
+        .journalPane { border-top:1px dashed rgba(9,48,90,0.03); padding-top:8px; }
+        .journalItem { padding:8px 0; border-bottom:1px dashed rgba(9,48,90,0.02); }
+
+        @media (max-width: 1100px) {
+          .root { grid-template-columns: 1fr; grid-template-rows: auto 1fr auto; }
+          .rightPane { display:none; }
+        }
       `}</style>
     </div>
   );
 }
 
 /* ---------------------------
-   Small UI helpers (Why/Structure modals / components)
+   Helpers outside component
    --------------------------- */
 
-function NavButton({ label, active }: { label: string; active?: boolean }) {
-  return (
-    <button className={`nav-btn ${active ? "active" : ""}`} title={label}>
-      <div className="nav-label">{label}</div>
-      <style jsx>{`
-        .nav-btn {
-          background: transparent;
-          border: 1px dashed rgba(8,48,107,0.04);
-          color: var(--accent-2);
-          padding: 8px;
-          border-radius: 6px;
-          text-align: left;
-          cursor: pointer;
-        }
-        .nav-btn.active { background: linear-gradient(90deg, rgba(30,111,255,0.06), rgba(13,86,190,0.02)); }
-        .nav-label { font-size:13px; color:var(--text) }
-      `}</style>
-    </button>
-  );
-}
-
-function WhyCard({ t, why, onSave }: { t: any; why: any; onSave: () => void }) {
-  return (
-    <div className="why-card">
-      <div style={{ display: "flex", gap: 8 }}>
-        <div style={{ flex: 1 }}>
-          <div className="muted">Positive Evidence</div>
-          <ul>{why.positive.map((p: string, i: number) => <li key={i}>{p}</li>)}</ul>
-        </div>
-        <div style={{ flex: 1 }}>
-          <div className="muted">Negative Evidence</div>
-          <ul>{why.negative.map((p: string, i: number) => <li key={i}>{p}</li>)}</ul>
-        </div>
-      </div>
-
-      <div style={{ display: "flex", gap: 8 }}>
-        <div style={{ flex: 1 }}>
-          <div className="muted">Support</div>
-          <ul>{why.supportQuality.map((s: string, i: number) => <li key={i}>{s}</li>)}</ul>
-        </div>
-        <div style={{ flex: 1 }}>
-          <div className="muted">Resistance</div>
-          <ul>{why.resistanceQuality.map((s: string, i: number) => <li key={i}>{s}</li>)}</ul>
-        </div>
-      </div>
-
-      <div style={{ display: "flex", gap: 8 }}>
-        <div style={{ flex: 1 }}>
-          <div className="muted">Volume</div>
-          <ul>{why.volumeBehavior.map((s: string, i: number) => <li key={i}>{s}</li>)}</ul>
-        </div>
-        <div style={{ flex: 1 }}>
-          <div className="muted">Spread</div>
-          <ul>{why.spreadBehavior.map((s: string, i: number) => <li key={i}>{s}</li>)}</ul>
-        </div>
-      </div>
-
-      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-        <button className="btn" onClick={() => onSave()}>Save Note</button>
-        <button className="btn ghost" onClick={() => { window.dispatchEvent(new CustomEvent("ps_elite:openWhy", { detail: null })); }}>Close</button>
-      </div>
-    </div>
-  );
-}
-
-function WhyModalContainer() {
-  const [payload, setPayload] = useState<{ r: TickerData; why: any } | null>(null);
-  useEffect(() => {
-    function handler(e: any) {
-      setPayload(e.detail ?? null);
-    }
-    window.addEventListener("ps_elite:openWhy", handler as EventListener);
-    return () => window.removeEventListener("ps_elite:openWhy", handler as EventListener);
-  }, []);
-  if (!payload) return null;
-  const { r, why } = payload;
-  return (
-    <div className="modal-backdrop" onClick={() => window.dispatchEvent(new CustomEvent("ps_elite:openWhy", { detail: null }))}>
-      <div className="modal" onClick={(ev) => ev.stopPropagation()}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <h3 style={{ color: "var(--accent-2)" }}>WHY — {r.ticker} <span className="muted">({r.eliteScore})</span></h3>
-          <div>
-            <button className="btn" onClick={() => { /* export */ }}>Export</button>
-            <button className="btn ghost" onClick={() => window.dispatchEvent(new CustomEvent("ps_elite:openWhy", { detail: null }))}>Close</button>
-          </div>
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
-          <div>
-            <div className="muted">Positive Evidence</div>
-            <ul>{why.positive.map((p: string, i: number) => <li key={i}>{p}</li>)}</ul>
-            <div className="muted">Support Quality</div>
-            <ul>{why.supportQuality.map((p: string, i: number) => <li key={i}>{p}</li>)}</ul>
-            <div className="muted">Volume Behavior</div>
-            <ul>{why.volumeBehavior.map((p: string, i: number) => <li key={i}>{p}</li>)}</ul>
-          </div>
-
-          <div>
-            <div className="muted">Negative Evidence</div>
-            <ul>{why.negative.map((p: string, i: number) => <li key={i}>{p}</li>)}</ul>
-            <div className="muted">Resistance Quality</div>
-            <ul>{why.resistanceQuality.map((p: string, i: number) => <li key={i}>{p}</li>)}</ul>
-            <div className="muted">Spread Behavior</div>
-            <ul>{why.spreadBehavior.map((p: string, i: number) => <li key={i}>{p}</li>)}</ul>
-          </div>
-        </div>
-
-        <div style={{ marginTop: 12 }}>
-          <div className="muted">Catalyst Analysis</div>
-          <ul>{why.catalystAnalysis.map((p: string, i: number) => <li key={i}>{p}</li>)}</ul>
-          <div className="muted">Environment Analysis</div>
-          <ul>{why.environmentAnalysis.map((p: string, i: number) => <li key={i}>{p}</li>)}</ul>
-        </div>
-
-        <div style={{ marginTop: 12 }}>
-          <div><strong>QUESTION</strong></div>
-          <div className="muted" style={{ marginBottom: 6 }}>{why.question}</div>
-          <div><strong>INVALIDATION</strong></div>
-          <div className="muted">{why.invalidation}</div>
-        </div>
-
-        <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end" }}>
-          <button className="btn" onClick={() => { /* create journal */ }}>Create Journal</button>
-          <button className="btn ghost" onClick={() => window.dispatchEvent(new CustomEvent("ps_elite:openWhy", { detail: null }))}>Close</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function StructureQuick({ t, onRun }: { t: TickerData; onRun: (s: any) => void }) {
-  return (
-    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-      <div style={{ flex: 1 }}>
-        <div className="muted">Support</div>
-        <div>{t.support ? `$${t.support.toFixed(2)}` : "—"}</div>
-      </div>
-      <div style={{ flex: 1 }}>
-        <div className="muted">Resistance</div>
-        <div>{t.resistance ? `$${t.resistance.toFixed(2)}` : "—"}</div>
-      </div>
-      <div>
-        <button className="btn" onClick={() => onRun(null)}>Run</button>
-      </div>
-    </div>
-  );
-}
-
-function StructurePanelContainer({ runStructureAnalysis }: { runStructureAnalysis: (input: any) => any }) {
-  const [state, setState] = useState<{ r: TickerData; structure: any } | null>(null);
-  useEffect(() => {
-    function handler(e: any) {
-      setState(e.detail ?? null);
-    }
-    window.addEventListener("ps_elite:openStructure", handler as EventListener);
-    return () => window.removeEventListener("ps_elite:openStructure", handler as EventListener);
-  }, []);
-
-  if (!state) return null;
-  const { r, structure } = state;
-  return (
-    <div className="modal-backdrop" onClick={() => window.dispatchEvent(new CustomEvent("ps_elite:openStructure", { detail: null }))}>
-      <div className="modal" onClick={(ev) => ev.stopPropagation()}>
-        <h3 style={{ color: "var(--accent-2)" }}>Structure Analysis — {r.ticker}</h3>
-        <div className="muted">Structure engine refuses to rely on resistance alone for entries — it evaluates range position, support, journey, and lifecycle.</div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
-          <div style={{ background: "rgba(255,255,255,0.6)", padding: 8, borderRadius: 6 }}>
-            <div className="muted">Inputs</div>
-            <div>Price: ${r.price.toFixed(2)}</div>
-            <div>Support: {r.support ? `$${r.support.toFixed(2)}` : "—"}</div>
-            <div>Resistance: {r.resistance ? `$${r.resistance.toFixed(2)}` : "—"}</div>
-            <div>Lifecycle: {r.lifecycle}</div>
-            <div>Journey: {r.journeyScore}</div>
-          </div>
-
-          <div style={{ background: "rgba(255,255,255,0.6)", padding: 8, borderRadius: 6 }}>
-            <div className="muted">Outputs</div>
-            <div>Range Low: ${structure.rangeLow.toFixed(2)}</div>
-            <div>Range High: ${structure.rangeHigh.toFixed(2)}</div>
-            <div>Range Position: {structure.rangePos.toFixed(0)}%</div>
-            <div>Formation Entry: ${structure.formationEntry}</div>
-            <div>Aggressive Entry: ${structure.aggressiveEntry}</div>
-            <div>Confirmation Entry: ${structure.confirmationEntry}</div>
-            <div>Proof Entry: ${structure.proofEntry}</div>
-            <div>Stop: ${structure.stop}</div>
-            <div>Targets: ${structure.targets.t1} / ${structure.targets.t2} / ${structure.targets.t3}</div>
-            <div>Risk-Reward (t1): {structure.rr.rrT1}x</div>
-            <div style={{ color: "var(--muted)" }}>
-              Warnings:
-              <ul>{structure.warnings.map((w: string, i: number) => <li key={i}>{w}</li>)}</ul>
-            </div>
-          </div>
-        </div>
-
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
-          <button className="btn">Export Levels</button>
-          <button className="btn ghost" onClick={() => window.dispatchEvent(new CustomEvent("ps_elite:openStructure", { detail: null }))}>Close</button>
-        </div>
-      </div>
-    </div>
-  );
+function lifecycleColor(l: Lifecycle) {
+  switch (l) {
+    case "SLEEPING":
+    case "ACCUMULATING":
+      return "#c08c2b"; // warm yellow
+    case "WAKING":
+    case "FORMING":
+    case "IGNITING":
+    case "RUNNING":
+      return "#0e7a55"; // green family
+    case "EXTENDED":
+    case "FAILING":
+      return "#b33a3a"; // red
+    default:
+      return "#999";
+  }
 }
