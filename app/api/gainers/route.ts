@@ -37,6 +37,7 @@ function clamp(v: number, min: number, max: number) {
 
 function isJunkTicker(ticker: string) {
   const x = String(ticker || "").toUpperCase();
+
   return (
     x.endsWith("W") ||
     x.endsWith("WS") ||
@@ -183,7 +184,10 @@ function buildCoreFromSnapshot(s: AnyObj) {
   };
 }
 
-function buildCoreWithPrevFallback(core: ReturnType<typeof buildCoreFromSnapshot>, prevJson: AnyObj) {
+function buildCoreWithPrevFallback(
+  core: ReturnType<typeof buildCoreFromSnapshot>,
+  prevJson: AnyObj
+) {
   const prev = Array.isArray(prevJson?.results) ? prevJson.results[0] : null;
 
   if (!prev) return core;
@@ -285,6 +289,7 @@ function buildFloat(details: AnyObj) {
     floatScore
   };
 }
+
 function buildGainProfile(gain: number) {
   if (gain > 70) {
     return {
@@ -494,7 +499,6 @@ async function enrichTicker(s: AnyObj, apiKey: string, marketMode: string) {
   const rr = risk > 0 ? reward / risk : 0;
 
   const volumeSurge = estimateVolumeSurge(core.volume);
-
   const speed = clamp(Math.round(core.gain * 0.45 + volumeSurge * 16), 0, 100);
 
   const speedLabel =
@@ -505,34 +509,37 @@ async function enrichTicker(s: AnyObj, apiKey: string, marketMode: string) {
 
   const junk = isJunkTicker(ticker);
 
-  let ignitionScore = 0;
-  ignitionScore += Math.min(28, Math.max(0, core.gain) * 0.75);
-  ignitionScore += Math.min(22, core.volume / 500000);
-  ignitionScore += Math.min(20, volumeSurge * 5);
-  ignitionScore += Math.min(12, speed / 8);
-  ignitionScore += core.price > 0 && core.price <= 1 ? 15 : core.price <= 5 ? 12 : core.price <= 10 ? 8 : 3;
-  ignitionScore += newsScore;
-  ignitionScore += floatData.floatScore;
+  const runner = buildRunnerScores({
+    gain: core.gain,
+    price: core.price,
+    volume: core.volume,
+    volumeSurge,
+    speed,
+    spreadStatus,
+    rr,
+    floatScore: floatData.floatScore,
+    newsScore
+  });
 
-  if (spreadStatus === "PASS") ignitionScore += 6;
-  if (spreadStatus === "FAIL") ignitionScore -= 16;
-  if (junk) ignitionScore -= 35;
+  let ignitionScore = runner.bottomIgnitionScore;
+  let proofScore = runner.runnerScore;
+
+  if (spreadStatus === "FAIL") proofScore -= 10;
+  if (core.volume < 100000) proofScore -= 15;
+
+  if (junk) {
+    ignitionScore -= 35;
+    proofScore -= 35;
+  }
+
+  if (core.gain > 70) proofScore = Math.min(proofScore, 49);
+  if (core.gain > 55 && core.gain <= 70) proofScore = Math.min(proofScore, 69);
 
   ignitionScore = clamp(Math.round(ignitionScore), 0, 100);
-
-  let proofScore = ignitionScore;
-
-  if (rr >= 2) proofScore += 10;
-  else if (rr >= 1.25) proofScore += 6;
-  else if (rr < 0.75) proofScore -= 8;
-
-  if (core.volume < 100000) proofScore -= 20;
-  if (spreadStatus === "FAIL") proofScore -= 15;
-  if (junk) proofScore -= 30;
-
   proofScore = clamp(Math.round(proofScore), 0, 100);
 
   const verdict =
+    core.gain > 70 ? "NO" :
     proofScore >= 80 ? "YES" :
     proofScore >= 60 ? "WAIT" :
     "NO";
@@ -540,17 +547,21 @@ async function enrichTicker(s: AnyObj, apiKey: string, marketMode: string) {
   let rejection = "";
 
   if (junk) rejection = "JUNK SYMBOL";
+  else if (core.gain > 70) rejection = "EXTENDED 70%+";
+  else if (core.gain > 55) rejection = "LATE GAINER RISK";
   else if (core.volume < 100000) rejection = "LOW VOLUME";
   else if (spreadStatus === "FAIL") rejection = "SPREAD RISK";
   else if (proofScore < 60) rejection = "NO PROOF";
 
   const permissionText =
     marketMode === "BACKUP_CLOSED_MARKET"
-      ? "BACKUP MODE — MARKET CLOSED / TRAINING DATA"
+      ? `BACKUP MODE — ${runner.runnerLane}`
+      : core.gain > 70
+      ? "DENIED — EXTENDED 70%+ / CHASE RISK"
       : verdict === "YES"
-      ? "PERMISSION POSSIBLE — STRUCTURE MUST HOLD"
+      ? `${runner.runnerLane} — PERMISSION POSSIBLE IF STRUCTURE HOLDS`
       : verdict === "WAIT"
-      ? "WAIT — NEED MORE PROOF"
+      ? `${runner.runnerLane} — WAIT FOR PROOF`
       : "DENIED — NO CLEAN PERMISSION";
 
   return {
@@ -616,6 +627,13 @@ async function enrichTicker(s: AnyObj, apiKey: string, marketMode: string) {
       description: n?.description || ""
     })),
 
+    gainBand: runner.gainBand,
+    runnerLane: runner.runnerLane,
+    bottomIgnitionScore: runner.bottomIgnitionScore,
+    gainerStructureScore: runner.gainerStructureScore,
+    runnerScore: runner.runnerScore,
+    overExtensionPenalty: runner.overExtensionPenalty,
+
     ignitionScore,
     proofScore,
     verdict,
@@ -631,7 +649,7 @@ export async function GET() {
   if (!apiKey) {
     return Response.json({
       ok: false,
-      source: "polygon-gainers-news-float-backup-prev",
+      source: "polygon-runner-structure-v2",
       error: "Missing POLYGON_API_KEY",
       count: 0,
       marketMode: "NO_API_KEY",
@@ -647,7 +665,7 @@ export async function GET() {
     const rawGainers = Array.isArray(gainersRes?.tickers) ? gainersRes.tickers : [];
 
     let marketMode = "LIVE_GAINERS";
-    let raw: AnyObj[] = rawGainers.slice(0, 20);
+    let raw: AnyObj[] = rawGainers.slice(0, 40);
 
     if (!raw.length) {
       marketMode = "BACKUP_CLOSED_MARKET";
@@ -677,13 +695,18 @@ export async function GET() {
 
     tickers.sort((a, b) => {
       if (b.proofScore !== a.proofScore) return b.proofScore - a.proofScore;
-      if (b.ignitionScore !== a.ignitionScore) return b.ignitionScore - a.ignitionScore;
+      if (b.bottomIgnitionScore !== a.bottomIgnitionScore) {
+        return b.bottomIgnitionScore - a.bottomIgnitionScore;
+      }
+      if (b.gainerStructureScore !== a.gainerStructureScore) {
+        return b.gainerStructureScore - a.gainerStructureScore;
+      }
       return b.volume - a.volume;
     });
 
     return Response.json({
       ok: true,
-      source: "polygon-gainers-news-float-backup-prev",
+      source: "polygon-runner-structure-v2",
       marketMode,
       liveGainersCount: rawGainers.length,
       count: tickers.length,
@@ -694,7 +717,7 @@ export async function GET() {
   } catch (error) {
     return Response.json({
       ok: false,
-      source: "polygon-gainers-news-float-backup-prev",
+      source: "polygon-runner-structure-v2",
       error: error instanceof Error ? error.message : String(error),
       count: 0,
       marketMode: "ERROR",
