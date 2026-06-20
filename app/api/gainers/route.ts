@@ -151,22 +151,23 @@ function buildCoreFromSnapshot(s: AnyObj) {
   const ticker = String(s?.ticker || "").toUpperCase();
 
   const price = num(
-    s?.day?.c ??
+    s?.price ??
+      s?.day?.c ??
       s?.min?.c ??
       s?.lastTrade?.p ??
       ((s?.prevDay?.c ?? 0) + (s?.todaysChange ?? 0))
   );
 
-  const volume = num(s?.day?.v ?? s?.min?.v ?? s?.prevDay?.v ?? 0);
-  const gain = num(s?.todaysChangePerc ?? 0);
-  const change = num(s?.todaysChange ?? 0);
+  const volume = num(s?.volume ?? s?.day?.v ?? s?.min?.v ?? s?.prevDay?.v ?? 0);
+  const gain = num(s?.gain ?? s?.todaysChangePerc ?? 0);
+  const change = num(s?.change ?? s?.todaysChange ?? 0);
 
-  const open = num(s?.day?.o ?? s?.min?.o ?? price);
-  const high = num(s?.day?.h ?? s?.min?.h ?? price);
-  const low = num(s?.day?.l ?? s?.min?.l ?? price);
+  const open = num(s?.open ?? s?.day?.o ?? s?.min?.o ?? price);
+  const high = num(s?.high ?? s?.day?.h ?? s?.min?.h ?? price);
+  const low = num(s?.low ?? s?.day?.l ?? s?.min?.l ?? price);
 
-  const bid = num(s?.lastQuote?.p ?? s?.lastQuote?.bp ?? 0);
-  const ask = num(s?.lastQuote?.P ?? s?.lastQuote?.ap ?? 0);
+  const bid = num(s?.lastQuote?.p ?? s?.lastQuote?.bp ?? s?.bid ?? 0);
+  const ask = num(s?.lastQuote?.P ?? s?.lastQuote?.ap ?? s?.ask ?? 0);
 
   return {
     ticker,
@@ -179,6 +180,35 @@ function buildCoreFromSnapshot(s: AnyObj) {
     low,
     bid,
     ask
+  };
+}
+
+function buildCoreWithPrevFallback(core: ReturnType<typeof buildCoreFromSnapshot>, prevJson: AnyObj) {
+  const prev = Array.isArray(prevJson?.results) ? prevJson.results[0] : null;
+
+  if (!prev) return core;
+
+  const prevClose = num(prev?.c);
+  const prevOpen = num(prev?.o);
+  const prevHigh = num(prev?.h);
+  const prevLow = num(prev?.l);
+  const prevVolume = num(prev?.v);
+
+  const price = core.price || prevClose;
+  const open = core.open || prevOpen || price;
+  const high = core.high || prevHigh || price;
+  const low = core.low || prevLow || price;
+  const volume = core.volume || prevVolume;
+
+  return {
+    ...core,
+    price,
+    open,
+    high,
+    low,
+    volume,
+    change: core.change,
+    gain: core.gain
   };
 }
 
@@ -257,7 +287,7 @@ function buildFloat(details: AnyObj) {
 }
 
 async function enrichTicker(s: AnyObj, apiKey: string, marketMode: string) {
-  const core = buildCoreFromSnapshot(s);
+  let core = buildCoreFromSnapshot(s);
   const ticker = core.ticker;
 
   const newsUrl = `https://api.polygon.io/v2/reference/news?ticker=${encodeURIComponent(
@@ -268,10 +298,22 @@ async function enrichTicker(s: AnyObj, apiKey: string, marketMode: string) {
     ticker
   )}?apiKey=${apiKey}`;
 
-  const [newsJson, detailsJson] = await Promise.all([
+  const prevUrl = `https://api.polygon.io/v2/aggs/ticker/${encodeURIComponent(
+    ticker
+  )}/prev?adjusted=true&apiKey=${apiKey}`;
+
+  const needsPrevFallback =
+    !core.price || !core.high || !core.low || !core.volume || marketMode === "BACKUP_CLOSED_MARKET";
+
+  const [newsJson, detailsJson, prevJson] = await Promise.all([
     safeJson(newsUrl),
-    safeJson(detailsUrl)
+    safeJson(detailsUrl),
+    needsPrevFallback ? safeJson(prevUrl) : Promise.resolve(null)
   ]);
+
+  if (needsPrevFallback && prevJson && !prevJson.__error) {
+    core = buildCoreWithPrevFallback(core, prevJson);
+  }
 
   const newsRaw = Array.isArray(newsJson?.results) ? newsJson.results : [];
   const details = detailsJson?.results || {};
@@ -293,8 +335,8 @@ async function enrichTicker(s: AnyObj, apiKey: string, marketMode: string) {
     core.ask
   );
 
-  const support = core.low > 0 ? core.low : core.price * 0.94;
-  const resistance = core.high > 0 ? core.high : core.price * 1.08;
+  const support = core.low > 0 ? core.low : core.price > 0 ? core.price * 0.94 : 0;
+  const resistance = core.high > 0 ? core.high : core.price > 0 ? core.price * 1.08 : 0;
 
   const entryAggressive = resistance * 0.985;
   const entryConfirmation = resistance * 1.01;
@@ -447,7 +489,7 @@ export async function GET() {
   if (!apiKey) {
     return Response.json({
       ok: false,
-      source: "polygon-gainers-news-float-backup",
+      source: "polygon-gainers-news-float-backup-prev",
       error: "Missing POLYGON_API_KEY",
       count: 0,
       marketMode: "NO_API_KEY",
@@ -499,7 +541,7 @@ export async function GET() {
 
     return Response.json({
       ok: true,
-      source: "polygon-gainers-news-float-backup",
+      source: "polygon-gainers-news-float-backup-prev",
       marketMode,
       liveGainersCount: rawGainers.length,
       count: tickers.length,
@@ -510,7 +552,7 @@ export async function GET() {
   } catch (error) {
     return Response.json({
       ok: false,
-      source: "polygon-gainers-news-float-backup",
+      source: "polygon-gainers-news-float-backup-prev",
       error: error instanceof Error ? error.message : String(error),
       count: 0,
       marketMode: "ERROR",
