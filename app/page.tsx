@@ -47,7 +47,14 @@ floatStatus: string;
 floatScore: number;
 marketMode: string;
 
-catalyst: string;
+gainBand: string;
+runnerLane: string;
+bottomIgnitionScore: number;
+gainerStructureScore: number;
+runnerScore: number;
+overExtensionPenalty: number;
+
+  catalyst: string;
   catalystGrade: string;
   newsScore: number;
   news: NewsItem[];
@@ -233,6 +240,12 @@ function normalize(s: any): Stock {
   const floatStatus = String(s?.floatStatus || "UNKNOWN");
   const floatScore = num(s?.floatScore);
   const marketMode = String(s?.marketMode || "");
+  const gainBand = String(s?.gainBand || "UNKNOWN");
+  const runnerLane = String(s?.runnerLane || "UNCLASSIFIED");
+  const bottomIgnitionScore = num(s?.bottomIgnitionScore);
+  const gainerStructureScore = num(s?.gainerStructureScore);
+  const runnerScore = num(s?.runnerScore);
+  const overExtensionPenalty = num(s?.overExtensionPenalty);
   let ignitionScore = num(s?.ignitionScore);
   if (!ignitionScore) {
     ignitionScore += Math.min(28, Math.max(0, gain) * 0.75);
@@ -310,6 +323,13 @@ function normalize(s: any): Stock {
     floatStatus,
     floatScore,
     marketMode,
+    gainBand,
+    runnerLane,
+    bottomIgnitionScore,
+    gainerStructureScore,
+    runnerScore,
+    overExtensionPenalty,
+
     catalyst,
     catalystGrade,
     newsScore,
