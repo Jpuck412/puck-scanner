@@ -676,16 +676,34 @@ export default function Home() {
                   ))}
                 </div>
               </Panel>
+<Panel title="LIVE CATALYST RADAR">
+  {filtered.slice(0, 6).map((s) => {
+    const articleUrl = s.news?.[0]?.article_url || "";
 
-              <Panel title="LIVE CATALYST RADAR">
-                {filtered.slice(0, 6).map((s) => (
-                  <div className="newsLine" key={s.ticker}>
-                    <b>{s.ticker}</b>
-                    <span className={catalystClass(s.catalystGrade)}>{s.catalystGrade}</span>
-                    <p>{shortTitle(s.catalyst)}</p>
-                  </div>
-                ))}
-              </Panel>
+    return articleUrl ? (
+      <a
+        className="newsLine newsLink"
+        key={s.ticker}
+        href={articleUrl}
+        target="_blank"
+        rel="noreferrer"
+      >
+        <b>{s.ticker}</b>
+        <span className={catalystClass(s.catalystGrade)}>{s.catalystGrade}</span>
+        <p>{shortTitle(s.catalyst)}</p>
+        <small>OPEN ARTICLE ↗</small>
+      </a>
+    ) : (
+      <div className="newsLine" key={s.ticker}>
+        <b>{s.ticker}</b>
+        <span className={catalystClass(s.catalystGrade)}>{s.catalystGrade}</span>
+        <p>{shortTitle(s.catalyst)}</p>
+        <small>NO ARTICLE LINK</small>
+      </div>
+    );
+  })}
+</Panel>
+              
             </section>
           </>
         )}
@@ -1004,6 +1022,20 @@ export default function Home() {
         .newsLine b{color:#75d4ff;margin-right:8px}
         .newsLine span{font-weight:1000}
         .newsLine p{margin:6px 0 0;color:#d6eaff}
+      .newsLink{
+  display:block;
+  text-decoration:none;
+}
+.newsLink:hover{
+  border-color:#69c9ff;
+  box-shadow:0 0 20px rgba(77,183,255,.25);
+  transform:translateY(-1px);
+}
+.newsLine small{
+  color:#67c7ff;
+  font-weight:900;
+  letter-spacing:1px;
+}
         .tableWrap{overflow:auto;border:1px solid #39536b;border-radius:16px}
         table{width:100%;border-collapse:collapse;min-width:1050px}
         th,td{padding:12px;border-bottom:1px solid #34495d;text-align:left;white-space:nowrap}
