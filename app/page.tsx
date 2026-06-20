@@ -690,7 +690,9 @@ if (mode === "CUSTOM") list = [...list].sort((a, b) => b.runnerScore - a.runnerS
                       <strong>{s.ticker}</strong>
                       <em className={verdictClass(s.verdict)}>{s.verdict}</em>
                       <small>{money(s.price)} / {pct(s.gain)}</small>
-                      <small>Proof {s.proofScore} · Speed {s.speed}</small>
+                      <small>{s.runnerLane || "UNCLASSIFIED"}</small>
+                      <small>{s.gainBand || "UNKNOWN"}</small>
+                      <small>Runner {s.runnerScore} · BI {s.bottomIgnitionScore} · GS {s.gainerStructureScore}</small>  
                     </button>
                   ))}
                 </div>
@@ -739,6 +741,10 @@ if (mode === "CUSTOM") list = [...list].sort((a, b) => b.runnerScore - a.runnerS
                       <th>Gain</th>
                       <th>Vol</th>
                       <th>Speed</th>
+                      <th>Lane</th>
+                      <th>Band</th>
+                      <th>BI</th>
+                      <th>GS</th>
                       <th>Spread</th>
                       <th>Support</th>
                       <th>Resist</th>
@@ -759,6 +765,10 @@ if (mode === "CUSTOM") list = [...list].sort((a, b) => b.runnerScore - a.runnerS
                         <td className="good">{pct(s.gain)}</td>
                         <td>{vol(s.volume)}</td>
                         <td>{s.speedLabel} {s.speed}</td>
+                        <td>{s.runnerLane || "N/A"}</td>
+                        <td>{s.gainBand || "N/A"}</td>
+                        <td>{s.bottomIgnitionScore}</td>
+                        <td>{s.gainerStructureScore}</td>
                         <td className={spreadClass(s.spreadStatus)}>{s.spreadStatus}</td>
                         <td>{money(s.support)}</td>
                         <td>{money(s.resistance)}</td>
@@ -794,6 +804,11 @@ if (mode === "CUSTOM") list = [...list].sort((a, b) => b.runnerScore - a.runnerS
 
                   <Row a="Price" b={money(selected.price)} />
                   <Row a="Gain" b={pct(selected.gain)} />
+                  <Row a="Runner Lane" b={selected.runnerLane || "N/A"} />
+                  <Row a="Gain Band" b={selected.gainBand || "N/A"} />
+                  <Row a="Runner Score" b={selected.runnerScore} />
+                  <Row a="Bottom Ignition" b={selected.bottomIgnitionScore} />
+                  <Row a="Gainer Structure" b={selected.gainerStructureScore} />
                   <Row a="Volume" b={vol(selected.volume)} />
                   <Row a="Speed" b={`${selected.speedLabel} / ${selected.speed}`} />
                   <Row a="Spread" b={`${selected.spreadStatus}${selected.spreadPct ? ` / ${selected.spreadPct.toFixed(2)}%` : ""}`} />
