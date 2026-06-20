@@ -613,11 +613,21 @@ async function enrichTicker(s: AnyObj, apiKey: string, marketMode: string) {
   ignitionScore = clamp(Math.round(ignitionScore), 0, 100);
   proofScore = clamp(Math.round(proofScore), 0, 100);
 
-  const verdict =
-    core.gain > 70 ? "NO" :
-    proofScore >= 80 ? "YES" :
-    proofScore >= 60 ? "WAIT" :
-    "NO";
+  const supportEntryZone =
+  location.structureLocation === "NEAR SUPPORT" ||
+  location.structureLocation === "HEALTHY MIDDLE";
+
+const resistanceProofZone =
+  location.structureLocation === "NEAR RESISTANCE" ||
+  location.structureLocation === "BREAKOUT ZONE";
+
+const verdict =
+  marketMode === "BACKUP_CLOSED_MARKET" ? "NO" :
+  core.gain > 70 ? "NO" :
+  proofScore >= 80 && supportEntryZone ? "YES" :
+  proofScore >= 60 ? "WAIT" :
+  resistanceProofZone && proofScore >= 80 ? "WAIT" :
+  "NO";
 
   let rejection = "";
 
@@ -626,6 +636,7 @@ async function enrichTicker(s: AnyObj, apiKey: string, marketMode: string) {
   else if (core.gain > 55) rejection = "LATE GAINER RISK";
   else if (core.volume < 100000) rejection = "LOW VOLUME";
   else if (spreadStatus === "FAIL") rejection = "SPREAD RISK";
+  else if (!supportEntryZone && proofScore >= 80) rejection = "NOT SUPPORT ENTRY";
   else if (proofScore < 60) rejection = "NO PROOF";
 
   const permissionText =
