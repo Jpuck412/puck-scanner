@@ -344,6 +344,68 @@ function buildGainProfile(gain: number) {
   };
 }
 
+function buildStructureLocation(
+  price: number,
+  support: number,
+  resistance: number,
+  volumeSurge: number,
+  speed: number
+) {
+  const range = resistance - support;
+
+  if (!price || !support || !resistance || range <= 0) {
+    return {
+      structurePosition: 0,
+      structureLocation: "UNKNOWN",
+      structureLocationScore: 0,
+      riskLocation: "NO CLEAN RANGE"
+    };
+  }
+
+  const position = (price - support) / range;
+
+  let structureLocation = "UNKNOWN";
+  let structureLocationScore = 0;
+  let riskLocation = "WAIT";
+
+  if (position < 0) {
+    structureLocation = "BELOW SUPPORT";
+    structureLocationScore = -30;
+    riskLocation = "SUPPORT BROKEN";
+  } else if (position <= 0.25) {
+    structureLocation = "NEAR SUPPORT";
+    structureLocationScore = 18;
+    riskLocation = "BEST RISK LOCATION";
+  } else if (position <= 0.6) {
+    structureLocation = "HEALTHY MIDDLE";
+    structureLocationScore = 12;
+    riskLocation = "CONTROLLED RISK";
+  } else if (position <= 0.9) {
+    structureLocation = "NEAR RESISTANCE";
+    structureLocationScore = 4;
+    riskLocation = "WAIT FOR CONFIRMATION";
+  } else if (position <= 1.1) {
+    structureLocation = "BREAKOUT ZONE";
+    structureLocationScore = volumeSurge >= 1.5 || speed >= 65 ? 16 : 6;
+    riskLocation = "PROOF REQUIRED";
+  } else if (position <= 1.3) {
+    structureLocation = "EXTENDED ABOVE RESISTANCE";
+    structureLocationScore = -12;
+    riskLocation = "CHASE RISK";
+  } else {
+    structureLocation = "OVEREXTENDED";
+    structureLocationScore = -25;
+    riskLocation = "DO NOT CHASE";
+  }
+
+  return {
+    structurePosition: Number(position.toFixed(3)),
+    structureLocation,
+    structureLocationScore,
+    riskLocation
+  };
+}
+
 function buildRunnerScores(args: {
   gain: number;
   price: number;
@@ -354,6 +416,7 @@ function buildRunnerScores(args: {
   rr: number;
   floatScore: number;
   newsScore: number;
+  structureLocationScore: number;
 }) {
   const profile = buildGainProfile(args.gain);
 
@@ -385,6 +448,7 @@ function buildRunnerScores(args: {
     -8;
 
   const catalystScore = clamp(args.newsScore, -20, 12);
+  const locationScore = clamp(args.structureLocationScore, -30, 18);
 
   let bottomIgnitionScore = 0;
   bottomIgnitionScore += profile.gainBand === "FRESH IGNITION" ? 25 : 0;
@@ -398,6 +462,7 @@ function buildRunnerScores(args: {
   bottomIgnitionScore += args.floatScore;
   bottomIgnitionScore += catalystScore;
   bottomIgnitionScore += rrScore;
+  bottomIgnitionScore += locationScore;
   bottomIgnitionScore += profile.overExtensionPenalty;
 
   let gainerStructureScore = 0;
@@ -410,6 +475,7 @@ function buildRunnerScores(args: {
   gainerStructureScore += rrScore;
   gainerStructureScore += catalystScore;
   gainerStructureScore += args.floatScore;
+  gainerStructureScore += locationScore;
   gainerStructureScore += profile.overExtensionPenalty;
 
   bottomIgnitionScore = clamp(Math.round(bottomIgnitionScore), 0, profile.hardCap);
@@ -507,6 +573,14 @@ async function enrichTicker(s: AnyObj, apiKey: string, marketMode: string) {
     speed >= 40 ? "ACTIVE" :
     "SLOW";
 
+  const location = buildStructureLocation(
+    core.price,
+    support,
+    resistance,
+    volumeSurge,
+    speed
+  );
+
   const junk = isJunkTicker(ticker);
 
   const runner = buildRunnerScores({
@@ -518,7 +592,8 @@ async function enrichTicker(s: AnyObj, apiKey: string, marketMode: string) {
     spreadStatus,
     rr,
     floatScore: floatData.floatScore,
-    newsScore
+    newsScore,
+    structureLocationScore: location.structureLocationScore
   });
 
   let ignitionScore = runner.bottomIgnitionScore;
@@ -633,6 +708,11 @@ async function enrichTicker(s: AnyObj, apiKey: string, marketMode: string) {
     gainerStructureScore: runner.gainerStructureScore,
     runnerScore: runner.runnerScore,
     overExtensionPenalty: runner.overExtensionPenalty,
+
+    structurePosition: location.structurePosition,
+    structureLocation: location.structureLocation,
+    structureLocationScore: location.structureLocationScore,
+    riskLocation: location.riskLocation,
 
     ignitionScore,
     proofScore,
