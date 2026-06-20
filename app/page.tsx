@@ -22,9 +22,17 @@ type Stock = {
   low: number;
   support: number;
   resistance: number;
+
   entryAggressive: number;
   entryConfirmation: number;
   entryProof: number;
+  supportEntry: number;
+  middleEntry: number;
+  breakoutProofEntry: number;
+  bestEntry: number;
+  entryType: string;
+  waitFor: string;
+
   stop: number;
   target1: number;
   target2: number;
@@ -32,6 +40,7 @@ type Stock = {
   risk: number;
   reward: number;
   rr: number;
+
   speed: number;
   speedLabel: string;
   volumeSurge: number;
@@ -39,28 +48,40 @@ type Stock = {
   spreadPct: number;
   bid: number;
   ask: number;
+
   floatShares: number;
   sharesOutstanding: number;
   floatProxy: number;
   floatStatus: string;
   floatScore: number;
+
   marketMode: string;
   gainBand: string;
   runnerLane: string;
   bottomIgnitionScore: number;
   gainerStructureScore: number;
   runnerScore: number;
+  proofScore: number;
+  ignitionScore: number;
   overExtensionPenalty: number;
+
   structurePosition: number;
   structureLocation: string;
   structureLocationScore: number;
   riskLocation: string;
+
+  speedOk: boolean;
+  volumeOk: boolean;
+  spreadOk: boolean;
+  signalAlignment: number;
+  actionRank: number;
+  actionRankScore: number;
+
   catalyst: string;
   catalystGrade: string;
   newsScore: number;
   news: NewsItem[];
-  proofScore: number;
-  ignitionScore: number;
+
   verdict: string;
   rejection: string;
   permissionText: string;
@@ -82,8 +103,8 @@ type Mode =
   | "VOLUME"
   | "PROOF"
   | "GAINERS"
-  | "EARLY"
-  | "STRUCTURE";
+  | "RAW"
+  | "REJECTED";
 
 type EntryPlan = {
   supportEntry: number;
@@ -110,13 +131,13 @@ const pages: Page[] = [
 ];
 
 const modes: { key: Mode; label: string; desc: string }[] = [
-  { key: "BOTTOM", label: "BOTTOM IGNITION", desc: "Middle/bottom names waking up" },
+  { key: "BOTTOM", label: "BOTTOM IGNITION", desc: "Support/middle wake-ups" },
   { key: "SPEED", label: "SPEED CLIMBERS", desc: "Fastest pressure building" },
   { key: "VOLUME", label: "VOLUME AWAKENING", desc: "Volume pressure priority" },
   { key: "PROOF", label: "PROOF SCORE", desc: "Best permission structure" },
-  { key: "GAINERS", label: "TOP GAINERS", desc: "Biggest percent movers" },
-  { key: "EARLY", label: "EARLY WAKE-UP", desc: "Bottom ignition view" },
-  { key: "STRUCTURE", label: "ALREADY-UP STRUCTURE", desc: "Already running but judged" }
+  { key: "GAINERS", label: "TOP GAINERS", desc: "Danger-check movers" },
+  { key: "RAW", label: "RAW LEADERS", desc: "Pure score, even rejected" },
+  { key: "REJECTED", label: "REJECTED", desc: "Why tickers failed" }
 ];
 
 const functionList = [
@@ -136,27 +157,10 @@ const functionList = [
   ["Spread check", "Tells if the buying/selling price gap is clean or dangerous."],
   ["Volume check", "Shows whether enough shares are trading."],
   ["Speed check", "Measures how fast pressure is building."],
-  ["Float check", "Shows whether the stock can move easier or is heavier."],
-  ["Catalyst/news check", "Checks if news may be helping the move."],
   ["Permission verdict", "YES, WAIT, or NO."],
   ["Rejection reason", "Tells why a ticker failed."],
   ["Entry zones", "Shows support, middle, and breakout proof entry numbers."],
-  ["Stop level", "The price that proves the idea is wrong."],
-  ["Target levels", "Possible sell areas if the move works."],
-  ["Risk/reward", "Compares what you risk versus what you can make."],
-  ["Top ticker", "Highest-ranked ticker after the scanner math."],
-  ["Top 10 board", "Quick list of the best candidates."],
-  ["Ticker trial panel", "Click a ticker and judge it in detail."],
-  ["Live catalyst radar", "Shows news/catalyst cards."],
-  ["Manual support/resistance tool", "Lets you type your own support and resistance."],
-  ["Discord proof copy", "Copies a clean ticker breakdown for posting."],
-  ["Filters", "Lets you limit price, gain, volume, and junk tickers."],
-  ["Auto scan", "Scanner refreshes by itself."],
-  ["New scan button", "Manual refresh button."],
-  ["Weekend warning", "Tells users Sat/Sun is demo mode."],
-  ["Help page", "Basic scanner instructions."],
-  ["Glossary page", "Simple definitions."],
-  ["Settings page", "Scanner control area."]
+  ["Trader journal", "Forces the trader to answer the important questions before acting."]
 ];
 
 function num(v: any) {
@@ -207,7 +211,7 @@ function scoreClass(v: number) {
 }
 
 function verdictClass(v: string) {
-  if (v === "YES" || v === "PROOF") return "good";
+  if (v === "YES") return "good";
   if (v === "WAIT") return "warn";
   return "bad";
 }
@@ -233,6 +237,7 @@ function shortTitle(v: string, max = 92) {
 
 function dateShort(v?: string) {
   if (!v) return "N/A";
+
   const d = new Date(v);
   if (Number.isNaN(d.getTime())) return "N/A";
 
@@ -243,6 +248,12 @@ function dateShort(v?: string) {
     hour: "numeric",
     minute: "2-digit"
   });
+}
+
+function actionPriority(s: Stock) {
+  if (s.verdict === "YES") return 3;
+  if (s.verdict === "WAIT") return 2;
+  return 1;
 }
 
 function normalize(s: any): Stock {
@@ -265,27 +276,51 @@ function normalize(s: any): Stock {
   const support = num(s?.support ?? low ?? price * 0.94);
   const resistance = num(s?.resistance ?? high ?? price * 1.08);
 
-  const entryAggressive = num(s?.entryAggressive ?? support * 1.01);
-  const entryConfirmation = num(s?.entryConfirmation ?? (support + resistance) / 2);
-  const entryProof = num(s?.entryProof ?? resistance * 1.025);
+  const structureLocation = String(s?.structureLocation || "UNKNOWN");
+  const structurePosition = num(s?.structurePosition);
+  const structureLocationScore = num(s?.structureLocationScore);
+  const riskLocation = String(s?.riskLocation || "N/A");
+
+  const supportEntry = num(s?.supportEntry ?? s?.entryAggressive ?? support * 1.01);
+  const middleEntry = num(s?.middleEntry ?? s?.entryConfirmation ?? (support + resistance) / 2);
+  const breakoutProofEntry = num(s?.breakoutProofEntry ?? s?.entryProof ?? resistance * 1.025);
+
+  let bestEntry = num(s?.bestEntry);
+  let entryType = String(s?.entryType || "");
+  let waitFor = String(s?.waitFor || "");
+
+  if (!bestEntry) {
+    if (structureLocation === "NEAR SUPPORT") {
+      bestEntry = supportEntry;
+      entryType = "SUPPORT ENTRY";
+      waitFor = "WAIT FOR SUPPORT HOLD + SPEED / VOLUME / SPREAD";
+    } else if (structureLocation === "HEALTHY MIDDLE") {
+      bestEntry = middleEntry;
+      entryType = "HEALTHY MIDDLE ENTRY";
+      waitFor = "WAIT FOR BUYERS HOLDING MIDDLE";
+    } else if (structureLocation === "NEAR RESISTANCE" || structureLocation === "BREAKOUT ZONE") {
+      bestEntry = breakoutProofEntry;
+      entryType = "BREAKOUT PROOF ENTRY";
+      waitFor = "WAIT ABOVE RESISTANCE FOR PROOF";
+    } else {
+      bestEntry = 0;
+      entryType = "NO TOUCH";
+      waitFor = "NO CLEAN ENTRY";
+    }
+  }
 
   const stop = num(s?.stop ?? support);
   const target1 = num(s?.target1 ?? s?.target ?? resistance * 1.08);
   const target2 = num(s?.target2 ?? resistance * 1.18);
   const target3 = num(s?.target3 ?? resistance * 1.35);
 
-  const risk = num(s?.risk ?? Math.max(0, entryProof - stop));
-  const reward = num(s?.reward ?? Math.max(0, target1 - entryProof));
+  const risk = num(s?.risk ?? Math.max(0, breakoutProofEntry - stop));
+  const reward = num(s?.reward ?? Math.max(0, target1 - breakoutProofEntry));
   const rr = num(s?.rr ?? (risk > 0 ? reward / risk : 0));
 
   const volumeSurge = num(s?.volumeSurge ?? s?.structure?.volumeSurge);
   const speedRaw = num(s?.speed);
-
-  const speed = clamp(
-    speedRaw || Math.round(gain * 0.45 + volumeSurge * 16),
-    0,
-    100
-  );
+  const speed = clamp(speedRaw || Math.round(gain * 0.45 + volumeSurge * 16), 0, 100);
 
   const speedLabel =
     s?.speedLabel ||
@@ -295,6 +330,17 @@ function normalize(s: any): Stock {
   const spreadPct = num(s?.spreadPct);
   const bid = num(s?.bid);
   const ask = num(s?.ask);
+
+  const speedOk = Boolean(s?.speedOk ?? speed >= 50);
+  const volumeOk = Boolean(s?.volumeOk ?? (volume >= 100000 && (volumeSurge >= 1 || volume >= 1000000)));
+  const spreadOk = Boolean(s?.spreadOk ?? spreadStatus === "PASS" || spreadStatus === "LIKELY TIGHT");
+
+  const signalAlignment = num(
+    s?.signalAlignment ??
+      (speedOk ? 1 : 0) +
+        (volumeOk ? 1 : 0) +
+        (spreadOk || spreadStatus === "CAUTION" || spreadStatus === "CHECK" ? 1 : 0)
+  );
 
   const floatShares = num(s?.floatShares);
   const sharesOutstanding = num(s?.sharesOutstanding);
@@ -308,20 +354,14 @@ function normalize(s: any): Stock {
   const bottomIgnitionScore = num(s?.bottomIgnitionScore);
   const gainerStructureScore = num(s?.gainerStructureScore);
   const runnerScore = num(s?.runnerScore || Math.max(bottomIgnitionScore, gainerStructureScore));
+  const proofScore = num(s?.proofScore || runnerScore);
+  const ignitionScore = num(s?.ignitionScore || bottomIgnitionScore);
   const overExtensionPenalty = num(s?.overExtensionPenalty);
-
-  const structurePosition = num(s?.structurePosition);
-  const structureLocation = String(s?.structureLocation || "UNKNOWN");
-  const structureLocationScore = num(s?.structureLocationScore);
-  const riskLocation = String(s?.riskLocation || "N/A");
 
   const catalyst = String(s?.catalyst || "NO FRESH NEWS FOUND");
   const catalystGrade = String(s?.catalystGrade || "NONE");
   const newsScore = num(s?.newsScore);
   const news = Array.isArray(s?.news) ? s.news : [];
-
-  const ignitionScore = clamp(Math.round(num(s?.ignitionScore || bottomIgnitionScore)), 0, 100);
-  const proofScore = clamp(Math.round(num(s?.proofScore || runnerScore || ignitionScore)), 0, 100);
 
   const verdict = String(
     s?.verdict || (proofScore >= 80 ? "YES" : proofScore >= 60 ? "WAIT" : "NO")
@@ -339,10 +379,19 @@ function normalize(s: any): Stock {
   const permissionText =
     s?.permissionText ||
     (verdict === "YES"
-      ? "PERMISSION POSSIBLE — STRUCTURE MUST HOLD"
+      ? "YES — SUPPORT/MIDDLE ENTRY WITH CONFIRMATION"
       : verdict === "WAIT"
-      ? "WAIT — NEED MORE PROOF"
-      : "DENIED — NO CLEAN PERMISSION");
+      ? waitFor
+      : rejection || "NO CLEAN PERMISSION");
+
+  const actionRank = num(
+    s?.actionRank ??
+      (verdict === "YES" ? 3 : verdict === "WAIT" ? 2 : 1)
+  );
+
+  const actionRankScore = num(
+    s?.actionRankScore ?? actionRank * 1000 + proofScore + runnerScore * 0.01
+  );
 
   return {
     ticker,
@@ -355,9 +404,17 @@ function normalize(s: any): Stock {
     low,
     support,
     resistance,
-    entryAggressive,
-    entryConfirmation,
-    entryProof,
+
+    entryAggressive: supportEntry,
+    entryConfirmation: middleEntry,
+    entryProof: breakoutProofEntry,
+    supportEntry,
+    middleEntry,
+    breakoutProofEntry,
+    bestEntry,
+    entryType,
+    waitFor,
+
     stop,
     target1,
     target2,
@@ -365,6 +422,7 @@ function normalize(s: any): Stock {
     risk,
     reward,
     rr,
+
     speed,
     speedLabel,
     volumeSurge,
@@ -372,28 +430,40 @@ function normalize(s: any): Stock {
     spreadPct,
     bid,
     ask,
+
     floatShares,
     sharesOutstanding,
     floatProxy,
     floatStatus,
     floatScore,
+
     marketMode,
     gainBand,
     runnerLane,
     bottomIgnitionScore,
     gainerStructureScore,
     runnerScore,
+    proofScore,
+    ignitionScore,
     overExtensionPenalty,
+
     structurePosition,
     structureLocation,
     structureLocationScore,
     riskLocation,
+
+    speedOk,
+    volumeOk,
+    spreadOk,
+    signalAlignment,
+    actionRank,
+    actionRankScore,
+
     catalyst,
     catalystGrade,
     newsScore,
     news,
-    proofScore,
-    ignitionScore,
+
     verdict,
     rejection,
     permissionText,
@@ -418,71 +488,27 @@ function buildEntryPlan(s?: Stock): EntryPlan {
     };
   }
 
-  const range = Math.max(0, s.resistance - s.support);
-
-  const supportEntry = s.support > 0 ? s.support * 1.01 : 0;
-  const middleEntry = range > 0 ? s.support + range * 0.5 : s.entryConfirmation;
-  const breakoutProofEntry = s.resistance > 0 ? s.resistance * 1.025 : s.entryProof;
-
-  const speedOk = s.speed >= 50 || ["ACTIVE", "FAST", "VIOLENT"].includes(s.speedLabel);
-  const volumeOk = s.volume >= 100000 && (s.volumeSurge >= 1 || s.volume >= 1000000);
-  const spreadOk = s.spreadStatus === "PASS" || s.spreadStatus === "CAUTION";
+  const speedOk = s.speedOk || s.speed >= 50;
+  const volumeOk = s.volumeOk || (s.volume >= 100000 && (s.volumeSurge >= 1 || s.volume >= 1000000));
+  const spreadOk = s.spreadOk || s.spreadStatus === "PASS" || s.spreadStatus === "LIKELY TIGHT";
+  const spreadMaybe = spreadOk || s.spreadStatus === "CAUTION" || s.spreadStatus === "CHECK";
 
   const alignedSignals = [
     speedOk ? "Speed" : "",
     volumeOk ? "Volume" : "",
-    spreadOk ? "Spread" : ""
+    spreadMaybe ? "Spread" : ""
   ].filter(Boolean);
 
   const missingSignals = [
     speedOk ? "" : "Speed",
     volumeOk ? "" : "Volume",
-    spreadOk ? "" : "Spread"
+    spreadMaybe ? "" : "Spread"
   ].filter(Boolean);
 
   const alignmentCount = alignedSignals.length;
 
-  const supportZone = s.structureLocation === "NEAR SUPPORT";
-  const middleZone = s.structureLocation === "HEALTHY MIDDLE";
-
-  const resistanceZone =
-    s.structureLocation === "NEAR RESISTANCE" ||
-    s.structureLocation === "BREAKOUT ZONE";
-
-  const deadZone =
-    s.structureLocation === "BELOW SUPPORT" ||
-    s.structureLocation === "OVEREXTENDED" ||
-    s.structureLocation === "EXTENDED ABOVE RESISTANCE" ||
-    s.gain > 70;
-
-  let bestEntry = 0;
-  let entryType = "NO CLEAN ENTRY";
-  let waitFor = "NO CLEAN ENTRY";
-
-  if (deadZone) {
-    bestEntry = 0;
-    entryType = "NO TOUCH";
-    waitFor = s.structureLocation === "BELOW SUPPORT" ? "SUPPORT MUST RECLAIM" : "DO NOT CHASE";
-  } else if (supportZone) {
-    bestEntry = supportEntry;
-    entryType = "SUPPORT ENTRY";
-    waitFor = `WAIT FOR ${money(bestEntry)} WITH SPEED / VOLUME / SPREAD`;
-  } else if (middleZone) {
-    bestEntry = middleEntry;
-    entryType = "HEALTHY MIDDLE ENTRY";
-    waitFor = `WAIT FOR ${money(bestEntry)} WITH BUYERS HOLDING`;
-  } else if (resistanceZone) {
-    bestEntry = breakoutProofEntry;
-    entryType = "BREAKOUT PROOF ENTRY";
-    waitFor = `WAIT FOR ${money(bestEntry)} PROOF ENTRY`;
-  } else {
-    bestEntry = s.price;
-    entryType = "WAIT";
-    waitFor = "WAIT FOR CLEAN STRUCTURE";
-  }
-
   const entryStatus =
-    deadZone || !bestEntry
+    s.verdict === "NO"
       ? "NO CLEAN ENTRY"
       : alignmentCount >= 2 && spreadOk
       ? "ENTRY CAN BE WATCHED"
@@ -491,18 +517,43 @@ function buildEntryPlan(s?: Stock): EntryPlan {
       : "WAIT FOR ALIGNMENT";
 
   return {
-    supportEntry,
-    middleEntry,
-    breakoutProofEntry,
-    bestEntry,
-    entryType,
-    waitFor,
+    supportEntry: s.supportEntry,
+    middleEntry: s.middleEntry,
+    breakoutProofEntry: s.breakoutProofEntry,
+    bestEntry: s.bestEntry,
+    entryType: s.entryType,
+    waitFor: s.waitFor,
     alignedSignals,
     missingSignals,
     alignmentCount,
     alignmentText: `${alignmentCount} / 3`,
     entryStatus
   };
+}
+
+function journalTemplate(s?: Stock) {
+  const plan = buildEntryPlan(s);
+
+  return [
+    `Ticker: ${s?.ticker || ""}`,
+    `Why am I watching this ticker?`,
+    ``,
+    `Best entry number: ${s ? money(plan.bestEntry) : ""}`,
+    `Entry type: ${s?.entryType || ""}`,
+    `What must align before entry? Speed / Volume / Spread`,
+    ``,
+    `Support: ${s ? money(s.support) : ""}`,
+    `Resistance: ${s ? money(s.resistance) : ""}`,
+    `What proves me wrong?`,
+    ``,
+    `Am I chasing?`,
+    ``,
+    `Exit plan:`,
+    ``,
+    `Did I follow the scanner?`,
+    ``,
+    `What did I learn?`
+  ].join("\n");
 }
 
 export default function Home() {
@@ -517,6 +568,7 @@ export default function Home() {
   const [refreshSec, setRefreshSec] = useState(5);
   const [showRejected, setShowRejected] = useState(false);
   const [showTips, setShowTips] = useState(true);
+  const [journal, setJournal] = useState("");
 
   const [minPrice, setMinPrice] = useState(0.1);
   const [maxPrice, setMaxPrice] = useState(10);
@@ -528,8 +580,8 @@ export default function Home() {
   const [watchlist, setWatchlist] = useState<string[]>([]);
 
   const [manualTicker, setManualTicker] = useState("");
-  const [manualSupport, setManualSupport] = useState(0.28);
-  const [manualResistance, setManualResistance] = useState(0.34);
+  const [manualSupport, setManualSupport] = useState(0.8);
+  const [manualResistance, setManualResistance] = useState(0.82);
 
   async function load() {
     setStatus("SCANNING");
@@ -577,6 +629,9 @@ export default function Home() {
 
       const savedTips = window.localStorage.getItem("proof-show-tips");
       if (savedTips === "false") setShowTips(false);
+
+      const savedJournal = window.localStorage.getItem("proof-trader-journal");
+      if (savedJournal) setJournal(savedJournal);
     } catch {}
 
     return () => clearInterval(id);
@@ -601,6 +656,12 @@ export default function Home() {
     } catch {}
   }, [showTips]);
 
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("proof-trader-journal", journal);
+    } catch {}
+  }, [journal]);
+
   const filtered = useMemo(() => {
     return stocks.filter((s) => {
       if (removeJunk && isJunk(s.ticker)) return false;
@@ -611,24 +672,28 @@ export default function Home() {
     });
   }, [stocks, minPrice, maxPrice, minGain, minVolume, removeJunk]);
 
+  const actionable = useMemo(() => {
+    return filtered.filter((s) => s.verdict !== "NO");
+  }, [filtered]);
+
   const bottomIgnition = useMemo(
-    () => [...filtered].sort((a, b) => b.bottomIgnitionScore - a.bottomIgnitionScore || b.runnerScore - a.runnerScore),
-    [filtered]
+    () => [...actionable].sort((a, b) => b.bottomIgnitionScore - a.bottomIgnitionScore || b.actionRankScore - a.actionRankScore),
+    [actionable]
   );
 
   const speedClimbers = useMemo(
-    () => [...filtered].sort((a, b) => b.speed - a.speed || b.runnerScore - a.runnerScore),
-    [filtered]
+    () => [...actionable].sort((a, b) => b.speed - a.speed || b.actionRankScore - a.actionRankScore),
+    [actionable]
   );
 
   const volumeAwakening = useMemo(
-    () => [...filtered].sort((a, b) => b.volume - a.volume || b.volumeSurge - a.volumeSurge),
-    [filtered]
+    () => [...actionable].sort((a, b) => b.volume - a.volume || b.volumeSurge - a.volumeSurge),
+    [actionable]
   );
 
   const proofScore = useMemo(
-    () => [...filtered].sort((a, b) => b.proofScore - a.proofScore || b.runnerScore - a.runnerScore),
-    [filtered]
+    () => [...actionable].sort((a, b) => b.proofScore - a.proofScore || b.runnerScore - a.runnerScore),
+    [actionable]
   );
 
   const topGainers = useMemo(
@@ -636,8 +701,13 @@ export default function Home() {
     [filtered]
   );
 
-  const alreadyUpStructure = useMemo(
-    () => [...filtered].sort((a, b) => b.gainerStructureScore - a.gainerStructureScore || b.runnerScore - a.runnerScore),
+  const rawLeaders = useMemo(
+    () => [...filtered].sort((a, b) => b.runnerScore - a.runnerScore || b.proofScore - a.proofScore),
+    [filtered]
+  );
+
+  const rejected = useMemo(
+    () => filtered.filter((s) => s.verdict === "NO" || s.rejection),
     [filtered]
   );
 
@@ -647,15 +717,13 @@ export default function Home() {
     if (mode === "VOLUME") return volumeAwakening;
     if (mode === "PROOF") return proofScore;
     if (mode === "GAINERS") return topGainers;
-    if (mode === "EARLY") return bottomIgnition;
-    return alreadyUpStructure;
-  }, [mode, bottomIgnition, speedClimbers, volumeAwakening, proofScore, topGainers, alreadyUpStructure]);
+    if (mode === "RAW") return rawLeaders;
+    return rejected;
+  }, [mode, bottomIgnition, speedClimbers, volumeAwakening, proofScore, topGainers, rawLeaders, rejected]);
 
-  const rejected = useMemo(() => stocks.filter((s) => s.rejection), [stocks]);
-
-  const top = proofScore[0] || filtered[0] || stocks[0];
+  const top = proofScore[0] || actionable[0] || filtered[0] || stocks[0];
   const earlyTop = bottomIgnition[0];
-  const structureTop = alreadyUpStructure[0];
+  const rawTop = rawLeaders[0];
 
   const selected =
     filtered.find((s) => s.ticker === selectedTicker) ||
@@ -696,6 +764,7 @@ export default function Home() {
 
   function toggleWatchlist(ticker: string) {
     if (!ticker) return;
+
     setWatchlist((prev) =>
       prev.includes(ticker)
         ? prev.filter((x) => x !== ticker)
@@ -738,8 +807,6 @@ export default function Home() {
       `Float: ${s.floatStatus} / ${vol(s.floatProxy)}`,
       `Catalyst Grade: ${s.catalystGrade}`,
       `Catalyst: ${shortTitle(s.catalyst, 140)}`,
-      `What proves it right? Support holds, spread stays clean, volume/speed continue, and price confirms the listed entry.`,
-      `What proves it wrong? Support breaks, spread expands, volume fades, or buyers lose control.`,
       `Educational review only. Not financial advice.`
     ].join("\n");
   }
@@ -753,6 +820,15 @@ export default function Home() {
     }
   }
 
+  async function copyJournal() {
+    try {
+      await navigator.clipboard.writeText(journal);
+      alert("Journal copied.");
+    } catch {
+      alert("Copy failed. Highlight journal manually.");
+    }
+  }
+
   return (
     <main className="app">
       <aside className="sidebar">
@@ -763,7 +839,7 @@ export default function Home() {
             <br />
             STRUCTURE
           </h2>
-          <p>ELITE DEV 3</p>
+          <p>ELITE DEV 4</p>
         </div>
 
         <nav>
@@ -790,7 +866,7 @@ export default function Home() {
       <section className="main">
         <header className="hero">
           <div>
-            <p>PROOF OF STRUCTURE™ ELITE DEV 3</p>
+            <p>PROOF OF STRUCTURE™ ELITE DEV 4</p>
             <h1>MISSION CONTROL</h1>
             <span>The market must earn permission. No Proof = No Trade.</span>
           </div>
@@ -825,44 +901,53 @@ export default function Home() {
               ))}
             </section>
 
+            <section className="viewBanner">
+              <strong>VIEWING: {modes.find((m) => m.key === mode)?.label}</strong>
+              <span>SORTING BY: {modes.find((m) => m.key === mode)?.desc}</span>
+            </section>
+
             <section className="stats">
               <Stat title="Raw Count" value={stocks.length} />
               <Stat title="Showing" value={filtered.length} />
+              <Stat title="Actionable" value={actionable.length} tone="good" />
               <Stat title="YES" value={yesCount} tone="good" />
               <Stat title="WAIT" value={waitCount} tone="warn" />
               <Stat title="NO" value={noCount} tone="bad" />
-              <Stat title="Rejected" value={rejected.length} />
             </section>
 
             <section className="grid3">
-              <Panel title="OVERALL #1">
+              <Panel title="ACTION #1">
                 <TruthHeader stock={top} />
                 <TruthRows stock={top} plan={buildEntryPlan(top)} showTips={showTips} />
               </Panel>
 
               <Panel title="EARLY WAKE-UP #1">
-                <TruthHeader stock={earlyTop} />
-                <Row a="BI Score" b={earlyTop?.bottomIgnitionScore ?? 0} />
-                <Row a="GS Score" b={earlyTop?.gainerStructureScore ?? 0} />
-                <Row a="Structure" b={earlyTop?.structureLocation || "N/A"} />
-                <Row a="Risk" b={earlyTop?.riskLocation || "N/A"} />
-                <Row a="Entry" b={money(buildEntryPlan(earlyTop).bestEntry)} />
+                {earlyTop ? (
+                  <>
+                    <TruthHeader stock={earlyTop} />
+                    <Row a="BI Score" b={earlyTop.bottomIgnitionScore} />
+                    <Row a="Structure" b={earlyTop.structureLocation} />
+                    <Row a="Risk" b={earlyTop.riskLocation} />
+                    <Row a="Entry" b={money(buildEntryPlan(earlyTop).bestEntry)} />
+                  </>
+                ) : (
+                  <NoAction text="No actionable early wake-up yet." />
+                )}
               </Panel>
 
-              <Panel title="ALREADY-UP #1">
-                <TruthHeader stock={structureTop} />
-                <Row a="GS Score" b={structureTop?.gainerStructureScore ?? 0} />
-                <Row a="BI Score" b={structureTop?.bottomIgnitionScore ?? 0} />
-                <Row a="Structure" b={structureTop?.structureLocation || "N/A"} />
-                <Row a="Risk" b={structureTop?.riskLocation || "N/A"} />
-                <Row a="Proof Entry" b={money(buildEntryPlan(structureTop).breakoutProofEntry)} />
+              <Panel title="RAW LEADER">
+                <TruthHeader stock={rawTop} />
+                <Row a="Raw Runner Score" b={rawTop?.runnerScore ?? 0} />
+                <Row a="Verdict" b={rawTop?.verdict || "N/A"} />
+                <Row a="Rejection" b={rawTop?.rejection || "None"} />
+                <Row a="Location" b={rawTop?.structureLocation || "N/A"} />
               </Panel>
             </section>
 
             <section className="leaderGrid">
               <Leaderboard
-                title="BOTTOM IGNITION TOP 5"
-                tip="Early/middle names waking up before they look obvious."
+                title="ACTIONABLE BOTTOM IGNITION TOP 5"
+                tip="Only YES/WAIT names. NO names are blocked from this action board."
                 stocks={bottomIgnition.slice(0, 5)}
                 kind="BI"
                 showTips={showTips}
@@ -873,8 +958,8 @@ export default function Home() {
               />
 
               <Leaderboard
-                title="SPEED CLIMBERS TOP 5"
-                tip="Fastest pressure building right now."
+                title="ACTIONABLE SPEED CLIMBERS TOP 5"
+                tip="Fast names only if they are not rejected."
                 stocks={speedClimbers.slice(0, 5)}
                 kind="SPEED"
                 showTips={showTips}
@@ -885,8 +970,8 @@ export default function Home() {
               />
 
               <Leaderboard
-                title="VOLUME AWAKENING TOP 5"
-                tip="Names with the strongest volume pressure."
+                title="ACTIONABLE VOLUME AWAKENING TOP 5"
+                tip="Volume pressure only if the setup is not rejected."
                 stocks={volumeAwakening.slice(0, 5)}
                 kind="VOL"
                 showTips={showTips}
@@ -898,7 +983,7 @@ export default function Home() {
 
               <Leaderboard
                 title="PROOF SCORE TOP 5"
-                tip="Best permission candidates after full structure scoring."
+                tip="Cleanest permission candidates."
                 stocks={proofScore.slice(0, 5)}
                 kind="PROOF"
                 showTips={showTips}
@@ -909,8 +994,8 @@ export default function Home() {
               />
 
               <Leaderboard
-                title="TOP GAINERS TOP 5"
-                tip="Biggest percent movers. This is danger-check, not automatic permission."
+                title="TOP GAINERS DANGER CHECK"
+                tip="Raw percent movers. This is not automatic permission."
                 stocks={topGainers.slice(0, 5)}
                 kind="GAIN"
                 showTips={showTips}
@@ -919,6 +1004,13 @@ export default function Home() {
                   setPage("scanner");
                 }}
               />
+
+              <JournalPanel
+                selected={selected}
+                journal={journal}
+                setJournal={setJournal}
+                copyJournal={copyJournal}
+              />
             </section>
           </>
         )}
@@ -926,6 +1018,11 @@ export default function Home() {
         {page === "scanner" && (
           <section className="gridScan">
             <Panel title="LIVE RESULTS GRID">
+              <div className="viewBanner inner">
+                <strong>VIEWING: {modes.find((m) => m.key === mode)?.label}</strong>
+                <span>Rejected names cannot lead action boards.</span>
+              </div>
+
               <div className="tableWrap">
                 <table>
                   <thead>
@@ -936,7 +1033,7 @@ export default function Home() {
                       <th>Vol</th>
                       <th>BI</th>
                       <th>GS</th>
-                      <th>Lane</th>
+                      <th>Proof</th>
                       <th>Location</th>
                       <th>Entry</th>
                       <th>Signals</th>
@@ -960,7 +1057,7 @@ export default function Home() {
                           <td>{vol(s.volume)}</td>
                           <td className={scoreClass(s.bottomIgnitionScore)}>{s.bottomIgnitionScore}</td>
                           <td className={scoreClass(s.gainerStructureScore)}>{s.gainerStructureScore}</td>
-                          <td>{s.runnerLane}</td>
+                          <td className={scoreClass(s.proofScore)}>{s.proofScore}</td>
                           <td>{s.structureLocation}</td>
                           <td>{money(plan.bestEntry)}</td>
                           <td>{plan.alignmentText}</td>
@@ -980,7 +1077,7 @@ export default function Home() {
               {showRejected && (
                 <div className="rejectBox">
                   {rejected.map((s) => (
-                    <Row key={s.ticker} a={s.ticker} b={s.rejection} />
+                    <Row key={s.ticker} a={s.ticker} b={s.rejection || "NO CLEAN PERMISSION"} />
                   ))}
                 </div>
               )}
@@ -1011,6 +1108,7 @@ export default function Home() {
                       {watchlist.includes(selected.ticker) ? "REMOVE WATCH" : "ADD WATCH"}
                     </button>
                     <button onClick={() => copyProof(selected)}>COPY DISCORD PROOF</button>
+                    <button onClick={() => setJournal(journalTemplate(selected))}>LOAD JOURNAL QUESTIONS</button>
                   </div>
                 </>
               ) : (
@@ -1101,14 +1199,13 @@ export default function Home() {
             <Info
               title="HELP CENTER"
               items={[
-                "Bottom Ignition Top 5 = middle/bottom names waking up.",
-                "Speed Climbers Top 5 = fastest pressure names.",
-                "Volume Awakening Top 5 = strongest volume pressure names.",
-                "Proof Score Top 5 = cleanest permission candidates.",
-                "Top Gainers Top 5 = biggest percent movers, not automatic permission.",
-                "Best Entry always shows a number when structure is clean.",
-                "Near resistance means wait for proof above resistance.",
-                "Spread, speed, and volume should align before touching anything.",
+                "Action boards only show YES or WAIT names.",
+                "Rejected names go to Raw Leaders or Rejected Reasons.",
+                "Bottom Ignition now favors support/middle location.",
+                "Near resistance means wait above resistance for proof.",
+                "Top Gainers is danger-check, not permission.",
+                "Best Entry always shows the cleanest number when structure is usable.",
+                "Speed, volume, and spread should align before touching anything.",
                 "Support breaks = permission revoked.",
                 "This is not financial advice."
               ]}
@@ -1166,7 +1263,7 @@ export default function Home() {
       <style jsx global>{`
         *{box-sizing:border-box}
         body{margin:0;background:#d7d4cc;color:#2e2c27;font-family:Inter,Arial,sans-serif}
-        button,input{font:inherit}
+        button,input,textarea{font:inherit}
         button{cursor:pointer;border:1px solid #8b826f;background:#efede6;color:#2d2a23;border-radius:14px;padding:10px 12px;font-weight:900;box-shadow:0 2px 0 #9b927f}
         button:hover{transform:translateY(-1px);background:#f8f6ef}
         .app{display:grid;grid-template-columns:250px 1fr;min-height:100vh}
@@ -1203,6 +1300,8 @@ export default function Home() {
         .gridScan{display:grid;grid-template-columns:1.45fr .8fr;gap:16px}
         .leaderGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
         .demoNotice{border:1px solid #a8863f;background:#fff4cf;color:#6d5218;border-radius:16px;padding:14px 16px;font-size:14px;letter-spacing:1px}
+        .viewBanner{display:flex;justify-content:space-between;gap:14px;align-items:center;border:1px solid #b9aa88;background:#fff8e5;border-radius:16px;padding:12px 14px;font-weight:1000;color:#6d5218}
+        .viewBanner.inner{margin-bottom:12px}
         .big{font-size:48px;margin:4px 0}
         .tickerTitle{font-size:36px;margin:0}
         .verdictPill{border-radius:16px;padding:12px;margin:12px 0;font-weight:1000;background:#ded7c8}
@@ -1221,6 +1320,7 @@ export default function Home() {
         .miniCard strong{font-size:19px}
         .miniCard .meta{display:flex;flex-wrap:wrap;gap:6px}
         .chip{border-radius:999px;padding:4px 7px;background:#ded7c8;font-size:11px;font-weight:1000}
+        .noAction{border:1px dashed #b42318;background:#fff1ef;color:#8d1c13;border-radius:16px;padding:14px;font-weight:1000}
         .tableWrap{overflow:auto;border-radius:16px;border:1px solid #b7ac95}
         table{width:100%;border-collapse:collapse;background:#f7f4ec}
         th,td{padding:10px;border-bottom:1px solid #d0c7b5;text-align:left;font-size:13px;white-space:nowrap}
@@ -1238,6 +1338,9 @@ export default function Home() {
         .newsLine small{font-weight:900;color:#7b6741}
         .newsLink:hover{background:#fff8e7;transform:translateY(-1px)}
         .functionGrid{display:grid;gap:2px}
+        .journalBox{display:grid;gap:10px}
+        .journalBox textarea{min-height:280px;resize:vertical;border:1px solid #9e927c;border-radius:16px;padding:12px;background:#fbf8ef;color:#2e2c27;font-weight:800;line-height:1.35}
+        .journalActions{display:flex;gap:10px;flex-wrap:wrap}
 
         @media (max-width:1000px){
           .app{grid-template-columns:1fr}
@@ -1246,6 +1349,7 @@ export default function Home() {
           .hero{display:grid}
           .row{grid-template-columns:1fr}
           .miniCard{grid-template-columns:28px 70px 1fr}
+          .viewBanner{display:grid}
         }
       `}</style>
     </main>
@@ -1284,6 +1388,10 @@ function Tip({ show, text }: { show: boolean; text: string }) {
   return <div className="tip">? {text}</div>;
 }
 
+function NoAction({ text }: { text: string }) {
+  return <div className="noAction">{text}</div>;
+}
+
 function TruthHeader({ stock }: { stock?: Stock }) {
   if (!stock) return <p>No ticker loaded.</p>;
 
@@ -1305,6 +1413,7 @@ function TruthRows({ stock, plan, showTips }: { stock?: Stock; plan: EntryPlan; 
       <Row a="Runner Lane" b={stock.runnerLane} />
       <Row a="Gain Band" b={stock.gainBand} />
       <Row a="Runner Score" b={stock.runnerScore} />
+      <Row a="Proof Score" b={stock.proofScore} />
       <Row a="BI / GS" b={`${stock.bottomIgnitionScore} / ${stock.gainerStructureScore}`} />
       <Row a="Structure" b={stock.structureLocation} />
       <Row a="Risk Location" b={stock.riskLocation} />
@@ -1357,7 +1466,7 @@ function MiniList({
   kind: "BI" | "SPEED" | "VOL" | "PROOF" | "GAIN";
   onPick: (ticker: string) => void;
 }) {
-  if (!stocks.length) return <p>No tickers match the filters.</p>;
+  if (!stocks.length) return <NoAction text="No actionable names yet." />;
 
   return (
     <div className="miniList">
@@ -1382,7 +1491,7 @@ function MiniList({
             <div>
               <div className="meta">
                 <span className="chip">{main}</span>
-                <span className="chip">R {s.runnerScore}</span>
+                <span className="chip">{s.verdict}</span>
                 <span className="chip">{s.structureLocation}</span>
                 <span className="chip">{plan.alignmentText}</span>
               </div>
@@ -1392,6 +1501,48 @@ function MiniList({
         );
       })}
     </div>
+  );
+}
+
+function JournalPanel({
+  selected,
+  journal,
+  setJournal,
+  copyJournal
+}: {
+  selected?: Stock;
+  journal: string;
+  setJournal: (v: string) => void;
+  copyJournal: () => void;
+}) {
+  return (
+    <Panel title="TRADER JOURNAL">
+      <div className="journalBox">
+        <p>Answer the questions before acting. This saves in this browser.</p>
+
+        <textarea
+          value={journal}
+          onChange={(e) => setJournal(e.target.value)}
+          placeholder="Ticker:
+Why am I watching this?
+Best entry number:
+What must align before entry?
+Support:
+Resistance:
+What proves me wrong?
+Am I chasing?
+Exit plan:
+Did I follow the scanner?
+What did I learn?"
+        />
+
+        <div className="journalActions">
+          <button onClick={() => setJournal(journalTemplate(selected))}>LOAD QUESTIONS</button>
+          <button onClick={copyJournal}>COPY JOURNAL</button>
+          <button onClick={() => setJournal("")}>CLEAR</button>
+        </div>
+      </div>
+    </Panel>
   );
 }
 
