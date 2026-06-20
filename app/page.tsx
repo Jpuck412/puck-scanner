@@ -37,14 +37,28 @@ type Stock = {
   volumeSurge: number;
   spreadStatus: string;
   spreadPct: number;
-  bid: number;
-  ask: number;
-  catalyst: string;
+bid: number;
+ask: number;
+
+floatShares: number;
+sharesOutstanding: number;
+floatProxy: number;
+floatStatus: string;
+floatScore: number;
+marketMode: string;
+
+catalyst: string;
   catalystGrade: string;
   newsScore: number;
   news: NewsItem[];
   proofScore: number;
   ignitionScore: number;
+  floatShares: number;
+  sharesOutstanding: number;
+  floatProxy: number;
+  floatStatus: string;
+  floatScore: number;
+  marketMode: string;
   verdict: string;
   rejection: string;
   permissionText: string;
@@ -219,7 +233,12 @@ function normalize(s: any): Stock {
   const catalystGrade = String(s?.catalystGrade || "NONE");
   const newsScore = num(s?.newsScore);
   const news = Array.isArray(s?.news) ? s.news : [];
-
+  const floatShares = num(s?.floatShares);
+  const sharesOutstanding = num(s?.sharesOutstanding);
+  const floatProxy = num(s?.floatProxy);
+  const floatStatus = String(s?.floatStatus || "UNKNOWN");
+  const floatScore = num(s?.floatScore);
+  const marketMode = String(s?.marketMode || "");
   let ignitionScore = num(s?.ignitionScore);
   if (!ignitionScore) {
     ignitionScore += Math.min(28, Math.max(0, gain) * 0.75);
@@ -291,6 +310,12 @@ function normalize(s: any): Stock {
     spreadPct,
     bid,
     ask,
+    floatShares,
+    sharesOutstanding,
+    floatProxy,
+    floatStatus,
+    floatScore,
+    marketMode,
     catalyst,
     catalystGrade,
     newsScore,
