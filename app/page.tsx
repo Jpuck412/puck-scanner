@@ -437,18 +437,12 @@ export default function Home() {
       return true;
     });
 
-    if (mode === "BOTTOM") list = [...list].sort((a, b) => b.ignitionScore - a.ignitionScore);
-    if (mode === "RANK") list = [...list].sort((a, b) => b.speed - a.speed);
-    if (mode === "VOLUME") list = [...list].sort((a, b) => b.volumeSurge - a.volumeSurge);
-    if (mode === "VWAP") list = [...list].sort((a, b) => b.proofScore - a.proofScore);
-    if (mode === "TOP") list = [...list].sort((a, b) => b.gain - a.gain);
-    if (mode === "CUSTOM") {
-      list = [...list].sort((a, b) => {
-        const av = a.proofScore + a.ignitionScore + a.speed + a.volumeSurge * 4;
-        const bv = b.proofScore + b.ignitionScore + b.speed + b.volumeSurge * 4;
-        return bv - av;
-      });
-    }
+    if (mode === "BOTTOM") list = [...list].sort((a, b) => b.bottomIgnitionScore - a.bottomIgnitionScore);
+if (mode === "RANK") list = [...list].sort((a, b) => b.speed - a.speed);
+if (mode === "VOLUME") list = [...list].sort((a, b) => b.volumeSurge - a.volumeSurge);
+if (mode === "VWAP") list = [...list].sort((a, b) => b.gainerStructureScore - a.gainerStructureScore);
+if (mode === "TOP") list = [...list].sort((a, b) => b.gain - a.gain);
+if (mode === "CUSTOM") list = [...list].sort((a, b) => b.runnerScore - a.runnerScore);
 
     return list.slice(0, 30);
   }, [stocks, minPrice, maxPrice, minGain, minVolume, removeJunk, mode]);
@@ -620,6 +614,11 @@ export default function Home() {
                 </h3>
                 <Row a="Top Ticker" b={top?.ticker || "NONE"} />
                 <Row a="Permission" b={top?.permissionText || "NO SCAN YET"} />
+                <Row a="Runner Lane" b={top?.runnerLane || "N/A"} />
+                <Row a="Gain Band" b={top?.gainBand || "N/A"} />
+                <Row a="Runner Score" b={top?.runnerScore ?? 0} />
+                <Row a="Bottom Ignition" b={top?.bottomIgnitionScore ?? 0} />
+                <Row a="Gainer Structure" b={top?.gainerStructureScore ?? 0} />
                 <Row a="Proof Score" b={top?.proofScore ?? 0} />
                 <Row a="Ignition" b={top?.ignitionScore ?? 0} />
                 <Row a="Speed" b={top ? `${top.speedLabel} / ${top.speed}` : "N/A"} />
