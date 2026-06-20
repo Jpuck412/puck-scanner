@@ -506,6 +506,7 @@ export default function Home() {
       `Stop: ${money(s.stop)}`,
       `Target 1: ${money(s.target1)}`,
       `Risk/Reward: ${s.rr.toFixed(2)}`,
+      `Float: ${s.floatStatus} / ${vol(s.floatProxy)}`, 
       `Catalyst Grade: ${s.catalystGrade}`,
       `Catalyst: ${shortTitle(s.catalyst, 140)}`,
       ``,
@@ -609,6 +610,8 @@ export default function Home() {
                 <Row a="Ignition" b={top?.ignitionScore ?? 0} />
                 <Row a="Speed" b={top ? `${top.speedLabel} / ${top.speed}` : "N/A"} />
                 <Row a="Catalyst" b={top ? top.catalystGrade : "N/A"} />
+                <Row a="Float" b={top ? `${top.floatStatus} / ${vol(top.floatProxy)}` : "N/A"} />
+                <Row a="Mode" b={top?.marketMode || "LIVE / WAITING"} />
                 <button onClick={load}>NEW SCAN</button>
                 <button onClick={() => setAutoScan(!autoScan)}>
                   AUTO SCAN: {autoScan ? "ON" : "OFF"}
@@ -654,6 +657,7 @@ export default function Home() {
                 <Row a="Stop" b={top ? money(top.stop) : "N/A"} />
                 <Row a="Target 1" b={top ? money(top.target1) : "N/A"} />
                 <Row a="R/R" b={top ? top.rr.toFixed(2) : "N/A"} />
+                <Row a="Float" b={top ? `${top.floatStatus} / ${vol(top.floatProxy)}` : "N/A"} />
               </Panel>
             </section>
 
@@ -772,6 +776,8 @@ export default function Home() {
                   <Row a="Target 2" b={money(selected.target2)} />
                   <Row a="Target 3" b={money(selected.target3)} />
                   <Row a="Risk/Reward" b={selected.rr.toFixed(2)} />
+                  <Row a="Float" b={`${selected.floatStatus} / ${vol(selected.floatProxy)}`} />
+                  <Row a="Float Score" b={selected.floatScore} />
                   <Row a="Catalyst Grade" b={selected.catalystGrade} />
                   <Row a="Catalyst" b={shortTitle(selected.catalyst, 60)} />
 
