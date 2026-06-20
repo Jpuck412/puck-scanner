@@ -437,10 +437,25 @@ export default function Home() {
                     <span>{money(s.proofEntry)}</span>
                     <span>{s.proofScore}</span>
                     <span className={s.verdict === "YES
-                    <span className="actionCell">
-  <button
-    onClick={() =>
-      watchlist.includes(s.ticker)
+                    <span
+  className={`verdictBadge ${
+    s.verdict === "YES"
+      ? "verdictYes"
+      : s.verdict === "WAIT"
+      ? "verdictWait"
+      : "verdictDenied"
+  }`}
+>
+  {s.verdict}
+</span>
+
+<button
+  type="button"
+  className={`watchBtn ${watchlist.includes(s.ticker) ? "watchBtnActive" : ""}`}
+  onClick={() => toggleWatchlist(s.ticker)}
+>
+  {watchlist.includes(s.ticker) ? "WATCHING" : "WATCH"}
+</button>
         ? removeWatchlist(s.ticker)
         : addWatchlist(s.ticker)
     }
