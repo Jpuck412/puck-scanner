@@ -285,6 +285,148 @@ function buildFloat(details: AnyObj) {
     floatScore
   };
 }
+function buildGainProfile(gain: number) {
+  if (gain > 70) {
+    return {
+      gainBand: "EXTENDED / TRAP RISK",
+      gainBandScore: -35,
+      overExtensionPenalty: -35,
+      hardCap: 49
+    };
+  }
+
+  if (gain > 55) {
+    return {
+      gainBand: "LATE / CAUTION",
+      gainBandScore: -10,
+      overExtensionPenalty: -15,
+      hardCap: 69
+    };
+  }
+
+  if (gain > 35) {
+    return {
+      gainBand: "STRUCTURED GAINER",
+      gainBandScore: 12,
+      overExtensionPenalty: -5,
+      hardCap: 100
+    };
+  }
+
+  if (gain >= 5) {
+    return {
+      gainBand: "FRESH IGNITION",
+      gainBandScore: 25,
+      overExtensionPenalty: 0,
+      hardCap: 100
+    };
+  }
+
+  if (gain > 0) {
+    return {
+      gainBand: "EARLY WATCH",
+      gainBandScore: 10,
+      overExtensionPenalty: 0,
+      hardCap: 100
+    };
+  }
+
+  return {
+    gainBand: "NO LIVE GAIN / BACKUP",
+    gainBandScore: 0,
+    overExtensionPenalty: 0,
+    hardCap: 100
+  };
+}
+
+function buildRunnerScores(args: {
+  gain: number;
+  price: number;
+  volume: number;
+  volumeSurge: number;
+  speed: number;
+  spreadStatus: string;
+  rr: number;
+  floatScore: number;
+  newsScore: number;
+}) {
+  const profile = buildGainProfile(args.gain);
+
+  const priceScore =
+    args.price > 0 && args.price <= 1 ? 15 :
+    args.price <= 5 ? 12 :
+    args.price <= 10 ? 8 :
+    args.price <= 20 ? 3 :
+    -8;
+
+  const volumeScore =
+    args.volume >= 5000000 ? 18 :
+    args.volume >= 1000000 ? 12 :
+    args.volume >= 100000 ? 5 :
+    -12;
+
+  const speedScore = Math.min(18, Math.max(0, args.speed) / 5);
+  const surgeScore = Math.min(20, args.volumeSurge * 6);
+
+  const spreadScore =
+    args.spreadStatus === "PASS" ? 10 :
+    args.spreadStatus === "CAUTION" ? 2 :
+    -22;
+
+  const rrScore =
+    args.rr >= 2 ? 10 :
+    args.rr >= 1.25 ? 6 :
+    args.rr >= 0.75 ? 0 :
+    -8;
+
+  const catalystScore = clamp(args.newsScore, -20, 12);
+
+  let bottomIgnitionScore = 0;
+  bottomIgnitionScore += profile.gainBand === "FRESH IGNITION" ? 25 : 0;
+  bottomIgnitionScore += profile.gainBand === "EARLY WATCH" ? 12 : 0;
+  bottomIgnitionScore += profile.gainBand === "STRUCTURED GAINER" ? 6 : 0;
+  bottomIgnitionScore += volumeScore;
+  bottomIgnitionScore += surgeScore;
+  bottomIgnitionScore += speedScore;
+  bottomIgnitionScore += spreadScore;
+  bottomIgnitionScore += priceScore;
+  bottomIgnitionScore += args.floatScore;
+  bottomIgnitionScore += catalystScore;
+  bottomIgnitionScore += rrScore;
+  bottomIgnitionScore += profile.overExtensionPenalty;
+
+  let gainerStructureScore = 0;
+  gainerStructureScore += profile.gainBand === "STRUCTURED GAINER" ? 24 : 0;
+  gainerStructureScore += profile.gainBand === "FRESH IGNITION" ? 18 : 0;
+  gainerStructureScore += profile.gainBand === "LATE / CAUTION" ? 4 : 0;
+  gainerStructureScore += volumeScore;
+  gainerStructureScore += Math.min(16, Math.max(0, args.speed) / 6);
+  gainerStructureScore += spreadScore;
+  gainerStructureScore += rrScore;
+  gainerStructureScore += catalystScore;
+  gainerStructureScore += args.floatScore;
+  gainerStructureScore += profile.overExtensionPenalty;
+
+  bottomIgnitionScore = clamp(Math.round(bottomIgnitionScore), 0, profile.hardCap);
+  gainerStructureScore = clamp(Math.round(gainerStructureScore), 0, profile.hardCap);
+
+  const runnerScore = Math.max(bottomIgnitionScore, gainerStructureScore);
+
+  const runnerLane =
+    args.gain > 70
+      ? "EXTENDED / TRAP RISK"
+      : bottomIgnitionScore >= gainerStructureScore
+      ? "BOTTOM / MIDDLE IGNITION"
+      : "GAINER STRUCTURE";
+
+  return {
+    ...profile,
+    bottomIgnitionScore,
+    gainerStructureScore,
+    runnerScore,
+    runnerLane
+  };
+}
 
 async function enrichTicker(s: AnyObj, apiKey: string, marketMode: string) {
   let core = buildCoreFromSnapshot(s);
