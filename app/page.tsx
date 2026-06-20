@@ -932,9 +932,13 @@ if (mode === "CUSTOM") list = [...list].sort((a, b) => b.runnerScore - a.runnerS
         )}
 
         {page === "help" && (
-          <Info
-            title="HELP CENTER"
-            items={[
+          <>
+            <div className="demoNotice">
+             <strong>(SAT/SUN SCANNER IS IN DEMO MODE — NOT A REAL LIVE GAINERS SCAN.)</strong>
+            </div>
+            <Info
+              title="HELP CENTER"
+              items={[
               ["How Scanner Works", "The scanner ranks candidates by proof, speed, volume, spread, catalyst, and structure."],
               ["Aggressive Entry", "Near resistance before confirmation. Highest risk. Needs tight spread."],
               ["Confirmation Entry", "After resistance starts to prove itself. Cleaner than guessing."],
@@ -944,9 +948,10 @@ if (mode === "CUSTOM") list = [...list].sort((a, b) => b.runnerScore - a.runnerS
               ["Risk", "Entry minus invalidation. No risk defined = no permission."],
               ["Spread", "Bid/ask gap. Wide spread can rob the trade."],
               ["Catalyst", "News can attract attention, but does not replace structure."]
-            ]}
-          />
-        )}
+             ]}
+               />
+               </>
+             )}
 
         {page === "glossary" && (
           <Info
@@ -1034,6 +1039,18 @@ if (mode === "CUSTOM") list = [...list].sort((a, b) => b.runnerScore - a.runnerS
         .grid3{display:grid;grid-template-columns:330px 1fr 340px;gap:16px}
         .grid2{display:grid;grid-template-columns:1.2fr .8fr;gap:16px}
         .gridScan{display:grid;grid-template-columns:1fr 380px;gap:16px;align-items:start}
+      
+        .demoNotice{
+         border:1px solid #ffd166;
+         background:rgba(255,209,102,.12);
+         color:#ffd166;
+         border-radius:16px;
+         padding:14px 16px;
+         margin-bottom:16px;
+         font-size:14px;
+         letter-spacing:1px;
+      }
+    
         .panel{overflow:hidden}
         .panel h2{color:#63c4ff}
         .row{display:flex;justify-content:space-between;gap:14px;border-bottom:1px solid #35495f;padding:9px 0;align-items:flex-start}
