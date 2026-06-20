@@ -1,7 +1,9 @@
+import { NextResponse } from "next/server";
+
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-type AnyObj = Record<string, any>;
+const SOURCE = "polygon-runner-structure-elite4";
 
 const BACKUP_UNIVERSE = [
   "NVDA",
@@ -35,7 +37,12 @@ function clamp(v: number, min: number, max: number) {
   return Math.max(min, Math.min(max, v));
 }
 
-function isJunkTicker(ticker: string) {
+function round(v: number, places = 4) {
+  const p = Math.pow(10, places);
+  return Math.round(num(v) * p) / p;
+}
+
+function isJunkSymbol(ticker: string) {
   const x = String(ticker || "").toUpperCase();
 
   return (
@@ -47,310 +54,96 @@ function isJunkTicker(ticker: string) {
   );
 }
 
-function classifyNews(title: string, description: string) {
-  const text = `${title} ${description}`.toLowerCase();
-
-  const hotWords = [
-    "fda",
-    "phase",
-    "trial",
-    "approval",
-    "approved",
-    "contract",
-    "award",
-    "acquisition",
-    "merger",
-    "partnership",
-    "agreement",
-    "patent",
-    "guidance",
-    "earnings",
-    "revenue",
-    "ai",
-    "artificial intelligence",
-    "defense",
-    "dod",
-    "government",
-    "nasa",
-    "launch",
-    "breakthrough",
-    "clinical"
-  ];
-
-  const dangerWords = [
-    "offering",
-    "registered direct",
-    "atm",
-    "dilution",
-    "reverse split",
-    "bankruptcy",
-    "delisting",
-    "nasdaq notice",
-    "compliance",
-    "warrant"
-  ];
-
-  let hot = 0;
-  let danger = 0;
-
-  hotWords.forEach((w) => {
-    if (text.includes(w)) hot += 1;
-  });
-
-  dangerWords.forEach((w) => {
-    if (text.includes(w)) danger += 1;
-  });
-
-  if (danger >= 2) return { grade: "DANGER", score: -20 };
-  if (danger === 1 && hot === 0) return { grade: "RISK", score: -10 };
-  if (hot >= 3) return { grade: "A", score: 18 };
-  if (hot === 2) return { grade: "B", score: 12 };
-  if (hot === 1) return { grade: "C", score: 6 };
-
-  return { grade: "NONE", score: 0 };
+function gainBand(gain: number) {
+  if (gain >= 70) return "TRAP 70%+";
+  if (gain >= 55) return "LATE CAUTION";
+  if (gain >= 25) return "STRUCTURED GAINER";
+  if (gain >= 8) return "EARLY WATCH";
+  if (gain >= 1) return "FRESH IGNITION";
+  return "FLAT / BASE";
 }
 
-async function safeJson(url: string) {
-  try {
-    const res = await fetch(url, { cache: "no-store" });
-    const json = await res.json().catch(() => null);
+function classifyFloat(floatProxy: number) {
+  if (!floatProxy) {
+    return {
+      floatStatus: "UNKNOWN",
+      floatScore: 0
+    };
+  }
 
-    if (!res.ok) {
+  if (floatProxy <= 10000000) {
+    return {
+      floatStatus: "MICRO FLOAT",
+      floatScore: 18
+    };
+  }
+
+  if (floatProxy <= 30000000) {
+    return {
+      floatStatus: "LOW FLOAT",
+      floatScore: 12
+    };
+  }
+
+  if (floatProxy <= 100000000) {
+    return {
+      floatStatus: "MID FLOAT",
+      floatScore: 5
+    };
+  }
+
+  return {
+    floatStatus: "HEAVY FLOAT",
+    floatScore: -5
+  };
+}
+
+function buildSpreadStatus(price: number, bid: number, ask: number, volume: number) {
+  if (bid > 0 && ask > 0 && ask >= bid) {
+    const mid = (bid + ask) / 2;
+    const spreadPct = mid > 0 ? ((ask - bid) / mid) * 100 : 0;
+
+    if (spreadPct <= 0.35) {
       return {
-        __error: true,
-        status: res.status,
-        message: json?.error || json?.message || `HTTP ${res.status}`
+        spreadStatus: "PASS",
+        spreadPct
       };
     }
 
-    return json;
-  } catch (error) {
+    if (spreadPct <= 1.25) {
+      return {
+        spreadStatus: "CAUTION",
+        spreadPct
+      };
+    }
+
     return {
-      __error: true,
-      status: 0,
-      message: error instanceof Error ? error.message : String(error)
-    };
-  }
-}
-
-function getSnapshotTicker(snapshotJson: AnyObj, fallbackTicker: string) {
-  const direct = snapshotJson?.ticker;
-
-  if (direct?.ticker) return direct;
-
-  if (direct && !direct?.ticker) {
-    return {
-      ...direct,
-      ticker: fallbackTicker
+      spreadStatus: "FAIL",
+      spreadPct
     };
   }
 
-  return { ticker: fallbackTicker };
-}
-
-function buildCoreFromSnapshot(s: AnyObj) {
-  const ticker = String(s?.ticker || "").toUpperCase();
-
-  const price = num(
-    s?.price ??
-      s?.day?.c ??
-      s?.min?.c ??
-      s?.lastTrade?.p ??
-      ((s?.prevDay?.c ?? 0) + (s?.todaysChange ?? 0))
-  );
-
-  const volume = num(s?.volume ?? s?.day?.v ?? s?.min?.v ?? s?.prevDay?.v ?? 0);
-  const gain = num(s?.gain ?? s?.todaysChangePerc ?? 0);
-  const change = num(s?.change ?? s?.todaysChange ?? 0);
-
-  const open = num(s?.open ?? s?.day?.o ?? s?.min?.o ?? price);
-  const high = num(s?.high ?? s?.day?.h ?? s?.min?.h ?? price);
-  const low = num(s?.low ?? s?.day?.l ?? s?.min?.l ?? price);
-
-  const bid = num(s?.lastQuote?.p ?? s?.lastQuote?.bp ?? s?.bid ?? 0);
-  const ask = num(s?.lastQuote?.P ?? s?.lastQuote?.ap ?? s?.ask ?? 0);
-
-  return {
-    ticker,
-    price,
-    volume,
-    gain,
-    change,
-    open,
-    high,
-    low,
-    bid,
-    ask
-  };
-}
-
-function buildCoreWithPrevFallback(
-  core: ReturnType<typeof buildCoreFromSnapshot>,
-  prevJson: AnyObj
-) {
-  const prev = Array.isArray(prevJson?.results) ? prevJson.results[0] : null;
-
-  if (!prev) return core;
-
-  const prevClose = num(prev?.c);
-  const prevOpen = num(prev?.o);
-  const prevHigh = num(prev?.h);
-  const prevLow = num(prev?.l);
-  const prevVolume = num(prev?.v);
-
-  const price = core.price || prevClose;
-  const open = core.open || prevOpen || price;
-  const high = core.high || prevHigh || price;
-  const low = core.low || prevLow || price;
-  const volume = core.volume || prevVolume;
-
-  return {
-    ...core,
-    price,
-    open,
-    high,
-    low,
-    volume,
-    change: core.change,
-    gain: core.gain
-  };
-}
-
-function estimateVolumeSurge(volume: number) {
-  if (volume >= 10000000) return 5;
-  if (volume >= 5000000) return 3;
-  if (volume >= 1000000) return 1.5;
-  if (volume >= 100000) return 1;
-  return 0;
-}
-
-function buildSpreadStatus(price: number, volume: number, bid: number, ask: number) {
-  const spread = bid > 0 && ask > bid ? ask - bid : 0;
-  const spreadPct = spread > 0 && price > 0 ? (spread / price) * 100 : 0;
-
-  let spreadStatus = "CHECK";
-
-  if (spread > 0) {
-    if (spreadPct <= 0.35) spreadStatus = "PASS";
-    else if (spreadPct <= 1.25) spreadStatus = "CAUTION";
-    else spreadStatus = "FAIL";
-  } else {
-    if (volume >= 5000000) spreadStatus = "PASS";
-    else if (volume >= 1000000) spreadStatus = "CAUTION";
-    else spreadStatus = "FAIL";
-  }
-
-  return { spread, spreadPct, spreadStatus };
-}
-
-function buildFloat(details: AnyObj) {
-  const sharesOutstanding = num(
-    details?.weighted_shares_outstanding ??
-      details?.share_class_shares_outstanding ??
-      0
-  );
-
-  const floatShares = num(
-    details?.float_shares ??
-      details?.shares_float ??
-      details?.float ??
-      0
-  );
-
-  const floatProxy = floatShares || sharesOutstanding;
-
-  const floatStatus =
-    !floatProxy
-      ? "UNKNOWN"
-      : floatProxy <= 10000000
-      ? "MICRO FLOAT"
-      : floatProxy <= 50000000
-      ? "LOW FLOAT"
-      : floatProxy <= 150000000
-      ? "MID FLOAT"
-      : "HEAVY FLOAT";
-
-  const floatScore =
-    !floatProxy
-      ? 0
-      : floatProxy <= 10000000
-      ? 12
-      : floatProxy <= 50000000
-      ? 8
-      : floatProxy <= 150000000
-      ? 2
-      : -8;
-
-  return {
-    floatShares,
-    sharesOutstanding,
-    floatProxy,
-    floatStatus,
-    floatScore
-  };
-}
-
-function buildGainProfile(gain: number) {
-  if (gain > 70) {
+  if (volume >= 1000000 && price >= 0.2) {
     return {
-      gainBand: "EXTENDED / TRAP RISK",
-      gainBandScore: -35,
-      overExtensionPenalty: -35,
-      hardCap: 49
+      spreadStatus: "LIKELY TIGHT",
+      spreadPct: 0
     };
   }
 
-  if (gain > 55) {
+  if (volume >= 100000) {
     return {
-      gainBand: "LATE / CAUTION",
-      gainBandScore: -10,
-      overExtensionPenalty: -15,
-      hardCap: 69
-    };
-  }
-
-  if (gain > 35) {
-    return {
-      gainBand: "STRUCTURED GAINER",
-      gainBandScore: 12,
-      overExtensionPenalty: -5,
-      hardCap: 100
-    };
-  }
-
-  if (gain >= 5) {
-    return {
-      gainBand: "FRESH IGNITION",
-      gainBandScore: 25,
-      overExtensionPenalty: 0,
-      hardCap: 100
-    };
-  }
-
-  if (gain > 0) {
-    return {
-      gainBand: "EARLY WATCH",
-      gainBandScore: 10,
-      overExtensionPenalty: 0,
-      hardCap: 100
+      spreadStatus: "CHECK",
+      spreadPct: 0
     };
   }
 
   return {
-    gainBand: "NO LIVE GAIN / BACKUP",
-    gainBandScore: 0,
-    overExtensionPenalty: 0,
-    hardCap: 100
+    spreadStatus: "FAIL",
+    spreadPct: 0
   };
 }
 
-function buildStructureLocation(
-  price: number,
-  support: number,
-  resistance: number,
-  volumeSurge: number,
-  speed: number
-) {
+function buildStructureLocation(price: number, support: number, resistance: number) {
   const range = resistance - support;
 
   if (!price || !support || !resistance || range <= 0) {
@@ -370,202 +163,482 @@ function buildStructureLocation(
 
   if (position < 0) {
     structureLocation = "BELOW SUPPORT";
-    structureLocationScore = -30;
+    structureLocationScore = -40;
     riskLocation = "SUPPORT BROKEN";
   } else if (position <= 0.25) {
     structureLocation = "NEAR SUPPORT";
-    structureLocationScore = 18;
+    structureLocationScore = 24;
     riskLocation = "BEST RISK LOCATION";
   } else if (position <= 0.6) {
     structureLocation = "HEALTHY MIDDLE";
-    structureLocationScore = 12;
+    structureLocationScore = 17;
     riskLocation = "CONTROLLED RISK";
   } else if (position <= 0.9) {
     structureLocation = "NEAR RESISTANCE";
-    structureLocationScore = 4;
+    structureLocationScore = -6;
     riskLocation = "WAIT FOR CONFIRMATION";
   } else if (position <= 1.1) {
     structureLocation = "BREAKOUT ZONE";
-    structureLocationScore = volumeSurge >= 1.5 || speed >= 65 ? 16 : 6;
+    structureLocationScore = -12;
     riskLocation = "PROOF REQUIRED";
   } else if (position <= 1.3) {
     structureLocation = "EXTENDED ABOVE RESISTANCE";
-    structureLocationScore = -12;
+    structureLocationScore = -28;
     riskLocation = "CHASE RISK";
   } else {
     structureLocation = "OVEREXTENDED";
-    structureLocationScore = -25;
+    structureLocationScore = -42;
     riskLocation = "DO NOT CHASE";
   }
 
   return {
-    structurePosition: Number(position.toFixed(3)),
+    structurePosition: round(position, 3),
     structureLocation,
     structureLocationScore,
     riskLocation
   };
 }
 
-function buildRunnerScores(args: {
-  gain: number;
+function buildEntries(support: number, resistance: number, price: number, structureLocation: string) {
+  const range = Math.max(0, resistance - support);
+
+  const supportEntry = support > 0 ? support * 1.01 : price;
+  const middleEntry = range > 0 ? support + range * 0.5 : price;
+  const breakoutProofEntry = resistance > 0 ? resistance * 1.025 : price * 1.025;
+
+  let bestEntry = price;
+  let entryType = "WAIT";
+  let waitFor = "WAIT FOR CLEAN STRUCTURE";
+
+  if (structureLocation === "NEAR SUPPORT") {
+    bestEntry = supportEntry;
+    entryType = "SUPPORT ENTRY";
+    waitFor = "WAIT FOR SUPPORT HOLD + SPEED / VOLUME / SPREAD";
+  } else if (structureLocation === "HEALTHY MIDDLE") {
+    bestEntry = middleEntry;
+    entryType = "HEALTHY MIDDLE ENTRY";
+    waitFor = "WAIT FOR BUYERS HOLDING MIDDLE";
+  } else if (
+    structureLocation === "NEAR RESISTANCE" ||
+    structureLocation === "BREAKOUT ZONE"
+  ) {
+    bestEntry = breakoutProofEntry;
+    entryType = "BREAKOUT PROOF ENTRY";
+    waitFor = "WAIT ABOVE RESISTANCE FOR PROOF";
+  } else if (
+    structureLocation === "BELOW SUPPORT" ||
+    structureLocation === "EXTENDED ABOVE RESISTANCE" ||
+    structureLocation === "OVEREXTENDED"
+  ) {
+    bestEntry = breakoutProofEntry;
+    entryType = "NO TOUCH";
+    waitFor = "NO CLEAN ENTRY";
+  }
+
+  return {
+    supportEntry: round(supportEntry),
+    middleEntry: round(middleEntry),
+    breakoutProofEntry: round(breakoutProofEntry),
+    bestEntry: round(bestEntry),
+    entryType,
+    waitFor
+  };
+}
+
+function buildRunnerMath(args: {
+  ticker: string;
   price: number;
+  gain: number;
   volume: number;
   volumeSurge: number;
   speed: number;
   spreadStatus: string;
-  rr: number;
-  floatScore: number;
-  newsScore: number;
+  structureLocation: string;
   structureLocationScore: number;
+  rr: number;
+  newsScore: number;
+  floatScore: number;
 }) {
-  const profile = buildGainProfile(args.gain);
+  const junk = isJunkSymbol(args.ticker);
 
-  const priceScore =
-    args.price > 0 && args.price <= 1 ? 15 :
-    args.price <= 5 ? 12 :
-    args.price <= 10 ? 8 :
-    args.price <= 20 ? 3 :
-    -8;
+  const speedOk = args.speed >= 50;
+  const volumeOk = args.volume >= 100000 && (args.volumeSurge >= 1 || args.volume >= 1000000);
+  const spreadOk = args.spreadStatus === "PASS" || args.spreadStatus === "LIKELY TIGHT";
+  const spreadCaution = args.spreadStatus === "CAUTION" || args.spreadStatus === "CHECK";
 
-  const volumeScore =
-    args.volume >= 5000000 ? 18 :
-    args.volume >= 1000000 ? 12 :
-    args.volume >= 100000 ? 5 :
-    -12;
+  const signalAlignment =
+    (speedOk ? 1 : 0) +
+    (volumeOk ? 1 : 0) +
+    (spreadOk || spreadCaution ? 1 : 0);
 
-  const speedScore = Math.min(18, Math.max(0, args.speed) / 5);
-  const surgeScore = Math.min(20, args.volumeSurge * 6);
+  const supportEntryZone =
+    args.structureLocation === "NEAR SUPPORT" ||
+    args.structureLocation === "HEALTHY MIDDLE";
+
+  const resistanceProofZone =
+    args.structureLocation === "NEAR RESISTANCE" ||
+    args.structureLocation === "BREAKOUT ZONE";
+
+  const brokenOrExtended =
+    args.structureLocation === "BELOW SUPPORT" ||
+    args.structureLocation === "EXTENDED ABOVE RESISTANCE" ||
+    args.structureLocation === "OVEREXTENDED";
+
+  const speedScore = clamp(args.speed * 0.23, 0, 23);
+  const volumeScore = clamp(Math.log10(args.volume + 1) * 3.1, 0, 23);
+  const surgeScore = clamp(args.volumeSurge * 7, 0, 18);
+  const gainScore = clamp(args.gain * 0.46, 0, 24);
+  const rrScore = args.rr >= 2 ? 10 : args.rr >= 1.3 ? 5 : 0;
 
   const spreadScore =
-    args.spreadStatus === "PASS" ? 10 :
-    args.spreadStatus === "CAUTION" ? 2 :
-    -22;
+    spreadOk ? 12 :
+    spreadCaution ? 3 :
+    -24;
 
-  const rrScore =
-    args.rr >= 2 ? 10 :
-    args.rr >= 1.25 ? 6 :
-    args.rr >= 0.75 ? 0 :
-    -8;
+  let bottomLocationScore = 0;
 
-  const catalystScore = clamp(args.newsScore, -20, 12);
-  const locationScore = clamp(args.structureLocationScore, -30, 18);
+  if (args.structureLocation === "NEAR SUPPORT") bottomLocationScore = 28;
+  else if (args.structureLocation === "HEALTHY MIDDLE") bottomLocationScore = 20;
+  else if (args.structureLocation === "NEAR RESISTANCE") bottomLocationScore = -22;
+  else if (args.structureLocation === "BREAKOUT ZONE") bottomLocationScore = -32;
+  else if (args.structureLocation === "EXTENDED ABOVE RESISTANCE") bottomLocationScore = -45;
+  else if (args.structureLocation === "OVEREXTENDED") bottomLocationScore = -55;
+  else if (args.structureLocation === "BELOW SUPPORT") bottomLocationScore = -60;
 
-  let bottomIgnitionScore = 0;
-  bottomIgnitionScore += profile.gainBand === "FRESH IGNITION" ? 25 : 0;
-  bottomIgnitionScore += profile.gainBand === "EARLY WATCH" ? 12 : 0;
-  bottomIgnitionScore += profile.gainBand === "STRUCTURED GAINER" ? 6 : 0;
-  bottomIgnitionScore += volumeScore;
-  bottomIgnitionScore += surgeScore;
-  bottomIgnitionScore += speedScore;
-  bottomIgnitionScore += spreadScore;
-  bottomIgnitionScore += priceScore;
-  bottomIgnitionScore += args.floatScore;
-  bottomIgnitionScore += catalystScore;
-  bottomIgnitionScore += rrScore;
-  bottomIgnitionScore += locationScore;
-  bottomIgnitionScore += profile.overExtensionPenalty;
+  let gainerLocationScore = 0;
 
-  let gainerStructureScore = 0;
-  gainerStructureScore += profile.gainBand === "STRUCTURED GAINER" ? 24 : 0;
-  gainerStructureScore += profile.gainBand === "FRESH IGNITION" ? 18 : 0;
-  gainerStructureScore += profile.gainBand === "LATE / CAUTION" ? 4 : 0;
-  gainerStructureScore += volumeScore;
-  gainerStructureScore += Math.min(16, Math.max(0, args.speed) / 6);
-  gainerStructureScore += spreadScore;
-  gainerStructureScore += rrScore;
-  gainerStructureScore += catalystScore;
-  gainerStructureScore += args.floatScore;
-  gainerStructureScore += locationScore;
-  gainerStructureScore += profile.overExtensionPenalty;
+  if (args.structureLocation === "NEAR SUPPORT") gainerLocationScore = 12;
+  else if (args.structureLocation === "HEALTHY MIDDLE") gainerLocationScore = 15;
+  else if (args.structureLocation === "NEAR RESISTANCE") gainerLocationScore = 4;
+  else if (args.structureLocation === "BREAKOUT ZONE") gainerLocationScore = 7;
+  else if (args.structureLocation === "EXTENDED ABOVE RESISTANCE") gainerLocationScore = -24;
+  else if (args.structureLocation === "OVEREXTENDED") gainerLocationScore = -40;
+  else if (args.structureLocation === "BELOW SUPPORT") gainerLocationScore = -45;
 
-  bottomIgnitionScore = clamp(Math.round(bottomIgnitionScore), 0, profile.hardCap);
-  gainerStructureScore = clamp(Math.round(gainerStructureScore), 0, profile.hardCap);
+  const latePenalty =
+    args.gain >= 70 ? -70 :
+    args.gain >= 55 ? -32 :
+    args.gain >= 35 ? -14 :
+    0;
 
-  const runnerScore = Math.max(bottomIgnitionScore, gainerStructureScore);
+  const junkPenalty = junk ? -45 : 0;
+  const lowVolumePenalty = args.volume < 100000 ? -28 : 0;
+  const noSpreadPenalty = args.spreadStatus === "FAIL" ? -35 : 0;
+
+  let bottomIgnitionScore = clamp(
+    Math.round(
+      8 +
+        speedScore +
+        volumeScore +
+        surgeScore +
+        gainScore +
+        spreadScore +
+        bottomLocationScore +
+        args.floatScore * 0.4 +
+        latePenalty +
+        junkPenalty +
+        lowVolumePenalty +
+        noSpreadPenalty
+    ),
+    0,
+    100
+  );
+
+  if (!supportEntryZone) {
+    bottomIgnitionScore = Math.min(bottomIgnitionScore, resistanceProofZone ? 58 : 42);
+  }
+
+  if (brokenOrExtended || args.gain >= 70 || junk || args.spreadStatus === "FAIL") {
+    bottomIgnitionScore = Math.min(bottomIgnitionScore, 39);
+  }
+
+  let gainerStructureScore = clamp(
+    Math.round(
+      10 +
+        speedScore * 0.75 +
+        volumeScore +
+        surgeScore * 0.85 +
+        gainScore * 1.15 +
+        spreadScore +
+        gainerLocationScore +
+        rrScore +
+        args.newsScore * 0.35 +
+        args.floatScore * 0.25 +
+        junkPenalty +
+        lowVolumePenalty +
+        noSpreadPenalty
+    ),
+    0,
+    100
+  );
+
+  if (args.gain >= 70 || brokenOrExtended || junk || args.spreadStatus === "FAIL") {
+    gainerStructureScore = Math.min(gainerStructureScore, 49);
+  }
+
+  const runnerScore = clamp(
+    Math.round(Math.max(bottomIgnitionScore, gainerStructureScore)),
+    0,
+    100
+  );
+
+  let proofScore = clamp(
+    Math.round(
+      runnerScore * 0.58 +
+        gainerStructureScore * 0.18 +
+        bottomIgnitionScore * 0.14 +
+        signalAlignment * 5 +
+        rrScore +
+        args.newsScore * 0.2
+    ),
+    0,
+    100
+  );
+
+  if (supportEntryZone && signalAlignment >= 2 && spreadOk) {
+    proofScore += 8;
+  }
+
+  if (resistanceProofZone) {
+    proofScore = Math.min(proofScore, 79);
+  }
+
+  if (brokenOrExtended || args.gain >= 70 || junk || args.spreadStatus === "FAIL") {
+    proofScore = Math.min(proofScore, 49);
+  }
+
+  proofScore = clamp(Math.round(proofScore), 0, 100);
 
   const runnerLane =
-    args.gain > 70
-      ? "EXTENDED / TRAP RISK"
-      : bottomIgnitionScore >= gainerStructureScore
+    bottomIgnitionScore >= gainerStructureScore + 8
       ? "BOTTOM / MIDDLE IGNITION"
-      : "GAINER STRUCTURE";
+      : gainerStructureScore >= bottomIgnitionScore + 8
+      ? "ALREADY-UP STRUCTURE"
+      : "BALANCED STRUCTURE";
 
   return {
-    ...profile,
     bottomIgnitionScore,
     gainerStructureScore,
     runnerScore,
-    runnerLane
+    proofScore,
+    runnerLane,
+    speedOk,
+    volumeOk,
+    spreadOk,
+    signalAlignment,
+    supportEntryZone,
+    resistanceProofZone,
+    brokenOrExtended
   };
 }
 
-async function enrichTicker(s: AnyObj, apiKey: string, marketMode: string) {
-  let core = buildCoreFromSnapshot(s);
-  const ticker = core.ticker;
+function buildCatalystGrade(news: any[]) {
+  const title = String(news?.[0]?.title || "").toLowerCase();
 
-  const newsUrl = `https://api.polygon.io/v2/reference/news?ticker=${encodeURIComponent(
-    ticker
-  )}&limit=3&order=desc&sort=published_utc&apiKey=${apiKey}`;
-
-  const detailsUrl = `https://api.polygon.io/v3/reference/tickers/${encodeURIComponent(
-    ticker
-  )}?apiKey=${apiKey}`;
-
-  const prevUrl = `https://api.polygon.io/v2/aggs/ticker/${encodeURIComponent(
-    ticker
-  )}/prev?adjusted=true&apiKey=${apiKey}`;
-
-  const needsPrevFallback =
-    !core.price || !core.high || !core.low || !core.volume || marketMode === "BACKUP_CLOSED_MARKET";
-
-  const [newsJson, detailsJson, prevJson] = await Promise.all([
-    safeJson(newsUrl),
-    safeJson(detailsUrl),
-    needsPrevFallback ? safeJson(prevUrl) : Promise.resolve(null)
-  ]);
-
-  if (needsPrevFallback && prevJson && !prevJson.__error) {
-    core = buildCoreWithPrevFallback(core, prevJson);
+  if (!title) {
+    return {
+      catalyst: "NO FRESH NEWS FOUND",
+      catalystGrade: "NONE",
+      newsScore: 0
+    };
   }
 
-  const newsRaw = Array.isArray(newsJson?.results) ? newsJson.results : [];
-  const details = detailsJson?.results || {};
+  const strongWords = [
+    "fda",
+    "approval",
+    "contract",
+    "earnings",
+    "guidance",
+    "merger",
+    "acquisition",
+    "partnership",
+    "phase",
+    "patent",
+    "order",
+    "launch",
+    "revenue",
+    "upgrade"
+  ];
 
-  const headline = String(newsRaw?.[0]?.title || "");
-  const description = String(newsRaw?.[0]?.description || "");
-  const newsClass = classifyNews(headline, description);
+  const riskWords = [
+    "offering",
+    "atm",
+    "reverse split",
+    "delist",
+    "bankruptcy",
+    "investigation",
+    "nasdaq notice"
+  ];
 
-  const catalyst = headline || "NO FRESH NEWS FOUND";
-  const catalystGrade = newsClass.grade;
-  const newsScore = newsClass.score;
+  const strong = strongWords.some((w) => title.includes(w));
+  const risk = riskWords.some((w) => title.includes(w));
 
-  const floatData = buildFloat(details);
+  if (risk) {
+    return {
+      catalyst: news[0].title,
+      catalystGrade: "RISK",
+      newsScore: -8
+    };
+  }
 
-  const { spread, spreadPct, spreadStatus } = buildSpreadStatus(
-    core.price,
-    core.volume,
-    core.bid,
-    core.ask
+  if (strong) {
+    return {
+      catalyst: news[0].title,
+      catalystGrade: "A",
+      newsScore: 14
+    };
+  }
+
+  return {
+    catalyst: news[0].title,
+    catalystGrade: "C",
+    newsScore: 5
+  };
+}
+
+async function polygonFetch(path: string, apiKey: string) {
+  if (!apiKey) return null;
+
+  const joiner = path.includes("?") ? "&" : "?";
+  const url = `https://api.polygon.io${path}${joiner}apiKey=${apiKey}`;
+
+  const res = await fetch(url, {
+    cache: "no-store",
+    headers: {
+      accept: "application/json"
+    }
+  });
+
+  if (!res.ok) return null;
+
+  return res.json();
+}
+
+async function fetchNews(ticker: string, apiKey: string) {
+  try {
+    const json = await polygonFetch(
+      `/v2/reference/news?ticker=${encodeURIComponent(ticker)}&limit=3&order=desc&sort=published_utc`,
+      apiKey
+    );
+
+    return Array.isArray(json?.results) ? json.results : [];
+  } catch {
+    return [];
+  }
+}
+
+async function fetchDetails(ticker: string, apiKey: string) {
+  try {
+    const json = await polygonFetch(
+      `/v3/reference/tickers/${encodeURIComponent(ticker)}`,
+      apiKey
+    );
+
+    return json?.results || null;
+  } catch {
+    return null;
+  }
+}
+
+function rawTickerSymbol(raw: any) {
+  return String(raw?.ticker || raw?.T || raw?.symbol || "").toUpperCase();
+}
+
+function normalizeSnapshot(raw: any) {
+  const ticker = rawTickerSymbol(raw);
+
+  const prevClose = num(raw?.prevDay?.c);
+  const lastTrade = num(raw?.lastTrade?.p);
+  const dayClose = num(raw?.day?.c);
+  const minClose = num(raw?.min?.c);
+
+  const price =
+    lastTrade ||
+    dayClose ||
+    minClose ||
+    (prevClose ? prevClose + num(raw?.todaysChange) : 0);
+
+  let open = num(raw?.day?.o || raw?.min?.o || price);
+  let high = num(raw?.day?.h || raw?.min?.h || price * 1.04);
+  let low = num(raw?.day?.l || raw?.min?.l || price * 0.96);
+
+  if (price && (!high || !low || high <= low)) {
+    high = price * 1.04;
+    low = price * 0.96;
+  }
+
+  const gain =
+    num(raw?.todaysChangePerc) ||
+    (prevClose > 0 && price > 0 ? ((price - prevClose) / prevClose) * 100 : 0);
+
+  const change =
+    num(raw?.todaysChange) ||
+    (prevClose > 0 && price > 0 ? price - prevClose : 0);
+
+  const volume = num(raw?.day?.v || raw?.min?.av || raw?.min?.v || raw?.volume);
+
+  const bid = num(raw?.lastQuote?.p || raw?.bid);
+  const ask = num(raw?.lastQuote?.P || raw?.ask);
+
+  return {
+    ticker,
+    price,
+    gain,
+    change,
+    volume,
+    open,
+    high,
+    low,
+    bid,
+    ask
+  };
+}
+
+function makeBackupSnapshot(ticker: string, index: number) {
+  const base = [10, 3.92, 7.12, 16.5, 2.18, 0.84, 1.22, 4.4, 8.75, 0.63][index % 10];
+  const price = base;
+  const support = price * (0.94 + (index % 3) * 0.015);
+  const resistance = price * (1.02 + (index % 4) * 0.012);
+
+  return {
+    ticker,
+    price,
+    gain: index < 3 ? 0 : 0.5 + index * 0.4,
+    change: 0,
+    volume: 45000000 - index * 1800000,
+    open: price * 0.98,
+    high: resistance,
+    low: support,
+    bid: price * 0.999,
+    ask: price * 1.001,
+    backup: true
+  };
+}
+
+async function enrichTicker(raw: any, apiKey: string, marketMode: string, index: number) {
+  const base = normalizeSnapshot(raw);
+
+  if (!base.ticker || !base.price) return null;
+
+  const support = round(base.low || base.price * 0.96);
+  const resistance = round(base.high || base.price * 1.04);
+
+  const spread = buildSpreadStatus(base.price, base.bid, base.ask, base.volume);
+  const structure = buildStructureLocation(base.price, support, resistance);
+  const entries = buildEntries(support, resistance, base.price, structure.structureLocation);
+
+  const volumeSurge = clamp(base.volume / 500000, 0, 20);
+
+  const speed = clamp(
+    Math.round(
+      base.gain * 0.65 +
+        volumeSurge * 9 +
+        (spread.spreadStatus === "PASS" || spread.spreadStatus === "LIKELY TIGHT" ? 12 : 0) +
+        (structure.structureLocation === "NEAR SUPPORT" || structure.structureLocation === "HEALTHY MIDDLE" ? 8 : 0)
+    ),
+    0,
+    100
   );
-
-  const support = core.low > 0 ? core.low : core.price > 0 ? core.price * 0.94 : 0;
-  const resistance = core.high > 0 ? core.high : core.price > 0 ? core.price * 1.08 : 0;
-
-  const entryAggressive = resistance * 0.985;
-  const entryConfirmation = resistance * 1.01;
-  const entryProof = resistance * 1.045;
-
-  const stop = support;
-  const target1 = resistance * 1.08;
-  const target2 = resistance * 1.18;
-  const target3 = resistance * 1.35;
-
-  const risk = Math.max(0, entryProof - stop);
-  const reward = Math.max(0, target1 - entryProof);
-  const rr = risk > 0 ? reward / risk : 0;
-
-  const volumeSurge = estimateVolumeSurge(core.volume);
-  const speed = clamp(Math.round(core.gain * 0.45 + volumeSurge * 16), 0, 100);
 
   const speedLabel =
     speed >= 85 ? "VIOLENT" :
@@ -573,247 +646,257 @@ async function enrichTicker(s: AnyObj, apiKey: string, marketMode: string) {
     speed >= 40 ? "ACTIVE" :
     "SLOW";
 
-  const location = buildStructureLocation(
-    core.price,
-    support,
-    resistance,
-    volumeSurge,
-    speed
+  const details = apiKey ? await fetchDetails(base.ticker, apiKey) : null;
+
+  const floatProxy = num(
+    details?.share_class_shares_outstanding ||
+      details?.weighted_shares_outstanding ||
+      details?.market_cap / base.price
   );
 
-  const junk = isJunkTicker(ticker);
+  const floatData = classifyFloat(floatProxy);
 
-  const runner = buildRunnerScores({
-    gain: core.gain,
-    price: core.price,
-    volume: core.volume,
+  const news = apiKey ? await fetchNews(base.ticker, apiKey) : [];
+  const catalyst = buildCatalystGrade(news);
+
+  const stop = support;
+  const target1 = resistance * 1.08;
+  const target2 = resistance * 1.18;
+  const target3 = resistance * 1.35;
+
+  const risk = Math.max(0, entries.breakoutProofEntry - stop);
+  const reward = Math.max(0, target1 - entries.breakoutProofEntry);
+  const rr = risk > 0 ? reward / risk : 0;
+
+  const math = buildRunnerMath({
+    ticker: base.ticker,
+    price: base.price,
+    gain: base.gain,
+    volume: base.volume,
     volumeSurge,
     speed,
-    spreadStatus,
+    spreadStatus: spread.spreadStatus,
+    structureLocation: structure.structureLocation,
+    structureLocationScore: structure.structureLocationScore,
     rr,
-    floatScore: floatData.floatScore,
-    newsScore,
-    structureLocationScore: location.structureLocationScore
+    newsScore: catalyst.newsScore,
+    floatScore: floatData.floatScore
   });
 
-  let ignitionScore = runner.bottomIgnitionScore;
-  let proofScore = runner.runnerScore;
+  const junk = isJunkSymbol(base.ticker);
 
-  if (spreadStatus === "FAIL") proofScore -= 10;
-  if (core.volume < 100000) proofScore -= 15;
-
-  if (junk) {
-    ignitionScore -= 35;
-    proofScore -= 35;
-  }
-
-  if (core.gain > 70) proofScore = Math.min(proofScore, 49);
-  if (core.gain > 55 && core.gain <= 70) proofScore = Math.min(proofScore, 69);
-
-  ignitionScore = clamp(Math.round(ignitionScore), 0, 100);
-  proofScore = clamp(Math.round(proofScore), 0, 100);
-
-  const supportEntryZone =
-  location.structureLocation === "NEAR SUPPORT" ||
-  location.structureLocation === "HEALTHY MIDDLE";
-
-const resistanceProofZone =
-  location.structureLocation === "NEAR RESISTANCE" ||
-  location.structureLocation === "BREAKOUT ZONE";
-
-const verdict =
-  marketMode === "BACKUP_CLOSED_MARKET" ? "NO" :
-  core.gain > 70 ? "NO" :
-  proofScore >= 80 && supportEntryZone ? "YES" :
-  proofScore >= 60 ? "WAIT" :
-  resistanceProofZone && proofScore >= 80 ? "WAIT" :
-  "NO";
-
+  let verdict = "NO";
   let rejection = "";
 
-  if (junk) rejection = "JUNK SYMBOL";
-  else if (core.gain > 70) rejection = "EXTENDED 70%+";
-  else if (core.gain > 55) rejection = "LATE GAINER RISK";
-  else if (core.volume < 100000) rejection = "LOW VOLUME";
-  else if (spreadStatus === "FAIL") rejection = "SPREAD RISK";
-  else if (!supportEntryZone && proofScore >= 80) rejection = "NOT SUPPORT ENTRY";
-  else if (proofScore < 60) rejection = "NO PROOF";
+  if (junk) {
+    verdict = "NO";
+    rejection = "JUNK SYMBOL";
+  } else if (base.gain >= 70) {
+    verdict = "NO";
+    rejection = "EXTENDED 70%+";
+  } else if (math.brokenOrExtended) {
+    verdict = "NO";
+    rejection = structure.riskLocation;
+  } else if (base.volume < 100000) {
+    verdict = "NO";
+    rejection = "LOW VOLUME";
+  } else if (spread.spreadStatus === "FAIL") {
+    verdict = "NO";
+    rejection = "SPREAD RISK";
+  } else if (
+    math.supportEntryZone &&
+    math.proofScore >= 80 &&
+    math.signalAlignment >= 2 &&
+    math.spreadOk
+  ) {
+    verdict = "YES";
+  } else if (math.resistanceProofZone && math.proofScore >= 60) {
+    verdict = "WAIT";
+    rejection = "NOT SUPPORT ENTRY";
+  } else if (math.proofScore >= 60) {
+    verdict = "WAIT";
+  } else {
+    verdict = "NO";
+    rejection = "NO PROOF";
+  }
 
   const permissionText =
-    marketMode === "BACKUP_CLOSED_MARKET"
-      ? `BACKUP MODE — ${runner.runnerLane}`
-      : core.gain > 70
-      ? "DENIED — EXTENDED 70%+ / CHASE RISK"
-      : verdict === "YES"
-      ? `${runner.runnerLane} — PERMISSION POSSIBLE IF STRUCTURE HOLDS`
+    verdict === "YES"
+      ? "YES — SUPPORT/MIDDLE ENTRY WITH CONFIRMATION"
       : verdict === "WAIT"
-      ? `${runner.runnerLane} — WAIT FOR PROOF`
-      : "DENIED — NO CLEAN PERMISSION";
+      ? entries.waitFor
+      : rejection || "NO CLEAN PERMISSION";
+
+  const actionRank =
+    verdict === "YES" ? 3 :
+    verdict === "WAIT" ? 2 :
+    1;
 
   return {
-    ...s,
-
-    ticker,
-    price: core.price,
-    gain: core.gain,
-    change: core.change,
-    volume: core.volume,
-    open: core.open,
-    high: core.high,
-    low: core.low,
-
-    day: {
-      c: core.price,
-      v: core.volume,
-      o: core.open,
-      h: core.high,
-      l: core.low
-    },
-
-    prevDay: {
-      c: num(s?.prevDay?.c ?? 0),
-      v: num(s?.prevDay?.v ?? 0)
-    },
-
-    bid: core.bid,
-    ask: core.ask,
-    spread,
-    spreadPct,
-    spreadStatus,
+    ticker: base.ticker,
+    price: round(base.price),
+    gain: round(base.gain, 2),
+    change: round(base.change),
+    volume: Math.round(base.volume),
+    open: round(base.open),
+    high: round(base.high),
+    low: round(base.low),
 
     support,
     resistance,
-    entryAggressive,
-    entryConfirmation,
-    entryProof,
-    entry: core.price,
-    stop,
-    target: target1,
-    target1,
-    target2,
-    target3,
-    risk,
-    reward,
-    rr,
+
+    entryAggressive: entries.supportEntry,
+    entryConfirmation: entries.middleEntry,
+    entryProof: entries.breakoutProofEntry,
+
+    supportEntry: entries.supportEntry,
+    middleEntry: entries.middleEntry,
+    breakoutProofEntry: entries.breakoutProofEntry,
+    bestEntry: entries.bestEntry,
+    entryType: entries.entryType,
+    waitFor: entries.waitFor,
+
+    stop: round(stop),
+    target1: round(target1),
+    target2: round(target2),
+    target3: round(target3),
+    risk: round(risk),
+    reward: round(reward),
+    rr: round(rr, 2),
 
     speed,
     speedLabel,
-    volumeSurge,
+    volumeSurge: round(volumeSurge, 2),
 
-    ...floatData,
+    spreadStatus: spread.spreadStatus,
+    spreadPct: round(spread.spreadPct, 3),
+    bid: round(base.bid),
+    ask: round(base.ask),
 
-    catalyst,
-    catalystGrade,
-    newsScore,
-    news: newsRaw.map((n: any) => ({
-      title: n?.title || "",
-      publisher: n?.publisher?.name || "",
-      published_utc: n?.published_utc || "",
-      article_url: n?.article_url || "",
-      description: n?.description || ""
-    })),
+    floatShares: num(details?.share_class_shares_outstanding),
+    sharesOutstanding: num(details?.weighted_shares_outstanding),
+    floatProxy: Math.round(floatProxy),
+    floatStatus: floatData.floatStatus,
+    floatScore: floatData.floatScore,
 
-    gainBand: runner.gainBand,
-    runnerLane: runner.runnerLane,
-    bottomIgnitionScore: runner.bottomIgnitionScore,
-    gainerStructureScore: runner.gainerStructureScore,
-    runnerScore: runner.runnerScore,
-    overExtensionPenalty: runner.overExtensionPenalty,
+    marketMode,
 
-    structurePosition: location.structurePosition,
-    structureLocation: location.structureLocation,
-    structureLocationScore: location.structureLocationScore,
-    riskLocation: location.riskLocation,
+    gainBand: gainBand(base.gain),
+    runnerLane: math.runnerLane,
+    bottomIgnitionScore: math.bottomIgnitionScore,
+    gainerStructureScore: math.gainerStructureScore,
+    runnerScore: math.runnerScore,
+    proofScore: math.proofScore,
+    ignitionScore: math.bottomIgnitionScore,
+    overExtensionPenalty: base.gain >= 70 ? -70 : base.gain >= 55 ? -32 : 0,
 
-    ignitionScore,
-    proofScore,
+    structurePosition: structure.structurePosition,
+    structureLocation: structure.structureLocation,
+    structureLocationScore: structure.structureLocationScore,
+    riskLocation: structure.riskLocation,
+
+    speedOk: math.speedOk,
+    volumeOk: math.volumeOk,
+    spreadOk: math.spreadOk,
+    signalAlignment: math.signalAlignment,
+    actionRank,
+    actionRankScore: actionRank * 1000 + math.proofScore + math.runnerScore * 0.01,
+
+    catalyst: catalyst.catalyst,
+    catalystGrade: catalyst.catalystGrade,
+    newsScore: catalyst.newsScore,
+    news,
+
     verdict,
     rejection,
     permissionText,
-    marketMode
+    candles: index + 1
   };
 }
 
 export async function GET() {
-  const apiKey = process.env.POLYGON_API_KEY;
+  const apiKey =
+    process.env.POLYGON_API_KEY ||
+    process.env.NEXT_PUBLIC_POLYGON_API_KEY ||
+    "";
 
-  if (!apiKey) {
-    return Response.json({
-      ok: false,
-      source: "polygon-runner-structure-v2",
-      error: "Missing POLYGON_API_KEY",
-      count: 0,
-      marketMode: "NO_API_KEY",
-      data: { tickers: [] },
-      tickers: []
-    });
-  }
+  let marketMode = "LIVE_GAINERS";
+  let liveGainersCount = 0;
+  let rawList: any[] = [];
 
   try {
-    const gainersUrl = `https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/gainers?apiKey=${apiKey}`;
-    const gainersRes = await safeJson(gainersUrl);
-
-    const rawGainers = Array.isArray(gainersRes?.tickers) ? gainersRes.tickers : [];
-
-    let marketMode = "LIVE_GAINERS";
-    let raw: AnyObj[] = rawGainers.slice(0, 40);
-
-    if (!raw.length) {
-      marketMode = "BACKUP_CLOSED_MARKET";
-
-      const backupSnapshots = await Promise.all(
-        BACKUP_UNIVERSE.map(async (ticker) => {
-          const url = `https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers/${encodeURIComponent(
-            ticker
-          )}?apiKey=${apiKey}`;
-
-          const snap = await safeJson(url);
-
-          if (snap?.__error) {
-            return { ticker };
-          }
-
-          return getSnapshotTicker(snap, ticker);
-        })
-      );
-
-      raw = backupSnapshots;
-    }
-
-    const tickers = await Promise.all(
-      raw.map((s: AnyObj) => enrichTicker(s, apiKey, marketMode))
+    const gainers = await polygonFetch(
+      "/v2/snapshot/locale/us/markets/stocks/gainers",
+      apiKey
     );
 
-    tickers.sort((a, b) => {
+    rawList = Array.isArray(gainers?.tickers)
+      ? gainers.tickers
+      : Array.isArray(gainers?.results)
+      ? gainers.results
+      : [];
+
+    liveGainersCount = rawList.length;
+  } catch {
+    rawList = [];
+  }
+
+  if (!rawList.length) {
+    marketMode = "BACKUP_CLOSED_MARKET";
+
+    try {
+      const backup = await polygonFetch(
+        `/v2/snapshot/locale/us/markets/stocks/tickers?tickers=${BACKUP_UNIVERSE.join(",")}`,
+        apiKey
+      );
+
+      rawList = Array.isArray(backup?.tickers)
+        ? backup.tickers
+        : BACKUP_UNIVERSE.map(makeBackupSnapshot);
+    } catch {
+      rawList = BACKUP_UNIVERSE.map(makeBackupSnapshot);
+    }
+  }
+
+  const cleaned = rawList
+    .filter((x) => rawTickerSymbol(x))
+    .slice(0, 20);
+
+  const enrichedRaw = await Promise.all(
+    cleaned.map((raw, index) => enrichTicker(raw, apiKey, marketMode, index))
+  );
+
+  const enriched = enrichedRaw
+    .filter(Boolean)
+    .sort((a: any, b: any) => {
+      if (b.actionRank !== a.actionRank) return b.actionRank - a.actionRank;
       if (b.proofScore !== a.proofScore) return b.proofScore - a.proofScore;
-      if (b.bottomIgnitionScore !== a.bottomIgnitionScore) {
-        return b.bottomIgnitionScore - a.bottomIgnitionScore;
-      }
-      if (b.gainerStructureScore !== a.gainerStructureScore) {
-        return b.gainerStructureScore - a.gainerStructureScore;
-      }
-      return b.volume - a.volume;
+      return b.runnerScore - a.runnerScore;
     });
 
-    return Response.json({
+  return NextResponse.json(
+    {
       ok: true,
-      source: "polygon-runner-structure-v2",
+      source: SOURCE,
       marketMode,
-      liveGainersCount: rawGainers.length,
-      count: tickers.length,
-      updated: new Date().toISOString(),
-      data: { tickers },
-      tickers
-    });
-  } catch (error) {
-    return Response.json({
-      ok: false,
-      source: "polygon-runner-structure-v2",
-      error: error instanceof Error ? error.message : String(error),
-      count: 0,
-      marketMode: "ERROR",
-      data: { tickers: [] },
-      tickers: []
-    });
-  }
+      liveGainersCount,
+      count: enriched.length,
+      timestamp: new Date().toISOString(),
+      rules: {
+        bottomIgnition: "support/middle + speed + volume + spread",
+        resistance: "WAIT for breakout proof above resistance",
+        yes: "support or healthy middle only with proof and alignment",
+        topGainers: "danger check, not permission"
+      },
+      data: {
+        tickers: enriched
+      },
+      tickers: enriched
+    },
+    {
+      headers: {
+        "Cache-Control": "no-store, max-age=0"
+      }
+    }
+  );
 }
