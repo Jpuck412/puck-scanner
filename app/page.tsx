@@ -333,7 +333,9 @@ function normalize(s: any): Stock {
 
   const speedOk = Boolean(s?.speedOk ?? speed >= 50);
   const volumeOk = Boolean(s?.volumeOk ?? (volume >= 100000 && (volumeSurge >= 1 || volume >= 1000000)));
-  const spreadOk = Boolean(s?.spreadOk ?? spreadStatus === "PASS" || spreadStatus === "LIKELY TIGHT");
+  const spreadOk = Boolean(
+  s?.spreadOk ?? (spreadStatus === "PASS" || spreadStatus === "LIKELY TIGHT")
+);
 
   const signalAlignment = num(
     s?.signalAlignment ??
