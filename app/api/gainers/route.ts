@@ -1,3 +1,5 @@
+import { buildMoverDiscovery } from "./moverDiscovery";
+
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
@@ -151,17 +153,37 @@ function getSnapshotTicker(snapshotJson: AnyObj, fallbackTicker: string) {
 function buildCoreFromSnapshot(s: AnyObj) {
   const ticker = String(s?.ticker || "").toUpperCase();
 
+  const previousClose = num(
+    s?.prevDay?.c ?? s?.previousClose ?? s?.previous_close ?? 0
+  );
+
+  const previousVolume = num(
+    s?.prevDay?.v ?? s?.previousVolume ?? s?.previous_volume ?? 0
+  );
+
   const price = num(
     s?.price ??
       s?.day?.c ??
       s?.min?.c ??
       s?.lastTrade?.p ??
-      ((s?.prevDay?.c ?? 0) + (s?.todaysChange ?? 0))
+      (previousClose + num(s?.todaysChange ?? 0))
   );
 
-  const volume = num(s?.volume ?? s?.day?.v ?? s?.min?.v ?? s?.prevDay?.v ?? 0);
-  const gain = num(s?.gain ?? s?.todaysChangePerc ?? 0);
-  const change = num(s?.change ?? s?.todaysChange ?? 0);
+  const volume = num(s?.volume ?? s?.day?.v ?? s?.min?.v ?? previousVolume ?? 0);
+
+  const gain = num(
+    s?.gain ??
+      s?.todaysChangePerc ??
+      (previousClose > 0 && price > 0
+        ? ((price - previousClose) / previousClose) * 100
+        : 0)
+  );
+
+  const change = num(
+    s?.change ??
+      s?.todaysChange ??
+      (previousClose > 0 && price > 0 ? price - previousClose : 0)
+  );
 
   const open = num(s?.open ?? s?.day?.o ?? s?.min?.o ?? price);
   const high = num(s?.high ?? s?.day?.h ?? s?.min?.h ?? price);
@@ -169,6 +191,16 @@ function buildCoreFromSnapshot(s: AnyObj) {
 
   const bid = num(s?.lastQuote?.p ?? s?.lastQuote?.bp ?? s?.bid ?? 0);
   const ask = num(s?.lastQuote?.P ?? s?.lastQuote?.ap ?? s?.ask ?? 0);
+
+  const averageVolume = num(
+    s?.averageVolume ??
+      s?.average_volume ??
+      s?.avgVolume ??
+      s?.avg_volume ??
+      s?.avgVol ??
+      s?.day?.av ??
+      0
+  );
 
   return {
     ticker,
@@ -180,7 +212,10 @@ function buildCoreFromSnapshot(s: AnyObj) {
     high,
     low,
     bid,
-    ask
+    ask,
+    previousClose,
+    previousVolume,
+    averageVolume
   };
 }
 
@@ -198,21 +233,33 @@ function buildCoreWithPrevFallback(
   const prevLow = num(prev?.l);
   const prevVolume = num(prev?.v);
 
-  const price = core.price || prevClose;
+  const previousClose = core.previousClose || prevClose;
+  const price = core.price || previousClose;
   const open = core.open || prevOpen || price;
   const high = core.high || prevHigh || price;
   const low = core.low || prevLow || price;
   const volume = core.volume || prevVolume;
 
+  const gain =
+    core.gain ||
+    (previousClose > 0 && price > 0
+      ? ((price - previousClose) / previousClose) * 100
+      : 0);
+
+  const change =
+    core.change || (previousClose > 0 && price > 0 ? price - previousClose : 0);
+
   return {
     ...core,
+    previousClose,
+    previousVolume: core.previousVolume || prevVolume,
     price,
     open,
     high,
     low,
     volume,
-    change: core.change,
-    gain: core.gain
+    gain,
+    change
   };
 }
 
@@ -516,7 +563,12 @@ async function enrichTicker(s: AnyObj, apiKey: string, marketMode: string) {
   )}/prev?adjusted=true&apiKey=${apiKey}`;
 
   const needsPrevFallback =
-    !core.price || !core.high || !core.low || !core.volume || marketMode === "BACKUP_CLOSED_MARKET";
+    !core.price ||
+    !core.high ||
+    !core.low ||
+    !core.volume ||
+    !core.previousClose ||
+    marketMode === "BACKUP_CLOSED_MARKET";
 
   const [newsJson, detailsJson, prevJson] = await Promise.all([
     safeJson(newsUrl),
@@ -531,6 +583,18 @@ async function enrichTicker(s: AnyObj, apiKey: string, marketMode: string) {
   const newsRaw = Array.isArray(newsJson?.results) ? newsJson.results : [];
   const details = detailsJson?.results || {};
 
+  if (!core.averageVolume) {
+    core = {
+      ...core,
+      averageVolume: num(
+        details?.average_volume ??
+          details?.average_daily_volume ??
+          details?.avg_volume ??
+          0
+      )
+    };
+  }
+
   const headline = String(newsRaw?.[0]?.title || "");
   const description = String(newsRaw?.[0]?.description || "");
   const newsClass = classifyNews(headline, description);
@@ -541,12 +605,27 @@ async function enrichTicker(s: AnyObj, apiKey: string, marketMode: string) {
 
   const floatData = buildFloat(details);
 
-  const { spread, spreadPct, spreadStatus } = buildSpreadStatus(
+  const { spread, spreadPct: legacySpreadPct, spreadStatus } = buildSpreadStatus(
     core.price,
     core.volume,
     core.bid,
     core.ask
   );
+
+  const mover = buildMoverDiscovery({
+    currentPrice: core.price,
+    previousClose: core.previousClose,
+    openPrice: core.open,
+    volume: core.volume,
+    averageVolume: core.averageVolume || undefined,
+    bid: core.bid || undefined,
+    ask: core.ask || undefined,
+    price1mAgo: undefined,
+    price3mAgo: undefined,
+    price5mAgo: undefined
+  });
+
+  const liveGain = core.gain || mover.pctChange;
 
   const support = core.low > 0 ? core.low : core.price > 0 ? core.price * 0.94 : 0;
   const resistance = core.high > 0 ? core.high : core.price > 0 ? core.price * 1.08 : 0;
@@ -565,7 +644,7 @@ async function enrichTicker(s: AnyObj, apiKey: string, marketMode: string) {
   const rr = risk > 0 ? reward / risk : 0;
 
   const volumeSurge = estimateVolumeSurge(core.volume);
-  const speed = clamp(Math.round(core.gain * 0.45 + volumeSurge * 16), 0, 100);
+  const speed = clamp(Math.round(liveGain * 0.45 + volumeSurge * 16), 0, 100);
 
   const speedLabel =
     speed >= 85 ? "VIOLENT" :
@@ -584,7 +663,7 @@ async function enrichTicker(s: AnyObj, apiKey: string, marketMode: string) {
   const junk = isJunkTicker(ticker);
 
   const runner = buildRunnerScores({
-    gain: core.gain,
+    gain: liveGain,
     price: core.price,
     volume: core.volume,
     volumeSurge,
@@ -607,33 +686,33 @@ async function enrichTicker(s: AnyObj, apiKey: string, marketMode: string) {
     proofScore -= 35;
   }
 
-  if (core.gain > 70) proofScore = Math.min(proofScore, 49);
-  if (core.gain > 55 && core.gain <= 70) proofScore = Math.min(proofScore, 69);
+  if (liveGain > 70) proofScore = Math.min(proofScore, 49);
+  if (liveGain > 55 && liveGain <= 70) proofScore = Math.min(proofScore, 69);
 
   ignitionScore = clamp(Math.round(ignitionScore), 0, 100);
   proofScore = clamp(Math.round(proofScore), 0, 100);
 
   const supportEntryZone =
-  location.structureLocation === "NEAR SUPPORT" ||
-  location.structureLocation === "HEALTHY MIDDLE";
+    location.structureLocation === "NEAR SUPPORT" ||
+    location.structureLocation === "HEALTHY MIDDLE";
 
-const resistanceProofZone =
-  location.structureLocation === "NEAR RESISTANCE" ||
-  location.structureLocation === "BREAKOUT ZONE";
+  const resistanceProofZone =
+    location.structureLocation === "NEAR RESISTANCE" ||
+    location.structureLocation === "BREAKOUT ZONE";
 
-const verdict =
-  marketMode === "BACKUP_CLOSED_MARKET" ? "NO" :
-  core.gain > 70 ? "NO" :
-  proofScore >= 80 && supportEntryZone ? "YES" :
-  proofScore >= 60 ? "WAIT" :
-  resistanceProofZone && proofScore >= 80 ? "WAIT" :
-  "NO";
+  const verdict =
+    marketMode === "BACKUP_CLOSED_MARKET" ? "NO" :
+    liveGain > 70 ? "NO" :
+    proofScore >= 80 && supportEntryZone ? "YES" :
+    proofScore >= 60 ? "WAIT" :
+    resistanceProofZone && proofScore >= 80 ? "WAIT" :
+    "NO";
 
   let rejection = "";
 
   if (junk) rejection = "JUNK SYMBOL";
-  else if (core.gain > 70) rejection = "EXTENDED 70%+";
-  else if (core.gain > 55) rejection = "LATE GAINER RISK";
+  else if (liveGain > 70) rejection = "EXTENDED 70%+";
+  else if (liveGain > 55) rejection = "LATE GAINER RISK";
   else if (core.volume < 100000) rejection = "LOW VOLUME";
   else if (spreadStatus === "FAIL") rejection = "SPREAD RISK";
   else if (!supportEntryZone && proofScore >= 80) rejection = "NOT SUPPORT ENTRY";
@@ -642,7 +721,7 @@ const verdict =
   const permissionText =
     marketMode === "BACKUP_CLOSED_MARKET"
       ? `BACKUP MODE — ${runner.runnerLane}`
-      : core.gain > 70
+      : liveGain > 70
       ? "DENIED — EXTENDED 70%+ / CHASE RISK"
       : verdict === "YES"
       ? `${runner.runnerLane} — PERMISSION POSSIBLE IF STRUCTURE HOLDS`
@@ -655,7 +734,7 @@ const verdict =
 
     ticker,
     price: core.price,
-    gain: core.gain,
+    gain: liveGain,
     change: core.change,
     volume: core.volume,
     open: core.open,
@@ -671,14 +750,14 @@ const verdict =
     },
 
     prevDay: {
-      c: num(s?.prevDay?.c ?? 0),
-      v: num(s?.prevDay?.v ?? 0)
+      c: core.previousClose,
+      v: core.previousVolume
     },
 
     bid: core.bid,
     ask: core.ask,
     spread,
-    spreadPct,
+    spreadPct: mover.spreadPct,
     spreadStatus,
 
     support,
@@ -725,12 +804,34 @@ const verdict =
     structureLocationScore: location.structureLocationScore,
     riskLocation: location.riskLocation,
 
+    moverDiscoveryScore: mover.moverDiscoveryScore,
+    moverLabel: mover.moverLabel,
+    pctChange: mover.pctChange,
+    openMove: mover.openMove,
+    velocity1m: mover.velocity1m,
+    velocity3m: mover.velocity3m,
+    velocity5m: mover.velocity5m,
+    acceleration: mover.acceleration,
+    relativeVolume: mover.relativeVolume,
+    dollarVolume: mover.dollarVolume,
+    gainScore: mover.gainScore,
+    velocityScore: mover.velocityScore,
+    accelerationScore: mover.accelerationScore,
+    relVolScore: mover.relVolScore,
+    dollarVolScore: mover.dollarVolScore,
+    spreadScore: mover.spreadScore,
+    safetyCapped: mover.safetyCapped,
+    hasVelocityData: mover.hasVelocityData,
+    hasSpreadData: mover.hasSpreadData,
+
     ignitionScore,
     proofScore,
     verdict,
     rejection,
     permissionText,
-    marketMode
+    marketMode,
+
+    legacySpreadPct
   };
 }
 
@@ -785,14 +886,19 @@ export async function GET() {
     );
 
     tickers.sort((a, b) => {
-      if (b.proofScore !== a.proofScore) return b.proofScore - a.proofScore;
-      if (b.bottomIgnitionScore !== a.bottomIgnitionScore) {
-        return b.bottomIgnitionScore - a.bottomIgnitionScore;
-      }
-      if (b.gainerStructureScore !== a.gainerStructureScore) {
-        return b.gainerStructureScore - a.gainerStructureScore;
-      }
-      return b.volume - a.volume;
+      const moverDelta = num(b?.moverDiscoveryScore) - num(a?.moverDiscoveryScore);
+      if (moverDelta !== 0) return moverDelta;
+
+      const pctDelta = num(b?.pctChange) - num(a?.pctChange);
+      if (pctDelta !== 0) return pctDelta;
+
+      const accelerationDelta = num(b?.acceleration) - num(a?.acceleration);
+      if (accelerationDelta !== 0) return accelerationDelta;
+
+      const velocityDelta = num(b?.velocity1m) - num(a?.velocity1m);
+      if (velocityDelta !== 0) return velocityDelta;
+
+      return num(b?.volume) - num(a?.volume);
     });
 
     return Response.json({
