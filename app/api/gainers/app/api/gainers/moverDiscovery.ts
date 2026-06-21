@@ -1,217 +1,392 @@
-export type MoverLabel =
-  | "DEAD"
-  | "WAKING"
-  | "MOVING"
-  | "FAST MOVER"
-  | "EXPLOSIVE MOVER";
+type AnyObj = Record<string, any>;
 
-export type MoverDiscoveryInput = {
-  currentPrice?: number | null;
-  previousClose?: number | null;
-  openPrice?: number | null;
-  volume?: number | null;
-  averageVolume?: number | null;
-  bid?: number | null;
-  ask?: number | null;
-  price1mAgo?: number | null;
-  price3mAgo?: number | null;
-  price5mAgo?: number | null;
-};
+export type MoverDiscoveryInput = AnyObj;
 
 export type MoverDiscoveryResult = {
+  ticker: string;
+
+  currentPrice: number;
+  previousClose: number;
+  openPrice: number;
+  volume: number;
+  averageVolume: number;
+  bid: number;
+  ask: number;
+
   pctChange: number;
   openMove: number;
-  velocity1m: number | null;
-  velocity3m: number | null;
-  velocity5m: number | null;
-  acceleration: number | null;
-  relativeVolume: number | null;
-  dollarVolume: number;
-  spreadPct: number | null;
-  gainScore: number;
-  velocityScore: number;
-  accelerationScore: number;
-  relVolScore: number;
-  dollarVolScore: number;
-  spreadScore: number;
-  moverDiscoveryScore: number;
-  moverLabel: MoverLabel;
-  safetyCapped: boolean;
-  hasVelocityData: boolean;
-  hasSpreadData: boolean;
+
+  velocity1m: number;
+  velocity3m: number;
+  velocity5m: number;
+
+  acceleration: number;
+  relativeVolume: number;
+  spreadPct: number;
+
+  score: number;
+  discoveryScore: number;
+  moverScore: number;
+
+  verdict: "SCAN" | "WATCH" | "IGNORE";
+  isJunk: boolean;
+  isDiscoveryCandidate: boolean;
+  tags: string[];
 };
 
-function toFiniteNumber(value: unknown): number {
+function finiteOrNull(value: unknown): number | null {
   const n = Number(value);
-  return Number.isFinite(n) ? n : 0;
+  return Number.isFinite(n) ? n : null;
 }
 
-function toPositiveNumber(value: unknown): number | null {
-  const n = Number(value);
-  return Number.isFinite(n) && n > 0 ? n : null;
+function pickNumber(...values: unknown[]): number {
+  for (const value of values) {
+    const n = finiteOrNull(value);
+    if (n !== null) return n;
+  }
+  return 0;
+}
+
+function round(value: number, places = 4): number {
+  const factor = Math.pow(10, places);
+  return Math.round(value * factor) / factor;
 }
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
-function round(value: number, digits = 4): number {
-  const factor = 10 ** digits;
-  return Math.round(value * factor) / factor;
+function safePercentMove(current: number, base: number): number {
+  if (!Number.isFinite(current) || !Number.isFinite(base) || base <= 0) return 0;
+  return ((current - base) / base) * 100;
 }
 
-function sat(x: number, cap: number): number {
-  const safeX = Math.max(0, x);
-  return Math.min(1, Math.max(0, Math.log(1 + safeX) / Math.log(1 + cap)));
+function normalize(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value) || max <= min) return 0;
+  return clamp((value - min) / (max - min), 0, 1);
 }
 
-function buildMoverLabel(score: number): MoverLabel {
-  if (score < 20) return "DEAD";
-  if (score < 40) return "WAKING";
-  if (score < 60) return "MOVING";
-  if (score < 80) return "FAST MOVER";
-  return "EXPLOSIVE MOVER";
+export function isJunkTicker(ticker: string): boolean {
+  const x = String(ticker || "").toUpperCase().trim();
+
+  if (!x) return true;
+
+  return (
+    x.endsWith("W") ||
+    x.endsWith("WS") ||
+    x.endsWith("U") ||
+    x.endsWith("R") ||
+    x.includes("+") ||
+    x.includes("-") ||
+    x.includes(".")
+  );
 }
 
-export function buildMoverDiscovery(
-  input: MoverDiscoveryInput
-): MoverDiscoveryResult {
-  const currentPrice = Math.max(0, toFiniteNumber(input.currentPrice));
-  const previousClose = toPositiveNumber(input.previousClose);
-  const openPrice = toPositiveNumber(input.openPrice);
-  const volume = Math.max(0, toFiniteNumber(input.volume));
-  const averageVolume = toPositiveNumber(input.averageVolume);
-  const bid = toPositiveNumber(input.bid);
-  const ask = toPositiveNumber(input.ask);
-  const price1mAgo = toPositiveNumber(input.price1mAgo);
-  const price3mAgo = toPositiveNumber(input.price3mAgo);
-  const price5mAgo = toPositiveNumber(input.price5mAgo);
+export function normalizeMoverInput(input: MoverDiscoveryInput) {
+  const ticker = String(input?.ticker ?? input?.symbol ?? input?.T ?? "").toUpperCase();
 
-  const pctChange =
-    previousClose && currentPrice > 0
-      ? ((currentPrice - previousClose) / previousClose) * 100
-      : 0;
-
-  const openMove =
-    openPrice && currentPrice > 0
-      ? ((currentPrice - openPrice) / openPrice) * 100
-      : 0;
-
-  const hasVelocityData = Boolean(price1mAgo && price3mAgo && price5mAgo);
-
-  const velocity1m = hasVelocityData
-    ? ((currentPrice - (price1mAgo as number)) / (price1mAgo as number)) * 100
-    : null;
-
-  const velocity3m = hasVelocityData
-    ? ((((currentPrice - (price3mAgo as number)) / (price3mAgo as number)) * 100) / 3)
-    : null;
-
-  const velocity5m = hasVelocityData
-    ? ((((currentPrice - (price5mAgo as number)) / (price5mAgo as number)) * 100) / 5)
-    : null;
-
-  const acceleration = hasVelocityData
-    ? (velocity1m as number) -
-      0.65 * (velocity3m as number) -
-      0.35 * (velocity5m as number)
-    : null;
-
-  const relativeVolume = averageVolume ? volume / averageVolume : null;
-  const dollarVolume = currentPrice * volume;
-
-  const hasSpreadData = Boolean(
-    bid && ask && currentPrice > 0 && (ask as number) >= (bid as number)
+  const currentPrice = pickNumber(
+    input?.currentPrice,
+    input?.price,
+    input?.c,
+    input?.lastPrice,
+    input?.day?.c,
+    input?.min?.c,
+    input?.lastTrade?.p,
+    input?.value,
+    0
   );
 
-  const spreadPct = hasSpreadData
-    ? (((ask as number) - (bid as number)) / currentPrice) * 100
-    : null;
+  const previousClose = pickNumber(
+    input?.previousClose,
+    input?.prevClose,
+    input?.prevDay?.c,
+    input?.previous_close,
+    currentPrice - pickNumber(input?.todaysChange, 0),
+    0
+  );
 
-  const gainScore =
-    100 * (0.7 * sat(pctChange, 40) + 0.3 * sat(openMove, 20));
+  const openPrice = pickNumber(
+    input?.openPrice,
+    input?.open,
+    input?.o,
+    input?.day?.o,
+    input?.min?.o,
+    currentPrice,
+    0
+  );
 
-  const velocityScore = hasVelocityData
-    ? 100 *
-      (0.55 * sat(velocity1m as number, 4) +
-        0.3 * sat(velocity3m as number, 2.5) +
-        0.15 * sat(velocity5m as number, 1.5))
-    : 35;
+  const volume = pickNumber(
+    input?.volume,
+    input?.v,
+    input?.day?.v,
+    input?.min?.v,
+    input?.session?.volume,
+    0
+  );
 
-  const accelerationScore = hasVelocityData
-    ? 100 * sat(acceleration as number, 3)
-    : 35;
+  const averageVolume = pickNumber(
+    input?.averageVolume,
+    input?.avgVolume,
+    input?.average_volume,
+    input?.avg_volume,
+    input?.prevDay?.v,
+    0
+  );
 
-  const relVolScore = averageVolume
-    ? 100 * sat(relativeVolume as number, 8)
-    : 50;
+  const bid = pickNumber(
+    input?.bid,
+    input?.b,
+    input?.lastQuote?.p,
+    input?.quote?.bid,
+    0
+  );
 
-  const dollarVolScore =
-    100 *
-    clamp(
-      (Math.log10(Math.max(dollarVolume, 1)) - Math.log10(25000)) /
-        (Math.log10(1000000) - Math.log10(25000)),
-      0,
-      1
-    );
+  const ask = pickNumber(
+    input?.ask,
+    input?.a,
+    input?.lastQuote?.P,
+    input?.quote?.ask,
+    0
+  );
 
-  let spreadScore = 50;
+  const price1mAgo = pickNumber(
+    input?.price1mAgo,
+    input?.p1,
+    input?.history?.price1mAgo,
+    currentPrice,
+    0
+  );
 
-  if (spreadPct !== null) {
-    const spreadGood = currentPrice < 1 ? 3 : 1.5;
-    const spreadBad = currentPrice < 1 ? 15 : 8;
+  const price3mAgo = pickNumber(
+    input?.price3mAgo,
+    input?.p3,
+    input?.history?.price3mAgo,
+    price1mAgo,
+    currentPrice,
+    0
+  );
 
-    spreadScore =
-      100 *
-      clamp(
-        1 - (spreadPct - spreadGood) / (spreadBad - spreadGood),
-        0,
-        1
-      );
-  }
-
-  let moverDiscoveryScore =
-    0.4 * gainScore +
-    0.24 * velocityScore +
-    0.23 * accelerationScore +
-    0.06 * relVolScore +
-    0.04 * dollarVolScore +
-    0.03 * spreadScore;
-
-  moverDiscoveryScore = clamp(moverDiscoveryScore, 0, 100);
-
-  const safetyCapped =
-    currentPrice < 0.1 ||
-    volume < 5000 ||
-    dollarVolume < 2500 ||
-    (spreadPct !== null && spreadPct > 25);
-
-  if (safetyCapped) {
-    moverDiscoveryScore = Math.min(moverDiscoveryScore, 19.99);
-  }
-
-  moverDiscoveryScore = clamp(moverDiscoveryScore, 0, 100);
+  const price5mAgo = pickNumber(
+    input?.price5mAgo,
+    input?.p5,
+    input?.history?.price5mAgo,
+    price3mAgo,
+    price1mAgo,
+    currentPrice,
+    0
+  );
 
   return {
-    pctChange: round(pctChange),
-    openMove: round(openMove),
-    velocity1m: velocity1m === null ? null : round(velocity1m),
-    velocity3m: velocity3m === null ? null : round(velocity3m),
-    velocity5m: velocity5m === null ? null : round(velocity5m),
-    acceleration: acceleration === null ? null : round(acceleration),
-    relativeVolume: relativeVolume === null ? null : round(relativeVolume),
-    dollarVolume: round(dollarVolume, 2),
-    spreadPct: spreadPct === null ? null : round(spreadPct),
-    gainScore: round(gainScore, 2),
-    velocityScore: round(velocityScore, 2),
-    accelerationScore: round(accelerationScore, 2),
-    relVolScore: round(relVolScore, 2),
-    dollarVolScore: round(dollarVolScore, 2),
-    spreadScore: round(spreadScore, 2),
-    moverDiscoveryScore: round(moverDiscoveryScore, 2),
-    moverLabel: buildMoverLabel(moverDiscoveryScore),
-    safetyCapped,
-    hasVelocityData,
-    hasSpreadData
+    ticker,
+    currentPrice,
+    previousClose,
+    openPrice,
+    volume,
+    averageVolume,
+    bid,
+    ask,
+    price1mAgo,
+    price3mAgo,
+    price5mAgo
   };
 }
+
+export function calculateMoverDiscovery(input: MoverDiscoveryInput): MoverDiscoveryResult {
+  const x = normalizeMoverInput(input);
+
+  const pctChange = safePercentMove(x.currentPrice, x.previousClose);
+  const openMove = safePercentMove(x.currentPrice, x.openPrice);
+
+  const velocity1m = safePercentMove(x.currentPrice, x.price1mAgo);
+  const velocity3m = safePercentMove(x.currentPrice, x.price3mAgo) / 3;
+  const velocity5m = safePercentMove(x.currentPrice, x.price5mAgo) / 5;
+
+  const acceleration =
+    velocity1m - ((0.65 * velocity3m) + (0.35 * velocity5m));
+
+  const relativeVolume =
+    x.averageVolume > 0 ? x.volume / x.averageVolume : 0;
+
+  const spreadPct =
+    x.bid > 0 && x.ask > x.bid && x.currentPrice > 0
+      ? ((x.ask - x.bid) / x.currentPrice) * 100
+      : 0;
+
+  const isJunk = isJunkTicker(x.ticker);
+
+  const priceInPreferredRange =
+    x.currentPrice >= 0.1 && x.currentPrice <= 10;
+
+  const hasBasicVolume =
+    x.volume >= 10000;
+
+  const isMovingUp =
+    pctChange > 0 || openMove > 0 || velocity1m > 0;
+
+  const pctScore = normalize(pctChange, 0, 60) * 30;
+  const openScore = normalize(openMove, 0, 35) * 14;
+
+  const shortVelocity =
+    Math.max(velocity1m, velocity3m, velocity5m);
+
+  const velocityScore = normalize(shortVelocity, 0, 5) * 18;
+  const accelerationScore = normalize(acceleration, 0, 3) * 14;
+
+  const rvolScore = normalize(relativeVolume, 0, 5) * 8;
+  const volumeSafetyScore = normalize(x.volume, 0, 100000) * 4;
+
+  const spreadScore =
+    spreadPct <= 0
+      ? 4
+      : (1 - normalize(spreadPct, 0.25, 3)) * 4;
+
+  const priceScore =
+    x.currentPrice >= 0.1 && x.currentPrice <= 5
+      ? 6
+      : x.currentPrice > 5 && x.currentPrice <= 10
+        ? 3
+        : -10;
+
+  const junkPenalty = isJunk ? -35 : 0;
+  const weakVolumePenalty = hasBasicVolume ? 0 : -8;
+  const notMovingPenalty = isMovingUp ? 0 : -20;
+
+  const rawScore =
+    pctScore +
+    openScore +
+    velocityScore +
+    accelerationScore +
+    rvolScore +
+    volumeSafetyScore +
+    spreadScore +
+    priceScore +
+    junkPenalty +
+    weakVolumePenalty +
+    notMovingPenalty;
+
+  const score = round(clamp(rawScore, 0, 100), 2);
+
+  const isDiscoveryCandidate =
+    score >= 35 &&
+    isMovingUp &&
+    priceInPreferredRange &&
+    hasBasicVolume &&
+    !isJunk;
+
+  const verdict: MoverDiscoveryResult["verdict"] =
+    score >= 70 && isDiscoveryCandidate
+      ? "SCAN"
+      : score >= 45 && isMovingUp && !isJunk
+        ? "WATCH"
+        : "IGNORE";
+
+  const tags = [
+    pctChange > 0 ? "green_vs_prev_close" : "",
+    openMove > 0 ? "green_vs_open" : "",
+    velocity1m > 0 ? "positive_1m_velocity" : "",
+    acceleration > 0 ? "accelerating" : "",
+    relativeVolume >= 2 ? "rvol_active" : "",
+    spreadPct > 0 && spreadPct <= 1 ? "spread_reasonable" : "",
+    isJunk ? "junk_ticker" : "",
+    !priceInPreferredRange ? "outside_price_range" : "",
+    !hasBasicVolume ? "thin_volume" : ""
+  ].filter(Boolean);
+
+  return {
+    ticker: x.ticker,
+
+    currentPrice: round(x.currentPrice),
+    previousClose: round(x.previousClose),
+    openPrice: round(x.openPrice),
+    volume: round(x.volume, 0),
+    averageVolume: round(x.averageVolume, 0),
+    bid: round(x.bid),
+    ask: round(x.ask),
+
+    pctChange: round(pctChange),
+    openMove: round(openMove),
+
+    velocity1m: round(velocity1m),
+    velocity3m: round(velocity3m),
+    velocity5m: round(velocity5m),
+
+    acceleration: round(acceleration),
+    relativeVolume: round(relativeVolume),
+    spreadPct: round(spreadPct),
+
+    score,
+    discoveryScore: score,
+    moverScore: score,
+
+    verdict,
+    isJunk,
+    isDiscoveryCandidate,
+    tags
+  };
+}
+
+export function getMoverDiscoveryScore(input: MoverDiscoveryInput): number {
+  return calculateMoverDiscovery(input).score;
+}
+
+export function applyMoverDiscovery<T extends AnyObj>(item: T) {
+  const moverDiscovery = calculateMoverDiscovery(item);
+
+  return {
+    ...item,
+    moverDiscovery,
+    discoveryScore: moverDiscovery.discoveryScore,
+    moverScore: moverDiscovery.moverScore,
+    score: moverDiscovery.score,
+    discoveryVerdict: moverDiscovery.verdict,
+    isDiscoveryCandidate: moverDiscovery.isDiscoveryCandidate
+  };
+}
+
+export function rankMoverDiscovery<T extends AnyObj>(
+  items: T[],
+  limit = 10
+) {
+  return [...items]
+    .map((item) => applyMoverDiscovery(item))
+    .sort((a, b) => {
+      const scoreDiff = b.discoveryScore - a.discoveryScore;
+      if (scoreDiff !== 0) return scoreDiff;
+
+      const pctDiff =
+        (b.moverDiscovery?.pctChange ?? 0) -
+        (a.moverDiscovery?.pctChange ?? 0);
+
+      if (pctDiff !== 0) return pctDiff;
+
+      return (
+        (b.moverDiscovery?.acceleration ?? 0) -
+        (a.moverDiscovery?.acceleration ?? 0)
+      );
+    })
+    .slice(0, limit);
+}
+
+export const analyzeMoverDiscovery = calculateMoverDiscovery;
+export const calculateDiscoveryScore = getMoverDiscoveryScore;
+export const getDiscoveryScore = getMoverDiscoveryScore;
+export const moverDiscoveryScore = getMoverDiscoveryScore;
+export const scoreMoverDiscovery = getMoverDiscoveryScore;
+
+export const discoverMovers = rankMoverDiscovery;
+export const rankMovers = rankMoverDiscovery;
+
+export const moverDiscovery = {
+  normalizeMoverInput,
+  calculateMoverDiscovery,
+  analyzeMoverDiscovery,
+  getMoverDiscoveryScore,
+  applyMoverDiscovery,
+  rankMoverDiscovery,
+  rankMovers,
+  discoverMovers,
+  isJunkTicker
+};
+
+export default moverDiscovery;
