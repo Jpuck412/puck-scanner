@@ -344,19 +344,20 @@ function movementScore(args: {
   gain7d: number;
   volume: number;
 }): number {
-  const oneHour = clamp(args.gain1h * 18, -30, 80);
-  const day = clamp(args.gain24h * 4, -40, 70);
-  const week = clamp(args.gain7d * 0.6, -20, 40);
-  const liquidity = clamp(Math.log10(args.volume + 1) * 2.5, 0, 25);
+  const oneHourRise = clamp(args.gain1h * 32, -60, 140);
+  const dayRise = clamp(args.gain24h * 9, -80, 170);
+  const weekRise = clamp(args.gain7d * 1.2, -50, 80);
 
-  return round(oneHour + day + week + liquidity, 2);
+  const liquidityPass = args.volume >= 2_000_000 ? 12 : args.volume >= 500_000 ? 5 : -35;
+
+  return round(oneHourRise + dayRise + weekRise + liquidityPass, 2);
 }
 
 async function fetchCryptoPage(page: number) {
   const url =
     "https://api.coingecko.com/api/v3/coins/markets" +
     "?vs_currency=usd" +
-    "&order=volume_desc" +
+    "&order=market_cap_desc" +
     "&per_page=250" +
     `&page=${page}` +
     "&sparkline=false" +
@@ -594,16 +595,18 @@ export async function GET() {
     const rawList = await fetchRealCryptoMarket();
 
     const enriched = rawList
-      .map(enrichCoin)
-      .filter(Boolean)
-      .filter((x: any) => x.volume >= 20_000_000)
-      .sort((a: any, b: any) => {
-        if (b.actionRank !== a.actionRank) return b.actionRank - a.actionRank;
-        if (b.proofScore !== a.proofScore) return b.proofScore - a.proofScore;
-        if (b.movementScore !== a.movementScore) return b.movementScore - a.movementScore;
-        return b.volume - a.volume;
-      })
-      .slice(0, 60);
+  .map(enrichCoin)
+  .filter(Boolean)
+  .filter((x: any) => x.volume >= 500_000)
+  .filter((x: any) => x.gain1h > 0 || x.gain > 0 || x.gain7d > 0)
+  .sort((a: any, b: any) => {
+    if (b.movementScore !== a.movementScore) return b.movementScore - a.movementScore;
+    if (b.gain1h !== a.gain1h) return b.gain1h - a.gain1h;
+    if (b.gain !== a.gain) return b.gain - a.gain;
+    if (b.proofScore !== a.proofScore) return b.proofScore - a.proofScore;
+    return b.volume - a.volume;
+  })
+  .slice(0, 60);
 
     return NextResponse.json(
       {
@@ -613,7 +616,7 @@ export async function GET() {
         count: enriched.length,
         timestamp: new Date().toISOString(),
         rules: {
-          discovery: "scans real crypto market by volume, then ranks by structure and movement",
+          discovery: "scans real crypto market, then ranks by percent rising first",
           noFixedList: true,
           noFakeBackup: true,
           noFakePrices: true,
