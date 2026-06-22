@@ -374,6 +374,130 @@ function buildSnapshotInput(row: AnyObj): HunterInput {
     ask,
   };
 }
+type NewsBadge = {
+  hasNews: boolean;
+  newsTitle: string;
+  newsPublisher: string;
+  newsUrl: string;
+  newsTime: string;
+  newsAgeMinutes: number;
+  newsTag: "NEWS" | "PRESS RELEASE" | "FILING-LIKE NEWS" | "NO NEWS";
+};
+
+function classifyNews(title: string, publisher: string, url: string): NewsBadge["newsTag"] {
+  const text = `${title} ${publisher} ${url}`.toLowerCase();
+
+  const filingWords = [
+    "8-k",
+    "10-q",
+    "10-k",
+    "s-1",
+    "s-3",
+    "424b",
+    "prospectus",
+    "offering",
+    "shelf",
+    "registration",
+    "reverse split",
+    "warrant",
+    "atm",
+    "sec filing",
+    "edgar",
+  ];
+
+  if (filingWords.some((word) => text.includes(word))) {
+    return "FILING-LIKE NEWS";
+  }
+
+  const pressWords = [
+    "globenewswire",
+    "pr newswire",
+    "business wire",
+    "accesswire",
+    "newsfile",
+    "press release",
+    "announces",
+    "reports",
+    "launches",
+    "receives",
+    "enters into",
+    "agreement",
+  ];
+
+  if (pressWords.some((word) => text.includes(word))) {
+    return "PRESS RELEASE";
+  }
+
+  return "NEWS";
+}
+
+function getNewsAgeMinutes(publishedUtc: string): number {
+  const published = new Date(publishedUtc).getTime();
+  const now = Date.now();
+
+  if (!Number.isFinite(published)) return 0;
+
+  return Math.max(0, Math.round((now - published) / 60000));
+}
+
+async function fetchTickerNews(ticker: string, apiKey: string): Promise<NewsBadge> {
+  const fallback: NewsBadge = {
+    hasNews: false,
+    newsTitle: "",
+    newsPublisher: "",
+    newsUrl: "",
+    newsTime: "",
+    newsAgeMinutes: 0,
+    newsTag: "NO NEWS",
+  };
+
+  try {
+    if (!ticker || !apiKey) return fallback;
+
+    const url =
+      "https://api.polygon.io/v2/reference/news" +
+      `?ticker=${encodeURIComponent(ticker)}` +
+      "&order=desc" +
+      "&sort=published_utc" +
+      "&limit=1" +
+      `&apiKey=${encodeURIComponent(apiKey)}`;
+
+    const res = await fetch(url, {
+      method: "GET",
+      cache: "no-store",
+      headers: {
+        Accept: "application/json",
+      },
+    });
+
+    if (!res.ok) return fallback;
+
+    const json = (await res.json()) as AnyObj;
+    const results = Array.isArray(json.results) ? json.results : [];
+
+    const first = results.find(isObj);
+    if (!first) return fallback;
+
+    const title = str(first.title);
+    const articleUrl = str(first.article_url || first.url);
+    const publishedUtc = str(first.published_utc);
+
+    const publisherObj = isObj(first.publisher) ? first.publisher : {};
+    const publisher = str(publisherObj.name || first.publisher || first.source);
+
+    return {
+      hasNews: Boolean(title || articleUrl),
+      newsTitle: title,
+      newsPublisher: publisher,
+      newsUrl: articleUrl,
+      newsTime: publishedUtc,
+      newsAgeMinutes: getNewsAgeMinutes(publishedUtc),
+      newsTag: classifyNews(title, publisher, articleUrl),
+    };
+  } catch {
+    return fallback;
+  }
+}
 
 export async function GET(req: Request) {
   const startedAt = new Date().toISOString();
@@ -450,7 +574,7 @@ export async function GET(req: Request) {
         ? json.results
         : [];
 
-    const scored = rowsRaw
+    const scoredBase = rowsRaw
       .filter(isObj)
       .map((row) => buildSnapshotInput(row))
       .filter((input) => Boolean(input.ticker))
@@ -465,12 +589,26 @@ export async function GET(req: Request) {
       .filter((item) => item.gainPct <= maxGain)
       .filter((item) => item.premarketVolume >= minVolume)
       .sort((a, b) => {
-        if (b.hunterScore !== a.hunterScore) return b.hunterScore - a.hunterScore;
         if (b.gainPct !== a.gainPct) return b.gainPct - a.gainPct;
+        if (b.hunterScore !== a.hunterScore) return b.hunterScore - a.hunterScore;
         return b.premarketVolume - a.premarketVolume;
       })
       .slice(0, Math.max(1, Math.min(limit, 100)))
       .map((item, index) => ({
+        rank: index + 1,
+        ...item,
+      }));
+
+    const scored = await Promise.all(
+      scoredBase.map(async (item) => {
+        const news = await fetchTickerNews(item.ticker, apiKey);
+
+        return {
+          ...item,
+          ...news,
+        };
+      })
+    );
         rank: index + 1,
         ...item,
       }));
