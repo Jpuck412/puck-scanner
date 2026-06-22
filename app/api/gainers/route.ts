@@ -1,37 +1,11 @@
-// ============================================================
-// FILE: app/api/gainers/route.ts
-// PURPOSE: Self-contained Raw Hunter Gatherer route.
-// FIX: No import from ./fourAmGainerFormula.
-// ============================================================
-
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 type AnyObj = Record<string, unknown>;
-type NumericInput = number | string | null | undefined;
 
-type HunterStatus = "CLIMBING" | "FLAT" | "FADING";
-type HunterPhase = "BELOW_RADAR" | "CLIMBER" | "ESTABLISHED" | "EXTENDED_HOT";
-type SpreadStatus = "TIGHT" | "OK" | "WIDE" | "UNKNOWN";
-
-type HunterInput = {
-  ticker?: string;
-  symbol?: string;
-  price?: NumericInput;
-  currentPremarketPrice?: NumericInput;
-  previousClose?: NumericInput;
-  priorGainPct?: NumericInput;
-  premarketVolume?: NumericInput;
-  volume?: NumericInput;
-  averagePremarketVolume?: NumericInput;
-  averageVolume?: NumericInput;
-  bid?: NumericInput;
-  ask?: NumericInput;
-};
-
-const SOURCE = "polygon-massive-raw-hunter-self-contained";
+const SOURCE = "polygon-massive-raw-hunter-news";
 
 function getApiKey(): string {
   return (
@@ -63,10 +37,9 @@ function isObj(value: unknown): value is AnyObj {
 function getPath(obj: unknown, path: string): unknown {
   if (!isObj(obj)) return undefined;
 
-  const parts = path.split(".");
   let current: unknown = obj;
 
-  for (const part of parts) {
+  for (const part of path.split(".")) {
     if (!isObj(current)) return undefined;
     current = current[part];
   }
@@ -76,16 +49,11 @@ function getPath(obj: unknown, path: string): unknown {
 
 function pickNumber(obj: unknown, paths: string[]): number {
   for (const path of paths) {
-    const value = getPath(obj, path);
-    const n = num(value);
+    const n = num(getPath(obj, path));
     if (n !== 0) return n;
   }
 
   return 0;
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
 }
 
 function round(value: number, decimals = 2): number {
@@ -94,13 +62,22 @@ function round(value: number, decimals = 2): number {
   return Math.round(value * factor) / factor;
 }
 
-function isJunkTicker(ticker: string): boolean {
-  const t = cleanTicker(ticker);
+function boolParam(value: string | null, fallback: boolean): boolean {
+  if (value === null) return fallback;
+
+  const v = value.toLowerCase();
+
+  if (v === "true" || v === "1" || v === "yes") return true;
+  if (v === "false" || v === "0" || v === "no") return false;
+
+  return fallback;
+}
+
+function isJunkTicker(symbol: string): boolean {
+  const t = cleanTicker(symbol);
 
   if (!t) return true;
-  if (t.includes(".")) return true;
-  if (t.includes("-")) return true;
-  if (t.length > 5) return true;
+  if (t.includes(".") || t.includes("-") || t.length > 5) return true;
 
   return (
     t.endsWith("W") ||
@@ -112,206 +89,20 @@ function isJunkTicker(ticker: string): boolean {
   );
 }
 
-function toBool(value: string | null, fallback: boolean): boolean {
-  if (value === null) return fallback;
-
-  const v = value.toLowerCase();
-
-  if (v === "true" || v === "1" || v === "yes") return true;
-  if (v === "false" || v === "0" || v === "no") return false;
-
-  return fallback;
-}
-
-function getGainPct(input: HunterInput, price: number, previousClose: number): number {
-  const suppliedGain = num(input.priorGainPct);
-
-  if (suppliedGain !== 0) return suppliedGain;
-
-  if (price > 0 && previousClose > 0) {
-    return ((price - previousClose) / previousClose) * 100;
-  }
-
-  return 0;
-}
-
-function getGainScore(gainPct: number): number {
-  if (gainPct < 5) return 0;
-  if (gainPct < 15) return 5;
-  if (gainPct < 20) return 10;
-  if (gainPct <= 35) return 24;
-  if (gainPct <= 65) return 30;
-  if (gainPct <= 85) return 24;
-  if (gainPct <= 120) return 8;
-  return -20;
-}
-
-function getVolumeScore(volume: number): number {
-  if (volume >= 5_000_000) return 20;
-  if (volume >= 2_000_000) return 18;
-  if (volume >= 1_000_000) return 15;
-  if (volume >= 500_000) return 12;
-  if (volume >= 250_000) return 9;
-  if (volume >= 100_000) return 6;
-  if (volume >= 50_000) return 3;
-  return 0;
-}
-
-function getRelativeVolumeScore(rvol: number): number {
-  if (rvol >= 10) return 15;
-  if (rvol >= 5) return 12;
-  if (rvol >= 3) return 9;
-  if (rvol >= 2) return 6;
-  if (rvol >= 1) return 3;
-  return 0;
-}
-
-function getSpreadStatus(spreadPct: number): SpreadStatus {
+function getSpreadStatus(spreadPct: number): "TIGHT" | "OK" | "WIDE" | "UNKNOWN" {
   if (!Number.isFinite(spreadPct) || spreadPct <= 0) return "UNKNOWN";
   if (spreadPct <= 1) return "TIGHT";
   if (spreadPct <= 2.5) return "OK";
   return "WIDE";
 }
 
-function getSpreadScore(spreadPct: number): number {
-  if (!Number.isFinite(spreadPct) || spreadPct <= 0) return 0;
-  if (spreadPct <= 0.5) return 15;
-  if (spreadPct <= 1) return 12;
-  if (spreadPct <= 1.5) return 9;
-  if (spreadPct <= 2.5) return 5;
-  return -15;
-}
-
-function getPriceScore(price: number): number {
-  if (price >= 0.1 && price <= 1) return 10;
-  if (price > 1 && price <= 2) return 8;
-  if (price > 2 && price <= 5) return 5;
-  if (price > 5 && price <= 10) return 2;
-  return -5;
-}
-
-function getHunterPhase(gainPct: number): HunterPhase {
-  if (gainPct < 15) return "BELOW_RADAR";
-  if (gainPct <= 35) return "CLIMBER";
-  if (gainPct <= 85) return "ESTABLISHED";
-  return "EXTENDED_HOT";
-}
-
-function getHunterStatus(gainPct: number, rvol: number, spreadPct: number): HunterStatus {
-  if (gainPct >= 15 && gainPct <= 85 && rvol >= 2 && spreadPct > 0 && spreadPct <= 2.5) {
-    return "CLIMBING";
-  }
-
-  if (gainPct > 120 || spreadPct > 2.5) {
-    return "FADING";
-  }
-
-  return "FLAT";
-}
-
-function buildHunterScore(input: HunterInput) {
-  const ticker = cleanTicker(input.ticker || input.symbol);
-
-  const price =
-    num(input.currentPremarketPrice) ||
-    num(input.price);
-
-  const previousClose = num(input.previousClose);
-  const gainPct = getGainPct(input, price, previousClose);
-
-  const premarketVolume =
-    num(input.premarketVolume) ||
-    num(input.volume);
-
-  const averagePremarketVolume =
-    num(input.averagePremarketVolume) ||
-    num(input.averageVolume);
-
-  const relativePremarketVolume =
-    averagePremarketVolume > 0 ? premarketVolume / averagePremarketVolume : 0;
-
-  const bid = num(input.bid);
-  const ask = num(input.ask);
-
-  const spread = bid > 0 && ask > 0 ? ask - bid : 0;
-  const spreadPct = price > 0 && spread > 0 ? (spread / price) * 100 : 0;
-  const spreadStatus = getSpreadStatus(spreadPct);
-
-  const rawHunterScore =
-    getGainScore(gainPct) +
-    getVolumeScore(premarketVolume) +
-    getRelativeVolumeScore(relativePremarketVolume) +
-    getSpreadScore(spreadPct) +
-    getPriceScore(price);
-
-  const hunterScore = clamp(rawHunterScore, 0, 100);
-  const hunterPhase = getHunterPhase(gainPct);
-  const hunterStatus = getHunterStatus(gainPct, relativePremarketVolume, spreadPct);
-
-  const isInPreferredGainZone = gainPct >= 15 && gainPct <= 85;
-  const isExtended = gainPct > 120;
-  const isTradeableSpread = spreadPct > 0 && spreadPct <= 2.5;
-
-  const reasons: string[] = [];
-  const warnings: string[] = [];
-
-  if (gainPct >= 20 && gainPct <= 65) reasons.push("Prime hunter gain zone: 20% to 65%");
-  else if (isInPreferredGainZone) reasons.push("Preferred hunter gain zone: 15% to 85%");
-
-  if (premarketVolume >= 100_000) reasons.push("Premarket volume present");
-  if (relativePremarketVolume >= 2) reasons.push("Relative premarket volume elevated");
-  if (spreadStatus === "TIGHT") reasons.push("Spread tight by percentage");
-  if (spreadStatus === "OK") reasons.push("Spread acceptable by percentage");
-  if (price >= 0.1 && price <= 5) reasons.push("Small-cap hunter price range");
-
-  if (!ticker) warnings.push("Missing ticker");
-  if (price <= 0) warnings.push("Missing or invalid price");
-  if (premarketVolume <= 0) warnings.push("Missing premarket volume");
-  if (spreadStatus === "UNKNOWN") warnings.push("Spread unknown");
-  if (spreadStatus === "WIDE") warnings.push("Spread wide");
-  if (isExtended) warnings.push("Extended above 120%; possible late runner");
-  if (gainPct < 15) warnings.push("Below preferred hunter gain zone");
-
-  return {
-    ticker,
-
-    price: round(price, 4),
-    previousClose: round(previousClose, 4),
-    gainPct: round(gainPct, 2),
-
-    premarketVolume: round(premarketVolume, 0),
-    averagePremarketVolume: round(averagePremarketVolume, 0),
-    relativePremarketVolume: round(relativePremarketVolume, 2),
-
-    bid: round(bid, 4),
-    ask: round(ask, 4),
-    spread: round(spread, 4),
-    spreadPct: round(spreadPct, 2),
-    spreadStatus,
-
-    hunterScore: round(hunterScore, 2),
-    rawHunterScore: round(rawHunterScore, 2),
-
-    hunterStatus,
-    hunterPhase,
-
-    isInPreferredGainZone,
-    isExtended,
-    isTradeableSpread,
-
-    reasons,
-    warnings,
-  };
-}
-
-function buildSnapshotInput(row: AnyObj): HunterInput {
+function buildHunterRow(row: AnyObj) {
   const ticker = cleanTicker(row.ticker || row.symbol || row.T);
 
   const price = pickNumber(row, [
     "lastTrade.p",
     "min.c",
     "day.c",
-    "value",
     "price",
     "close",
     "c",
@@ -324,12 +115,19 @@ function buildSnapshotInput(row: AnyObj): HunterInput {
     "pc",
   ]);
 
-  const priorGainPct = pickNumber(row, [
+  const suppliedGain = pickNumber(row, [
     "todaysChangePerc",
     "changePercent",
     "percentChange",
     "gainPct",
   ]);
+
+  const gainPct =
+    suppliedGain !== 0
+      ? suppliedGain
+      : price > 0 && previousClose > 0
+        ? ((price - previousClose) / previousClose) * 100
+        : 0;
 
   const premarketVolume = pickNumber(row, [
     "day.v",
@@ -337,12 +135,6 @@ function buildSnapshotInput(row: AnyObj): HunterInput {
     "v",
     "min.av",
     "min.v",
-  ]);
-
-  const averagePremarketVolume = pickNumber(row, [
-    "averagePremarketVolume",
-    "averageVolume",
-    "avgVolume",
   ]);
 
   const bid = pickNumber(row, [
@@ -361,87 +153,97 @@ function buildSnapshotInput(row: AnyObj): HunterInput {
     "askPrice",
   ]);
 
+  const spread = bid > 0 && ask > 0 ? ask - bid : 0;
+  const spreadPct = price > 0 && spread > 0 ? (spread / price) * 100 : 0;
+  const spreadStatus = getSpreadStatus(spreadPct);
+
+  let gainScore = 0;
+  if (gainPct >= 10 && gainPct < 20) gainScore = 10;
+  else if (gainPct >= 20 && gainPct <= 35) gainScore = 24;
+  else if (gainPct > 35 && gainPct <= 65) gainScore = 30;
+  else if (gainPct > 65 && gainPct <= 120) gainScore = 8;
+  else if (gainPct > 120) gainScore = -20;
+
+  let volumeScore = 0;
+  if (premarketVolume >= 5_000_000) volumeScore = 20;
+  else if (premarketVolume >= 2_000_000) volumeScore = 18;
+  else if (premarketVolume >= 1_000_000) volumeScore = 15;
+  else if (premarketVolume >= 500_000) volumeScore = 12;
+  else if (premarketVolume >= 250_000) volumeScore = 9;
+  else if (premarketVolume >= 100_000) volumeScore = 6;
+
+  let spreadScore = 0;
+  if (spreadPct > 0 && spreadPct <= 0.5) spreadScore = 15;
+  else if (spreadPct <= 1) spreadScore = 12;
+  else if (spreadPct <= 1.5) spreadScore = 9;
+  else if (spreadPct <= 2.5) spreadScore = 5;
+  else if (spreadPct > 2.5) spreadScore = -15;
+
+  let priceScore = -5;
+  if (price >= 0.1 && price <= 1) priceScore = 10;
+  else if (price <= 2) priceScore = 8;
+  else if (price <= 5) priceScore = 5;
+  else if (price <= 10) priceScore = 2;
+
+  const rawHunterScore = gainScore + volumeScore + spreadScore + priceScore;
+  const hunterScore = Math.max(0, Math.min(100, rawHunterScore));
+
+  const hunterPhase =
+    gainPct < 15
+      ? "BELOW_RADAR"
+      : gainPct <= 35
+        ? "CLIMBER"
+        : gainPct <= 85
+          ? "ESTABLISHED"
+          : "EXTENDED_HOT";
+
+  const hunterStatus =
+    gainPct >= 15 && gainPct <= 85 && spreadPct > 0 && spreadPct <= 2.5
+      ? "CLIMBING"
+      : gainPct > 120 || spreadPct > 2.5
+        ? "FADING"
+        : "FLAT";
+
+  const reasons: string[] = [];
+  const warnings: string[] = [];
+
+  if (gainPct >= 20 && gainPct <= 65) reasons.push("Prime hunter gain zone: 20% to 65%");
+  if (premarketVolume >= 100_000) reasons.push("Volume present");
+  if (spreadStatus === "TIGHT") reasons.push("Spread tight by percentage");
+  if (spreadStatus === "OK") reasons.push("Spread acceptable by percentage");
+
+  if (spreadStatus === "WIDE") warnings.push("Spread wide");
+  if (spreadStatus === "UNKNOWN") warnings.push("Spread unknown");
+  if (gainPct > 120) warnings.push("Extended above 120%; possible late runner");
+
   return {
     ticker,
     symbol: ticker,
-    price,
-    currentPremarketPrice: price,
-    previousClose,
-    priorGainPct,
-    premarketVolume,
-    averagePremarketVolume,
-    bid,
-    ask,
+    price: round(price, 4),
+    previousClose: round(previousClose, 4),
+    gainPct: round(gainPct, 2),
+    premarketVolume: round(premarketVolume, 0),
+    averagePremarketVolume: 0,
+    relativePremarketVolume: 0,
+    bid: round(bid, 4),
+    ask: round(ask, 4),
+    spread: round(spread, 4),
+    spreadPct: round(spreadPct, 2),
+    spreadStatus,
+    hunterScore: round(hunterScore, 2),
+    rawHunterScore: round(rawHunterScore, 2),
+    hunterStatus,
+    hunterPhase,
+    isInPreferredGainZone: gainPct >= 10 && gainPct <= 65,
+    isExtended: gainPct > 120,
+    isTradeableSpread: spreadPct > 0 && spreadPct <= 2.5,
+    reasons,
+    warnings,
   };
 }
-type NewsBadge = {
-  hasNews: boolean;
-  newsTitle: string;
-  newsPublisher: string;
-  newsUrl: string;
-  newsTime: string;
-  newsAgeMinutes: number;
-  newsTag: "NEWS" | "PRESS RELEASE" | "FILING-LIKE NEWS" | "NO NEWS";
-};
 
-function classifyNews(title: string, publisher: string, url: string): NewsBadge["newsTag"] {
-  const text = `${title} ${publisher} ${url}`.toLowerCase();
-
-  const filingWords = [
-    "8-k",
-    "10-q",
-    "10-k",
-    "s-1",
-    "s-3",
-    "424b",
-    "prospectus",
-    "offering",
-    "shelf",
-    "registration",
-    "reverse split",
-    "warrant",
-    "atm",
-    "sec filing",
-    "edgar",
-  ];
-
-  if (filingWords.some((word) => text.includes(word))) {
-    return "FILING-LIKE NEWS";
-  }
-
-  const pressWords = [
-    "globenewswire",
-    "pr newswire",
-    "business wire",
-    "accesswire",
-    "newsfile",
-    "press release",
-    "announces",
-    "reports",
-    "launches",
-    "receives",
-    "enters into",
-    "agreement",
-  ];
-
-  if (pressWords.some((word) => text.includes(word))) {
-    return "PRESS RELEASE";
-  }
-
-  return "NEWS";
-}
-
-function getNewsAgeMinutes(publishedUtc: string): number {
-  const published = new Date(publishedUtc).getTime();
-  const now = Date.now();
-
-  if (!Number.isFinite(published)) return 0;
-
-  return Math.max(0, Math.round((now - published) / 60000));
-}
-
-async function fetchTickerNews(ticker: string, apiKey: string): Promise<NewsBadge> {
-  const fallback: NewsBadge = {
+async function fetchTickerNews(ticker: string, apiKey: string) {
+  const fallback = {
     hasNews: false,
     newsTitle: "",
     newsPublisher: "",
@@ -455,44 +257,74 @@ async function fetchTickerNews(ticker: string, apiKey: string): Promise<NewsBadg
     if (!ticker || !apiKey) return fallback;
 
     const url =
-      "https://api.polygon.io/v2/reference/news" +
-      `?ticker=${encodeURIComponent(ticker)}` +
-      "&order=desc" +
-      "&sort=published_utc" +
-      "&limit=1" +
-      `&apiKey=${encodeURIComponent(apiKey)}`;
+      `https://api.polygon.io/v2/reference/news?ticker=${encodeURIComponent(ticker)}` +
+      `&order=desc&sort=published_utc&limit=1&apiKey=${encodeURIComponent(apiKey)}`;
 
     const res = await fetch(url, {
       method: "GET",
       cache: "no-store",
-      headers: {
-        Accept: "application/json",
-      },
+      headers: { Accept: "application/json" },
     });
 
     if (!res.ok) return fallback;
 
     const json = (await res.json()) as AnyObj;
     const results = Array.isArray(json.results) ? json.results : [];
-
     const first = results.find(isObj);
+
     if (!first) return fallback;
 
-    const title = str(first.title);
-    const articleUrl = str(first.article_url || first.url);
-    const publishedUtc = str(first.published_utc);
+    const newsTitle = str(first.title);
+    const newsUrl = str(first.article_url || first.url);
+    const newsTime = str(first.published_utc);
 
     const publisherObj = isObj(first.publisher) ? first.publisher : {};
-    const publisher = str(publisherObj.name || first.publisher || first.source);
+    const newsPublisher = str(publisherObj.name || first.publisher || first.source);
+
+    const published = new Date(newsTime).getTime();
+    const newsAgeMinutes = Number.isFinite(published)
+      ? Math.max(0, Math.round((Date.now() - published) / 60000))
+      : 0;
+
+    const text = `${newsTitle} ${newsPublisher} ${newsUrl}`.toLowerCase();
+
+    const filingLike = [
+      "8-k",
+      "10-q",
+      "10-k",
+      "s-1",
+      "s-3",
+      "424b",
+      "prospectus",
+      "offering",
+      "shelf",
+      "registration",
+      "reverse split",
+      "atm",
+      "edgar",
+    ].some((x) => text.includes(x));
+
+    const pressLike = [
+      "globenewswire",
+      "pr newswire",
+      "business wire",
+      "accesswire",
+      "press release",
+      "announces",
+      "reports",
+      "launches",
+      "receives",
+      "agreement",
+    ].some((x) => text.includes(x));
 
     return {
-      hasNews: Boolean(title || articleUrl),
-      newsTitle: title,
-      newsPublisher: publisher,
-      newsUrl: articleUrl,
-      newsTime: publishedUtc,
-      newsAgeMinutes: getNewsAgeMinutes(publishedUtc),
-      newsTag: classifyNews(title, publisher, articleUrl),
+      hasNews: Boolean(newsTitle || newsUrl),
+      newsTitle,
+      newsPublisher,
+      newsUrl,
+      newsTime,
+      newsAgeMinutes,
+      newsTag: filingLike ? "FILING-LIKE NEWS" : pressLike ? "PRESS RELEASE" : "NEWS",
     };
   } catch {
     return fallback;
@@ -502,7 +334,6 @@ async function fetchTickerNews(ticker: string, apiKey: string): Promise<NewsBadg
 export async function GET(req: Request) {
   const startedAt = new Date().toISOString();
   const apiKey = getApiKey();
-
   const { searchParams } = new URL(req.url);
 
   const minPrice = num(searchParams.get("minPrice")) || 0.1;
@@ -511,7 +342,7 @@ export async function GET(req: Request) {
   const maxGain = num(searchParams.get("maxGain")) || 120;
   const minVolume = num(searchParams.get("minVolume")) || 0;
   const limit = num(searchParams.get("limit")) || 10;
-  const removeJunk = toBool(searchParams.get("removeJunk"), true);
+  const removeJunk = boolParam(searchParams.get("removeJunk"), true);
 
   if (!apiKey) {
     return NextResponse.json(
@@ -536,7 +367,7 @@ export async function GET(req: Request) {
 
   try {
     const url =
-      "https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers" +
+      `https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers` +
       `?apiKey=${encodeURIComponent(apiKey)}`;
 
     const res = await fetch(url, {
@@ -576,13 +407,9 @@ export async function GET(req: Request) {
 
     const scoredBase = rowsRaw
       .filter(isObj)
-      .map((row) => buildSnapshotInput(row))
-      .filter((input) => Boolean(input.ticker))
-      .filter((input) => {
-        if (!removeJunk) return true;
-        return !isJunkTicker(String(input.ticker));
-      })
-      .map((input) => buildHunterScore(input))
+      .map((row) => buildHunterRow(row))
+      .filter((item) => Boolean(item.ticker))
+      .filter((item) => !removeJunk || !isJunkTicker(item.ticker))
       .filter((item) => item.price >= minPrice)
       .filter((item) => item.price <= maxPrice)
       .filter((item) => item.gainPct >= minGain)
@@ -600,14 +427,10 @@ export async function GET(req: Request) {
       }));
 
     const scored = await Promise.all(
-      scoredBase.map(async (item) => {
-        const news = await fetchTickerNews(item.ticker, apiKey);
-
-        return {
-          ...item,
-          ...news,
-        };
-      })
+      scoredBase.map(async (item) => ({
+        ...item,
+        ...(await fetchTickerNews(item.ticker, apiKey)),
+      }))
     );
 
     return NextResponse.json(
