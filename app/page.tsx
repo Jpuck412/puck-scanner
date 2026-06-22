@@ -17,6 +17,14 @@ type HunterItem = {
   hunterPhase?: string;
   reasons?: string[];
   warnings?: string[];
+
+  hasNews?: boolean;
+  newsTitle?: string;
+  newsPublisher?: string;
+  newsUrl?: string;
+  newsTime?: string;
+  newsAgeMinutes?: number;
+  newsTag?: string;
 };
 
 type ApiResponse = {
@@ -53,6 +61,13 @@ type Observation = {
 
   currentVolume: number;
   previousVolume: number | null;
+
+  hasNews: boolean;
+  newsTitle: string;
+  newsPublisher: string;
+  newsUrl: string;
+  newsTag: string;
+  newsAgeMinutes: number;
 
   tag: string;
   notes: string[];
@@ -96,6 +111,22 @@ function formatVol(value: unknown): string {
 
 function pillClass(text?: string): string {
   const t = String(text || "").toUpperCase();
+
+  if (
+    t.includes("FILING") ||
+    t.includes("EDGAR") ||
+    t.includes("OFFERING") ||
+    t.includes("ATM") ||
+    t.includes("SHELF") ||
+    t.includes("424B") ||
+    t.includes("S-3")
+  ) {
+    return "watch";
+  }
+
+  if (t.includes("NEWS") || t.includes("PRESS")) {
+    return "good";
+  }
 
   if (
     t.includes("GHOST") ||
@@ -143,6 +174,13 @@ function makeObservation(
   const previousSpreadPct = previous?.currentSpreadPct ?? null;
   const previousVolume = previous?.currentVolume ?? null;
 
+  const hasNews = Boolean(item.hasNews || previous?.hasNews);
+  const newsTitle = String(item.newsTitle || previous?.newsTitle || "");
+  const newsPublisher = String(item.newsPublisher || previous?.newsPublisher || "");
+  const newsUrl = String(item.newsUrl || previous?.newsUrl || "");
+  const newsTag = String(item.newsTag || previous?.newsTag || "NO NEWS");
+  const newsAgeMinutes = num(item.newsAgeMinutes || previous?.newsAgeMinutes);
+
   const appearances = (previous?.appearances || 0) + 1;
   const bestRank = previous ? Math.min(previous.bestRank, currentRank) : currentRank;
 
@@ -179,6 +217,12 @@ function makeObservation(
   if (speedSlowing) notes.push("Gain percent stopped rising.");
   if (spreadLoosening) notes.push("Spread loosened since last scan.");
   if (volumeFading) notes.push("Volume faded since last scan.");
+
+  if (hasNews) {
+    const ageText = newsAgeMinutes > 0 ? ` ${newsAgeMinutes}m ago` : "";
+    notes.push(`${newsTag}${ageText}: ${newsTitle || "Recent ticker news found."}`);
+  }
+
   if (notes.length === 0) notes.push("Still observing. No major change yet.");
 
   let tag = "OBSERVING";
@@ -209,6 +253,13 @@ function makeObservation(
 
     currentVolume,
     previousVolume,
+
+    hasNews,
+    newsTitle,
+    newsPublisher,
+    newsUrl,
+    newsTag,
+    newsAgeMinutes,
 
     tag,
     notes,
@@ -258,7 +309,6 @@ export default function HomePage() {
 
       const json = (await res.json()) as ApiResponse;
       const list = normalizeList(json);
-
       const scanTime = new Date().toLocaleTimeString();
 
       setItems(list);
@@ -504,6 +554,7 @@ export default function HomePage() {
           padding: 11px;
           border-top: 1px solid rgba(255,255,255,.08);
           font-weight: 850;
+          vertical-align: middle;
         }
 
         .ticker {
@@ -516,6 +567,7 @@ export default function HomePage() {
           display: inline-flex;
           border-radius: 999px;
           padding: 6px 9px;
+          margin-top: 5px;
           font-size: 10px;
           font-weight: 950;
           text-transform: uppercase;
@@ -524,6 +576,7 @@ export default function HomePage() {
           background: rgba(255,255,255,.08);
           color: #ddd;
           white-space: nowrap;
+          text-decoration: none;
         }
 
         .pill.good {
@@ -555,6 +608,13 @@ export default function HomePage() {
           align-items: center;
           gap: 8px;
           margin-bottom: 7px;
+        }
+
+        .obs-badges {
+          display: flex;
+          gap: 6px;
+          flex-wrap: wrap;
+          justify-content: flex-end;
         }
 
         .obs-meta {
@@ -614,8 +674,7 @@ export default function HomePage() {
             <div className="eyebrow">Proof Of Structure™</div>
             <h1>Raw Hunter</h1>
             <div className="sub">
-              Light observation tracker. It watches who stays, who climbs, who appears from nowhere, and who starts failing.
-              This is not permission. It is pattern memory.
+              Light observation tracker. It watches who stays, who climbs, who appears from nowhere, who starts failing, and whether news follows the ticker.
             </div>
           </div>
 
@@ -723,24 +782,53 @@ export default function HomePage() {
                 <tbody>
                   {items.map((item, index) => {
                     const ticker = cleanTicker(item.ticker || item.symbol);
+
                     return (
                       <tr key={`${ticker}-${index}`}>
                         <td>#{item.rank || index + 1}</td>
-                        <td className="ticker">{ticker || "—"}</td>
+
+                        <td>
+                          <div className="ticker">{ticker || "—"}</div>
+
+                          {item.hasNews ? (
+                            item.newsUrl ? (
+                              <a
+                                className={`pill ${pillClass(item.newsTag)}`}
+                                href={item.newsUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                title={item.newsTitle || "Recent news"}
+                              >
+                                {item.newsTag || "NEWS"}
+                              </a>
+                            ) : (
+                              <span
+                                className={`pill ${pillClass(item.newsTag)}`}
+                                title={item.newsTitle || "Recent news"}
+                              >
+                                {item.newsTag || "NEWS"}
+                              </span>
+                            )
+                          ) : null}
+                        </td>
+
                         <td>{formatPrice(item.price)}</td>
                         <td>{formatPct(item.gainPct)}</td>
                         <td>{formatVol(item.premarketVolume)}</td>
+
                         <td>
                           {formatPct(item.spreadPct)}{" "}
                           <span className={`pill ${pillClass(item.spreadStatus)}`}>
                             {item.spreadStatus || "UNKNOWN"}
                           </span>
                         </td>
+
                         <td>
                           <span className={`pill ${pillClass(item.hunterStatus)}`}>
                             {item.hunterStatus || "OBSERVE"}
                           </span>
                         </td>
+
                         <td>
                           <span className="pill">{item.hunterPhase || "—"}</span>
                         </td>
@@ -764,14 +852,38 @@ export default function HomePage() {
 
           {observationList.length === 0 ? (
             <div className="empty">
-              Hit New Scan a few times. This panel starts learning who stays, who climbs, and who ghosts in.
+              Hit New Scan a few times. This panel starts learning who stays, who climbs, who ghosts in, and who has news.
             </div>
           ) : (
             observationList.map((obs) => (
               <div className="obs" key={obs.ticker}>
                 <div className="obs-top">
                   <div className="ticker">{obs.ticker}</div>
-                  <span className={`pill ${pillClass(obs.tag)}`}>{obs.tag}</span>
+
+                  <div className="obs-badges">
+                    <span className={`pill ${pillClass(obs.tag)}`}>{obs.tag}</span>
+
+                    {obs.hasNews ? (
+                      obs.newsUrl ? (
+                        <a
+                          className={`pill ${pillClass(obs.newsTag)}`}
+                          href={obs.newsUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          title={obs.newsTitle || "Recent news"}
+                        >
+                          {obs.newsTag}
+                        </a>
+                      ) : (
+                        <span
+                          className={`pill ${pillClass(obs.newsTag)}`}
+                          title={obs.newsTitle || "Recent news"}
+                        >
+                          {obs.newsTag}
+                        </span>
+                      )
+                    ) : null}
+                  </div>
                 </div>
 
                 <div className="obs-meta">
