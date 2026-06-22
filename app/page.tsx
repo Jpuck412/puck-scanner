@@ -1,59 +1,88 @@
+// app/page.tsx
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
-type AnyObj = Record<string, unknown>;
+type NewsFreshness =
+  | "FRESH_CATALYST"
+  | "RECENT_CATALYST"
+  | "BACKGROUND_NEWS"
+  | "STALE_NEWS"
+  | "UNKNOWN_NEWS_AGE";
 
-type HunterItem = {
+type RankStatus =
+  | "NEW"
+  | "RANK_CLIMBER"
+  | "RANK_FADE"
+  | "HOLDING"
+  | "CONSISTENT_TOP_5";
+
+type ActionLabel =
+  | "NEW"
+  | "CLIMBING"
+  | "RUNNING"
+  | "SPRINTING"
+  | "HOLDING"
+  | "FADING"
+  | "WATCHING";
+
+type AlgoItem = {
   rank?: number;
+  currentRank?: number;
+  previousRank?: number | null;
+  rankChange?: number | null;
+  bestRank?: number;
+  topFiveHits?: number;
+  seenCount?: number;
+  rankStatus?: RankStatus;
+
   ticker?: string;
   symbol?: string;
-
   price?: number;
   previousClose?: number;
+
   gainPct?: number;
+  priorGainPct?: number | null;
+  gainChange?: number;
 
-  premarketVolume?: number;
-  averagePremarketVolume?: number;
-  relativePremarketVolume?: number;
+  volume?: number;
+  averageVolume?: number;
+  relativeVolume?: number;
+  dollarVolume?: number;
 
-  bid?: number;
-  ask?: number;
-  spread?: number;
-  spreadPct?: number;
-  spreadStatus?: string;
+  algoPercent?: number;
+  action?: ActionLabel;
+  status?: string;
+  observations?: string[];
 
-  hunterScore?: number;
-  rawHunterScore?: number;
-  hunterStatus?: string;
-  hunterPhase?: string;
-
-  isInPreferredGainZone?: boolean;
-  isExtended?: boolean;
-  isTradeableSpread?: boolean;
-
-  reasons?: string[];
-  warnings?: string[];
+  newsCategory?: string;
+  newsHeadline?: string;
+  newsAgeMinutes?: number | null;
+  newsFreshness?: NewsFreshness;
+  isFreshCatalyst?: boolean;
+  newsObservation?: string;
+  newsUrl?: string;
+  newsPublisher?: string;
+  newsTime?: string;
 };
 
 type ApiResponse = {
   ok?: boolean;
   source?: string;
   mode?: string;
+  marketMode?: string;
   message?: string;
   rawCount?: number;
   showing?: number;
   topTicker?: string | null;
-  topScore?: number;
-  results?: HunterItem[];
-  gainers?: HunterItem[];
-  tickers?: HunterItem[];
-  data?: HunterItem[];
+  topAlgoPercent?: number;
+  runnerHunter?: AlgoItem[];
+  leaderHunter?: AlgoItem[];
+  data?: {
+    runnerHunter?: AlgoItem[];
+    leaderHunter?: AlgoItem[];
+  };
 };
-
-function isObj(value: unknown): value is AnyObj {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function num(value: unknown): number {
   const n = Number(value);
@@ -61,14 +90,22 @@ function num(value: unknown): number {
 }
 
 function str(value: unknown): string {
-  return String(value || "").trim();
+  return String(value ?? "").trim();
 }
 
-function normalizeList(json: ApiResponse): HunterItem[] {
-  if (Array.isArray(json.results)) return json.results;
-  if (Array.isArray(json.gainers)) return json.gainers;
-  if (Array.isArray(json.tickers)) return json.tickers;
-  if (Array.isArray(json.data)) return json.data;
+function cleanTicker(value: unknown): string {
+  return str(value).toUpperCase();
+}
+
+function normalizeRunnerList(json: ApiResponse): AlgoItem[] {
+  if (Array.isArray(json.runnerHunter)) return json.runnerHunter;
+  if (Array.isArray(json.data?.runnerHunter)) return json.data?.runnerHunter ?? [];
+  return [];
+}
+
+function normalizeLeaderList(json: ApiResponse): AlgoItem[] {
+  if (Array.isArray(json.leaderHunter)) return json.leaderHunter;
+  if (Array.isArray(json.data?.leaderHunter)) return json.data?.leaderHunter ?? [];
   return [];
 }
 
@@ -80,493 +117,466 @@ function formatPrice(value: unknown): string {
 }
 
 function formatPct(value: unknown): string {
-  const n = num(value);
-  return `${n.toFixed(2)}%`;
+  return `${num(value).toFixed(2)}%`;
+}
+
+function formatNullablePct(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "—";
+  return `${num(value).toFixed(2)}%`;
 }
 
 function formatVolume(value: unknown): string {
   const n = num(value);
-
   if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`;
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-
   return String(Math.round(n));
 }
 
-function statusClass(status?: string): string {
-  const s = String(status || "").toUpperCase();
+function formatRank(value: number | null | undefined): string {
+  if (!value) return "—";
+  return `#${value}`;
+}
 
-  if (s.includes("CLIMBING")) return "good";
-  if (s.includes("FADING")) return "bad";
-  if (s.includes("TIGHT")) return "good";
-  if (s.includes("WIDE")) return "bad";
-  if (s.includes("OK")) return "watch";
+function formatRankChange(value: number | null | undefined): string {
+  if (value === null || value === undefined) return "NEW";
+  if (value > 0) return `+${value}`;
+  return String(value);
+}
+
+function formatFreshness(item: AlgoItem): string {
+  const freshness = str(item.newsFreshness || "UNKNOWN_NEWS_AGE");
+  const age = item.newsAgeMinutes;
+
+  if (typeof age === "number" && Number.isFinite(age)) {
+    return `${freshness} • ${age}m`;
+  }
+
+  return freshness;
+}
+
+function pillClass(text?: string): string {
+  const t = str(text).toUpperCase();
+
+  if (
+    t.includes("SPRINTING") ||
+    t.includes("RUNNING") ||
+    t.includes("CLIMBING") ||
+    t.includes("FRESH_CATALYST") ||
+    t.includes("RECENT_CATALYST") ||
+    t.includes("CONSISTENT_TOP_5")
+  ) {
+    return "good";
+  }
+
+  if (
+    t.includes("FADING") ||
+    t.includes("PUMP LOSING CONTROL") ||
+    t.includes("RANK_FADE") ||
+    t.includes("BACKGROUND_NEWS") ||
+    t.includes("STALE_NEWS")
+  ) {
+    return "bad";
+  }
+
+  if (
+    t.includes("NEW") ||
+    t.includes("HOLDING") ||
+    t.includes("WATCHING") ||
+    t.includes("UNKNOWN") ||
+    t.includes("PRESS") ||
+    t.includes("FILING")
+  ) {
+    return "watch";
+  }
 
   return "neutral";
 }
 
 export default function HomePage() {
-  const [items, setItems] = useState<HunterItem[]>([]);
+  const [runners, setRunners] = useState<AlgoItem[]>([]);
+  const [leaders, setLeaders] = useState<AlgoItem[]>([]);
+
   const [rawCount, setRawCount] = useState(0);
   const [showing, setShowing] = useState(0);
   const [topTicker, setTopTicker] = useState<string | null>(null);
-  const [topScore, setTopScore] = useState(0);
+  const [topAlgoPercent, setTopAlgoPercent] = useState(0);
   const [source, setSource] = useState("waiting");
-  const [mode, setMode] = useState("RAW_HUNTER_GATHERER");
+  const [mode, setMode] = useState("ALGO_RUNNER_HUNTER");
+  const [marketMode, setMarketMode] = useState("waiting");
   const [message, setMessage] = useState("");
+  const [lastScan, setLastScan] = useState("Never");
   const [loading, setLoading] = useState(false);
-  const [lastScan, setLastScan] = useState<string>("Never");
 
   const [minPrice, setMinPrice] = useState("0.10");
   const [maxPrice, setMaxPrice] = useState("10");
   const [minGain, setMinGain] = useState("0");
   const [maxGain, setMaxGain] = useState("120");
   const [minVolume, setMinVolume] = useState("0");
-  const [limit, setLimit] = useState("10");
+  const [runnerMaxRank, setRunnerMaxRank] = useState("30");
+  const [runnerLimit, setRunnerLimit] = useState("15");
   const [removeJunk, setRemoveJunk] = useState(true);
 
-  const [manualInput, setManualInput] = useState("");
-  const [manualTickers, setManualTickers] = useState<string[]>([]);
+  const fetchHunter = useCallback(
+    async (resetMemory = false) => {
+      setLoading(true);
+      setMessage("");
 
-  const fetchHunter = useCallback(async () => {
-    setLoading(true);
-    setMessage("");
+      try {
+        const params = new URLSearchParams({
+          minPrice,
+          maxPrice,
+          minGain,
+          maxGain,
+          minVolume,
+          runnerMaxRank,
+          runnerLimit,
+          removeJunk: String(removeJunk),
+          resetMemory: String(resetMemory),
+        });
 
-    try {
-      const params = new URLSearchParams({
-        minPrice,
-        maxPrice,
-        minGain,
-        maxGain,
-        minVolume,
-        limit,
-        removeJunk: String(removeJunk),
-      });
+        const res = await fetch(`/api/gainers?${params.toString()}`, {
+          method: "GET",
+          cache: "no-store",
+        });
 
-      const res = await fetch(`/api/gainers?${params.toString()}`, {
-        method: "GET",
-        cache: "no-store",
-      });
+        const json = (await res.json()) as ApiResponse;
+        const nextRunners = normalizeRunnerList(json);
+        const nextLeaders = normalizeLeaderList(json);
 
-      const jsonUnknown = await res.json();
-
-      if (!isObj(jsonUnknown)) {
-        throw new Error("Bad API response.");
+        setRunners(nextRunners);
+        setLeaders(nextLeaders);
+        setRawCount(num(json.rawCount));
+        setShowing(num(json.showing) || nextRunners.length + nextLeaders.length);
+        setTopTicker(
+          json.topTicker || cleanTicker(nextRunners[0]?.ticker || nextLeaders[0]?.ticker) || null
+        );
+        setTopAlgoPercent(num(json.topAlgoPercent) || num(nextRunners[0]?.algoPercent));
+        setSource(str(json.source || "unknown"));
+        setMode(str(json.mode || "ALGO_RUNNER_HUNTER"));
+        setMarketMode(str(json.marketMode || "unknown"));
+        setMessage(str(json.message || ""));
+        setLastScan(new Date().toLocaleTimeString());
+      } catch (error) {
+        const text = error instanceof Error ? error.message : "Unknown page error.";
+        setMessage(text);
+        setRunners([]);
+        setLeaders([]);
+        setRawCount(0);
+        setShowing(0);
+        setTopTicker(null);
+        setTopAlgoPercent(0);
+      } finally {
+        setLoading(false);
       }
-
-      const json = jsonUnknown as ApiResponse;
-      const list = normalizeList(json);
-
-      setItems(list);
-      setRawCount(num(json.rawCount));
-      setShowing(num(json.showing) || list.length);
-      setTopTicker(json.topTicker || list[0]?.ticker || list[0]?.symbol || null);
-      setTopScore(num(json.topScore) || num(list[0]?.hunterScore));
-      setSource(str(json.source) || "unknown");
-      setMode(str(json.mode) || "RAW_HUNTER_GATHERER");
-      setMessage(str(json.message));
-      setLastScan(new Date().toLocaleTimeString());
-    } catch (error) {
-      const text = error instanceof Error ? error.message : "Unknown page error.";
-      setMessage(text);
-      setItems([]);
-      setRawCount(0);
-      setShowing(0);
-      setTopTicker(null);
-      setTopScore(0);
-    } finally {
-      setLoading(false);
-    }
-  }, [minPrice, maxPrice, minGain, maxGain, minVolume, limit, removeJunk]);
+    },
+    [minPrice, maxPrice, minGain, maxGain, minVolume, runnerMaxRank, runnerLimit, removeJunk]
+  );
 
   useEffect(() => {
-    fetchHunter();
+    void fetchHunter();
   }, [fetchHunter]);
 
-  const addManualTickers = useCallback(() => {
-    const next = manualInput
-      .split(/[,\s]+/)
-      .map((x) => x.trim().toUpperCase())
-      .filter(Boolean)
-      .filter((x) => /^[A-Z]{1,5}$/.test(x));
-
-    setManualTickers((old) => Array.from(new Set([...old, ...next])));
-    setManualInput("");
-  }, [manualInput]);
-
-  const manualMatches = useMemo(() => {
-    const lookup = new Map<string, HunterItem>();
-
-    for (const item of items) {
-      const ticker = String(item.ticker || item.symbol || "").toUpperCase();
-      if (ticker) lookup.set(ticker, item);
-    }
-
-    return manualTickers.map((ticker) => ({
-      ticker,
-      item: lookup.get(ticker) || null,
-    }));
-  }, [items, manualTickers]);
-
-  const best = items[0];
-
   return (
-    <main className="page-shell">
+    <main className="shell">
       <style>{`
-        * {
-          box-sizing: border-box;
-        }
+        * { box-sizing: border-box; }
 
         body {
           margin: 0;
           background:
-            radial-gradient(circle at top left, rgba(255, 199, 44, 0.18), transparent 32%),
-            radial-gradient(circle at top right, rgba(255, 255, 255, 0.08), transparent 28%),
-            linear-gradient(135deg, #030303 0%, #111111 44%, #050505 100%);
+            radial-gradient(circle at top left, rgba(255,199,44,.14), transparent 35%),
+            linear-gradient(135deg, #030303, #111, #050505);
           color: #f5f5f5;
           font-family: Arial, Helvetica, sans-serif;
         }
 
-        .page-shell {
+        .shell {
           min-height: 100vh;
-          padding: 24px;
+          padding: 22px;
         }
 
-        .hero {
-          border: 1px solid rgba(255, 199, 44, 0.35);
-          background:
-            linear-gradient(135deg, rgba(255, 199, 44, 0.16), rgba(255, 255, 255, 0.03)),
-            rgba(0, 0, 0, 0.72);
-          border-radius: 28px;
-          padding: 24px;
-          box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
+        .hero, .panel {
+          border: 1px solid rgba(255,199,44,.22);
+          background: rgba(0,0,0,.72);
+          border-radius: 24px;
+          padding: 18px;
+          box-shadow: 0 24px 70px rgba(0,0,0,.45);
         }
 
-        .hero-top {
+        .top {
           display: flex;
           align-items: flex-start;
           justify-content: space-between;
-          gap: 18px;
+          gap: 14px;
           flex-wrap: wrap;
         }
 
         .eyebrow {
           color: #ffc72c;
-          font-weight: 900;
-          letter-spacing: 0.16em;
           font-size: 12px;
+          font-weight: 950;
+          letter-spacing: .16em;
           text-transform: uppercase;
-          margin-bottom: 8px;
         }
 
         h1 {
-          margin: 0;
-          font-size: clamp(32px, 6vw, 74px);
-          line-height: 0.95;
-          letter-spacing: -0.06em;
+          margin: 6px 0 0;
+          font-size: clamp(34px, 6vw, 66px);
+          line-height: .95;
+          letter-spacing: -.06em;
           text-transform: uppercase;
         }
 
-        .subtitle {
-          max-width: 980px;
-          color: #cfcfcf;
-          font-size: 15px;
-          line-height: 1.6;
-          margin-top: 14px;
+        h2 {
+          margin: 0 0 12px;
+          font-size: 19px;
+          text-transform: uppercase;
+          letter-spacing: -.03em;
         }
 
-        .button-row {
-          display: flex;
-          gap: 10px;
-          flex-wrap: wrap;
+        .sub {
+          color: #cfcfcf;
+          max-width: 980px;
+          line-height: 1.5;
+          margin-top: 12px;
+          font-size: 14px;
         }
 
         button {
           border: 0;
+          border-radius: 15px;
+          padding: 12px 15px;
+          font-weight: 950;
           cursor: pointer;
-          border-radius: 16px;
-          padding: 13px 16px;
-          font-weight: 900;
           text-transform: uppercase;
-          letter-spacing: 0.04em;
+          letter-spacing: .04em;
         }
 
-        .gold-button {
-          background: linear-gradient(135deg, #ffc72c, #d89b00);
-          color: #050505;
-          box-shadow: 0 10px 30px rgba(255, 199, 44, 0.2);
+        .gold {
+          background: linear-gradient(135deg, #ffc72c, #c99000);
+          color: #030303;
         }
 
-        .dark-button {
-          background: rgba(255, 255, 255, 0.08);
-          color: #f5f5f5;
-          border: 1px solid rgba(255, 255, 255, 0.14);
+        .dark {
+          background: rgba(255,255,255,.08);
+          color: #fff;
+          border: 1px solid rgba(255,255,255,.15);
         }
 
-        .grid {
+        .stats {
           display: grid;
-          grid-template-columns: repeat(4, minmax(0, 1fr));
-          gap: 14px;
-          margin-top: 18px;
+          grid-template-columns: repeat(5, minmax(0,1fr));
+          gap: 12px;
+          margin-top: 16px;
         }
 
-        .card {
-          border: 1px solid rgba(255, 255, 255, 0.12);
-          background: rgba(255, 255, 255, 0.055);
-          border-radius: 22px;
-          padding: 16px;
-          box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+        .stat {
+          border: 1px solid rgba(255,255,255,.12);
+          border-radius: 18px;
+          padding: 14px;
+          background: rgba(255,255,255,.055);
         }
 
         .label {
           color: #9f9f9f;
           font-size: 11px;
           text-transform: uppercase;
-          letter-spacing: 0.12em;
-          font-weight: 900;
+          letter-spacing: .12em;
+          font-weight: 950;
         }
 
-        .big-value {
-          font-size: 30px;
+        .value {
+          font-size: 26px;
           font-weight: 950;
-          margin-top: 6px;
-          letter-spacing: -0.04em;
+          margin-top: 5px;
         }
 
         .filters {
           display: grid;
-          grid-template-columns: repeat(7, minmax(0, 1fr));
-          gap: 12px;
-          margin-top: 18px;
+          grid-template-columns: repeat(8, minmax(0,1fr));
+          gap: 10px;
+          margin-top: 16px;
         }
 
         .field {
           display: flex;
           flex-direction: column;
-          gap: 7px;
-        }
-
-        .field label {
-          color: #bdbdbd;
-          font-size: 11px;
-          text-transform: uppercase;
-          letter-spacing: 0.1em;
-          font-weight: 900;
+          gap: 6px;
         }
 
         input {
-          width: 100%;
-          background: rgba(0, 0, 0, 0.55);
-          border: 1px solid rgba(255, 255, 255, 0.14);
+          background: rgba(0,0,0,.55);
+          border: 1px solid rgba(255,255,255,.14);
           color: #fff;
-          border-radius: 14px;
-          padding: 12px;
+          border-radius: 13px;
+          padding: 11px;
+          font-weight: 850;
           outline: none;
-          font-weight: 800;
+          width: 100%;
         }
 
         input:focus {
-          border-color: rgba(255, 199, 44, 0.75);
-          box-shadow: 0 0 0 3px rgba(255, 199, 44, 0.1);
+          border-color: rgba(255,199,44,.75);
         }
 
-        .check-line {
+        .check {
           display: flex;
           align-items: center;
-          gap: 9px;
-          height: 100%;
-          padding-top: 19px;
+          gap: 8px;
+          padding-top: 20px;
+          font-weight: 850;
           color: #d8d8d8;
-          font-size: 13px;
-          font-weight: 800;
         }
 
-        .check-line input {
+        .check input {
           width: auto;
         }
 
-        .content-grid {
+        .meta {
+          color: #aaa;
+          font-size: 12px;
+          line-height: 1.45;
+          margin-top: 14px;
+        }
+
+        .layout {
           display: grid;
-          grid-template-columns: 1.2fr 0.8fr;
-          gap: 18px;
-          margin-top: 18px;
+          grid-template-columns: 1.35fr .95fr;
+          gap: 16px;
+          margin-top: 16px;
         }
 
-        .panel {
-          border: 1px solid rgba(255, 255, 255, 0.12);
-          background: rgba(0, 0, 0, 0.56);
-          border-radius: 26px;
-          padding: 18px;
-          box-shadow: 0 24px 60px rgba(0, 0, 0, 0.36);
-        }
-
-        .panel-title {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 10px;
-          margin-bottom: 14px;
-        }
-
-        .panel-title h2 {
-          margin: 0;
-          font-size: 20px;
-          letter-spacing: -0.03em;
-          text-transform: uppercase;
-        }
-
-        .pill {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          border-radius: 999px;
-          padding: 7px 10px;
-          font-size: 11px;
-          font-weight: 950;
-          text-transform: uppercase;
-          letter-spacing: 0.06em;
-          background: rgba(255,255,255,0.08);
-          color: #d7d7d7;
-          border: 1px solid rgba(255,255,255,0.1);
-          white-space: nowrap;
-        }
-
-        .pill.good {
-          color: #72ff9d;
-          background: rgba(114, 255, 157, 0.09);
-          border-color: rgba(114, 255, 157, 0.25);
-        }
-
-        .pill.watch {
-          color: #ffc72c;
-          background: rgba(255, 199, 44, 0.09);
-          border-color: rgba(255, 199, 44, 0.25);
-        }
-
-        .pill.bad {
-          color: #ff6b6b;
-          background: rgba(255, 107, 107, 0.09);
-          border-color: rgba(255, 107, 107, 0.25);
+        .stack {
+          display: grid;
+          gap: 16px;
         }
 
         .table-wrap {
           overflow-x: auto;
-          border-radius: 18px;
-          border: 1px solid rgba(255,255,255,0.08);
+          border: 1px solid rgba(255,255,255,.08);
+          border-radius: 17px;
         }
 
         table {
           width: 100%;
+          min-width: 1280px;
           border-collapse: collapse;
-          min-width: 980px;
         }
 
         th {
           text-align: left;
-          color: #999;
+          color: #aaa;
+          background: rgba(255,255,255,.055);
+          padding: 11px;
           font-size: 11px;
           text-transform: uppercase;
-          letter-spacing: 0.08em;
-          padding: 12px;
-          background: rgba(255,255,255,0.05);
+          letter-spacing: .08em;
+          white-space: nowrap;
         }
 
         td {
-          padding: 12px;
-          border-top: 1px solid rgba(255,255,255,0.08);
-          vertical-align: middle;
-          font-weight: 800;
+          padding: 11px;
+          border-top: 1px solid rgba(255,255,255,.08);
+          font-weight: 850;
+          vertical-align: top;
         }
 
         .ticker {
+          color: #ffc72c;
           font-size: 18px;
           font-weight: 950;
-          color: #ffc72c;
-          letter-spacing: 0.02em;
         }
 
-        .score {
-          font-size: 22px;
-          font-weight: 950;
+        .headline {
+          margin-top: 6px;
+          color: #cfcfcf;
+          font-size: 12px;
+          line-height: 1.35;
+          max-width: 340px;
         }
 
         .muted {
-          color: #9f9f9f;
-        }
-
-        .reason-list {
-          display: flex;
-          flex-direction: column;
-          gap: 8px;
-          margin-top: 10px;
-        }
-
-        .reason {
-          padding: 10px 12px;
-          border-radius: 14px;
-          background: rgba(255,255,255,0.06);
-          color: #d9d9d9;
-          font-size: 13px;
+          color: #aaa;
+          font-size: 12px;
           line-height: 1.35;
         }
 
-        .manual-row {
+        .pill {
+          display: inline-flex;
+          border-radius: 999px;
+          padding: 6px 9px;
+          font-size: 10px;
+          font-weight: 950;
+          text-transform: uppercase;
+          letter-spacing: .05em;
+          border: 1px solid rgba(255,255,255,.12);
+          background: rgba(255,255,255,.08);
+          color: #ddd;
+          white-space: nowrap;
+          text-decoration: none;
+        }
+
+        .pill.good {
+          color: #76ff9f;
+          background: rgba(118,255,159,.09);
+          border-color: rgba(118,255,159,.25);
+        }
+
+        .pill.watch {
+          color: #ffc72c;
+          background: rgba(255,199,44,.09);
+          border-color: rgba(255,199,44,.25);
+        }
+
+        .pill.bad {
+          color: #ff7b7b;
+          background: rgba(255,123,123,.09);
+          border-color: rgba(255,123,123,.25);
+        }
+
+        .pill-row {
+          display: flex;
+          gap: 6px;
+          flex-wrap: wrap;
+        }
+
+        .guide {
           display: grid;
-          grid-template-columns: 1fr auto;
           gap: 10px;
-          margin-bottom: 12px;
         }
 
-        .watch-item {
-          display: grid;
-          grid-template-columns: 0.8fr 1fr 1fr 1fr;
-          gap: 8px;
-          align-items: center;
-          border-top: 1px solid rgba(255,255,255,0.08);
-          padding: 12px 0;
+        .guide-item {
+          border-radius: 14px;
+          background: rgba(255,255,255,.055);
+          border: 1px solid rgba(255,255,255,.08);
+          padding: 12px;
+          line-height: 1.45;
+          color: #ddd;
+          font-size: 13px;
         }
 
-        .remove {
-          background: rgba(255, 107, 107, 0.12);
-          color: #ff8a8a;
-          border: 1px solid rgba(255, 107, 107, 0.24);
-          padding: 8px 10px;
-          border-radius: 12px;
-        }
-
-        .empty {
-          border: 1px dashed rgba(255, 255, 255, 0.18);
-          border-radius: 20px;
-          padding: 24px;
-          color: #a9a9a9;
-          line-height: 1.5;
+        .empty, .error {
+          border-radius: 18px;
+          padding: 18px;
+          color: #aaa;
+          border: 1px dashed rgba(255,255,255,.18);
           text-align: center;
+          line-height: 1.45;
         }
 
         .error {
-          margin-top: 14px;
-          border: 1px solid rgba(255, 107, 107, 0.35);
-          background: rgba(255, 107, 107, 0.08);
+          margin-top: 12px;
+          border-style: solid;
           color: #ffd1d1;
-          border-radius: 16px;
-          padding: 12px;
-          font-weight: 800;
+          background: rgba(255,90,90,.08);
+          border-color: rgba(255,90,90,.25);
+          font-weight: 850;
         }
 
-        @media (max-width: 1100px) {
-          .grid,
-          .filters,
-          .content-grid {
+        @media (max-width: 1200px) {
+          .stats, .filters, .layout {
             grid-template-columns: 1fr;
-          }
-
-          .hero-top {
-            flex-direction: column;
-          }
-
-          .button-row {
-            width: 100%;
           }
 
           button {
@@ -576,90 +586,92 @@ export default function HomePage() {
       `}</style>
 
       <section className="hero">
-        <div className="hero-top">
+        <div className="top">
           <div>
-            <div className="eyebrow">Proof Of Structure™</div>
-            <h1>Raw Hunter Gatherer</h1>
-            <p className="subtitle">
-              Discovery only. This page reads <b>/api/gainers</b>, ranks the 4AM-style runners, and shows evidence without pretending it is a buy signal.
-            </p>
+            <div className="eyebrow">Algo Runner Hunter</div>
+            <h1>Runner Hunter</h1>
+            <div className="sub">
+              Runner Hunter surfaces names under the top 5 that are climbing hardest into the gain
+              list. Leader Hunter keeps the current top 5 in view. News is always attached, but only
+              fresh or recent news is treated as a possible live catalyst.
+            </div>
           </div>
 
-          <div className="button-row">
-            <button className="gold-button" onClick={fetchHunter} disabled={loading}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button className="gold" onClick={() => void fetchHunter()} disabled={loading}>
               {loading ? "Scanning..." : "New Scan"}
             </button>
-            <button
-              className="dark-button"
-              onClick={() => {
-                setMinPrice("0.10");
-                setMaxPrice("10");
-                setMinGain("0");
-                setMaxGain("120");
-                setMinVolume("0");
-                setLimit("10");
-                setRemoveJunk(true);
-              }}
-            >
-              Reset Filters
+
+            <button className="dark" onClick={() => void fetchHunter(true)} disabled={loading}>
+              Clear Memory
             </button>
           </div>
         </div>
 
-        <div className="grid">
-          <div className="card">
-            <div className="label">Top Ticker</div>
-            <div className="big-value">{topTicker || "—"}</div>
+        <div className="stats">
+          <div className="stat">
+            <div className="label">Top Runner</div>
+            <div className="value">{topTicker || "—"}</div>
           </div>
 
-          <div className="card">
-            <div className="label">Top Score</div>
-            <div className="big-value">{topScore.toFixed(0)}</div>
+          <div className="stat">
+            <div className="label">Top Algo %</div>
+            <div className="value">{topAlgoPercent.toFixed(2)}</div>
           </div>
 
-          <div className="card">
+          <div className="stat">
+            <div className="label">Market Mode</div>
+            <div className="value">{marketMode}</div>
+          </div>
+
+          <div className="stat">
             <div className="label">Raw Count</div>
-            <div className="big-value">{rawCount}</div>
+            <div className="value">{rawCount}</div>
           </div>
 
-          <div className="card">
+          <div className="stat">
             <div className="label">Showing</div>
-            <div className="big-value">{showing}</div>
+            <div className="value">{showing}</div>
           </div>
         </div>
 
         <div className="filters">
           <div className="field">
-            <label>Min Price</label>
+            <label className="label">Min Price</label>
             <input value={minPrice} onChange={(e) => setMinPrice(e.target.value)} />
           </div>
 
           <div className="field">
-            <label>Max Price</label>
+            <label className="label">Max Price</label>
             <input value={maxPrice} onChange={(e) => setMaxPrice(e.target.value)} />
           </div>
 
           <div className="field">
-            <label>Min Gain %</label>
+            <label className="label">Min Gain %</label>
             <input value={minGain} onChange={(e) => setMinGain(e.target.value)} />
           </div>
 
           <div className="field">
-            <label>Max Gain %</label>
+            <label className="label">Max Gain %</label>
             <input value={maxGain} onChange={(e) => setMaxGain(e.target.value)} />
           </div>
 
           <div className="field">
-            <label>Min Volume</label>
+            <label className="label">Min Volume</label>
             <input value={minVolume} onChange={(e) => setMinVolume(e.target.value)} />
           </div>
 
           <div className="field">
-            <label>Limit</label>
-            <input value={limit} onChange={(e) => setLimit(e.target.value)} />
+            <label className="label">Runner Max Rank</label>
+            <input value={runnerMaxRank} onChange={(e) => setRunnerMaxRank(e.target.value)} />
           </div>
 
-          <label className="check-line">
+          <div className="field">
+            <label className="label">Runner Limit</label>
+            <input value={runnerLimit} onChange={(e) => setRunnerLimit(e.target.value)} />
+          </div>
+
+          <label className="check">
             <input
               type="checkbox"
               checked={removeJunk}
@@ -669,64 +681,114 @@ export default function HomePage() {
           </label>
         </div>
 
+        <div className="meta">
+          Last scan: <b>{lastScan}</b>
+          {" | "}
+          Mode: <b>{mode}</b>
+          {" | "}
+          Source: <b>{source}</b>
+        </div>
+
         {message ? <div className="error">{message}</div> : null}
       </section>
 
-      <section className="content-grid">
+      <section className="layout">
         <div className="panel">
-          <div className="panel-title">
-            <h2>Hunter Top List</h2>
-            <span className="pill watch">Last Scan: {lastScan}</span>
-          </div>
+          <h2>Runner Hunter</h2>
 
-          {items.length === 0 ? (
+          {runners.length === 0 ? (
             <div className="empty">
-              No Hunter results showing. Check API key, route build, market data, or filters.
+              No runner candidates yet. These are the names below top 5 that are trying to come up
+              the middle.
             </div>
           ) : (
             <div className="table-wrap">
               <table>
                 <thead>
                   <tr>
-                    <th>Rank</th>
+                    <th>Gain Rank</th>
+                    <th>Prev Rank</th>
+                    <th>Rank Change</th>
                     <th>Ticker</th>
                     <th>Price</th>
                     <th>Gain</th>
+                    <th>Prior Gain</th>
+                    <th>Gain Change</th>
                     <th>Volume</th>
-                    <th>RVOL</th>
-                    <th>Spread</th>
-                    <th>Score</th>
-                    <th>Status</th>
-                    <th>Phase</th>
+                    <th>Algo %</th>
+                    <th>Action</th>
+                    <th>News</th>
                   </tr>
                 </thead>
 
                 <tbody>
-                  {items.map((item, index) => {
-                    const ticker = String(item.ticker || item.symbol || "—").toUpperCase();
+                  {runners.map((item, index) => {
+                    const ticker = cleanTicker(item.ticker || item.symbol);
 
                     return (
                       <tr key={`${ticker}-${index}`}>
-                        <td>{item.rank || index + 1}</td>
-                        <td className="ticker">{ticker}</td>
+                        <td>{formatRank(item.currentRank || item.rank)}</td>
+                        <td>{formatRank(item.previousRank)}</td>
+                        <td>{formatRankChange(item.rankChange)}</td>
+
+                        <td>
+                          <div className="ticker">{ticker || "—"}</div>
+                          <div className="pill-row" style={{ marginTop: 6 }}>
+                            <span className={`pill ${pillClass(item.action)}`}>
+                              {item.action || "WATCHING"}
+                            </span>
+                            <span className={`pill ${pillClass(item.rankStatus)}`}>
+                              {item.rankStatus || "HOLDING"}
+                            </span>
+                          </div>
+                        </td>
+
                         <td>{formatPrice(item.price)}</td>
                         <td>{formatPct(item.gainPct)}</td>
-                        <td>{formatVolume(item.premarketVolume)}</td>
-                        <td>{num(item.relativePremarketVolume).toFixed(2)}</td>
+                        <td>{formatNullablePct(item.priorGainPct)}</td>
+                        <td>{formatPct(item.gainChange)}</td>
+                        <td>{formatVolume(item.volume)}</td>
+                        <td>{formatPct(item.algoPercent)}</td>
+
                         <td>
-                          {formatPct(item.spreadPct)}{" "}
-                          <span className={`pill ${statusClass(item.spreadStatus)}`}>
-                            {item.spreadStatus || "UNKNOWN"}
-                          </span>
+                          <div>{item.status || "HOLDING"}</div>
+                          {item.observations?.[0] ? (
+                            <div className="muted" style={{ marginTop: 6 }}>
+                              {item.observations[0]}
+                            </div>
+                          ) : null}
                         </td>
-                        <td className="score">{num(item.hunterScore).toFixed(0)}</td>
+
                         <td>
-                          <span className={`pill ${statusClass(item.hunterStatus)}`}>
-                            {item.hunterStatus || "FLAT"}
-                          </span>
-                        </td>
-                        <td>
-                          <span className="pill">{item.hunterPhase || "—"}</span>
+                          {item.newsHeadline ? (
+                            <>
+                              <div className="pill-row">
+                                {item.newsUrl ? (
+                                  <a
+                                    className={`pill ${pillClass(item.newsFreshness)}`}
+                                    href={item.newsUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                  >
+                                    {formatFreshness(item)}
+                                  </a>
+                                ) : (
+                                  <span className={`pill ${pillClass(item.newsFreshness)}`}>
+                                    {formatFreshness(item)}
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="headline">{item.newsHeadline}</div>
+                              <div className="muted" style={{ marginTop: 6 }}>
+                                {item.isFreshCatalyst
+                                  ? "Possible live catalyst."
+                                  : "Background news only — not confirmed as current move catalyst."}
+                              </div>
+                            </>
+                          ) : (
+                            "—"
+                          )}
                         </td>
                       </tr>
                     );
@@ -737,93 +799,127 @@ export default function HomePage() {
           )}
         </div>
 
-        <aside className="panel">
-          <div className="panel-title">
-            <h2>Mission Control</h2>
-            <span className="pill">{mode}</span>
-          </div>
+        <div className="stack">
+          <div className="panel">
+            <h2>Leader Hunter</h2>
 
-          <div className="card">
-            <div className="label">Source</div>
-            <div className="big-value" style={{ fontSize: 18 }}>{source}</div>
-          </div>
+            {leaders.length === 0 ? (
+              <div className="empty">No current leaders.</div>
+            ) : (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Gain Rank</th>
+                      <th>Ticker</th>
+                      <th>Gain</th>
+                      <th>Gain Change</th>
+                      <th>Algo %</th>
+                      <th>Action</th>
+                      <th>News</th>
+                    </tr>
+                  </thead>
 
-          <div style={{ height: 12 }} />
+                  <tbody>
+                    {leaders.map((item, index) => {
+                      const ticker = cleanTicker(item.ticker || item.symbol);
 
-          <div className="card">
-            <div className="label">Best Read</div>
-            <div className="big-value">{best?.ticker || best?.symbol || "—"}</div>
-            <div className="reason-list">
-              {(best?.reasons || []).slice(0, 5).map((reason, index) => (
-                <div className="reason" key={`reason-${index}`}>
-                  ✅ {reason}
-                </div>
-              ))}
+                      return (
+                        <tr key={`${ticker}-${index}`}>
+                          <td>{formatRank(item.currentRank || item.rank)}</td>
 
-              {(best?.warnings || []).slice(0, 5).map((warning, index) => (
-                <div className="reason" key={`warning-${index}`}>
-                  ⚠️ {warning}
-                </div>
-              ))}
+                          <td>
+                            <div className="ticker">{ticker || "—"}</div>
+                            <div className="pill-row" style={{ marginTop: 6 }}>
+                              <span className={`pill ${pillClass(item.action)}`}>
+                                {item.action || "WATCHING"}
+                              </span>
+                              <span className={`pill ${pillClass(item.rankStatus)}`}>
+                                {item.rankStatus || "HOLDING"}
+                              </span>
+                            </div>
+                          </td>
 
-              {!best ? (
-                <div className="reason">No top ticker yet.</div>
-              ) : null}
-            </div>
-          </div>
+                          <td>{formatPct(item.gainPct)}</td>
+                          <td>{formatPct(item.gainChange)}</td>
+                          <td>{formatPct(item.algoPercent)}</td>
+                          <td>{item.status || "HOLDING"}</td>
 
-          <div style={{ height: 18 }} />
-
-          <div className="panel-title">
-            <h2>Manual Watch</h2>
-            <span className="pill watch">Local</span>
-          </div>
-
-          <div className="manual-row">
-            <input
-              value={manualInput}
-              onChange={(e) => setManualInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") addManualTickers();
-              }}
-              placeholder="AZTR, IONZ, ONCY"
-            />
-            <button className="gold-button" onClick={addManualTickers}>
-              Add
-            </button>
-          </div>
-
-          {manualMatches.length === 0 ? (
-            <div className="empty">
-              Type tickers here. If the Hunter API returns them, this panel shows their score.
-            </div>
-          ) : (
-            manualMatches.map(({ ticker, item }) => (
-              <div className="watch-item" key={ticker}>
-                <div className="ticker">{ticker}</div>
-
-                <div>
-                  <div className="label">Score</div>
-                  <div>{item ? num(item.hunterScore).toFixed(0) : "Not found"}</div>
-                </div>
-
-                <div>
-                  <div className="label">Gain</div>
-                  <div>{item ? formatPct(item.gainPct) : "—"}</div>
-                </div>
-
-                <button
-                  className="remove"
-                  onClick={() => {
-                    setManualTickers((old) => old.filter((x) => x !== ticker));
-                  }}
-                >
-                  X
-                </button>
+                          <td>
+                            {item.newsHeadline ? (
+                              <>
+                                <div className="pill-row">
+                                  {item.newsUrl ? (
+                                    <a
+                                      className={`pill ${pillClass(item.newsFreshness)}`}
+                                      href={item.newsUrl}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                    >
+                                      {formatFreshness(item)}
+                                    </a>
+                                  ) : (
+                                    <span className={`pill ${pillClass(item.newsFreshness)}`}>
+                                      {formatFreshness(item)}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="headline">{item.newsHeadline}</div>
+                              </>
+                            ) : (
+                              "—"
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
-            ))
-          )}
-        </aside>
+            )}
+          </div>
+
+          <div className="panel">
+            <h2>How To Read It</h2>
+
+            <div className="guide">
+              <div className="guide-item">
+                <b>Runner Hunter</b> is the list to watch before top 5. These are names ranked under
+                the leaders but pushing hard by gain acceleration, volume expansion, and rank climb.
+              </div>
+
+              <div className="guide-item">
+                <b>Leader Hunter</b> is the current top 5 gain list. It is there so you can compare
+                what is already leading versus what is trying to join it.
+              </div>
+
+              <div className="guide-item">
+                <b>Algo %</b> is the blend:
+                <br />
+                Gain % + (2 × Gain Change) + (1.5 × Relative Volume)
+              </div>
+
+              <div className="guide-item">
+                <b>Labels:</b>
+                <br />
+                CLIMBING = improving
+                <br />
+                RUNNING = improving faster
+                <br />
+                SPRINTING = hard push
+                <br />
+                HOLDING = staying steady
+                <br />
+                FADING = losing push
+              </div>
+
+              <div className="guide-item">
+                <b>News:</b> every listed ticker gets a clickable headline when available. Only
+                FRESH or RECENT news is treated as a possible live catalyst.
+              </div>
+            </div>
+          </div>
+        </div>
       </section>
     </main>
   );
