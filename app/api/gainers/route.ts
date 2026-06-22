@@ -1,37 +1,96 @@
-// ============================================================
-// FILE: app/api/gainers/route.ts
-// PURPOSE: Self-contained Raw Hunter Gatherer route.
-// FIX: No import from ./fourAmGainerFormula.
-// ============================================================
-
+// app/api/gainers/route.ts
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 type AnyObj = Record<string, unknown>;
-type NumericInput = number | string | null | undefined;
 
-type HunterStatus = "CLIMBING" | "FLAT" | "FADING";
-type HunterPhase = "BELOW_RADAR" | "CLIMBER" | "ESTABLISHED" | "EXTENDED_HOT";
-type SpreadStatus = "TIGHT" | "OK" | "WIDE" | "UNKNOWN";
+type NewsFreshness =
+  | "FRESH_CATALYST"
+  | "RECENT_CATALYST"
+  | "BACKGROUND_NEWS"
+  | "STALE_NEWS"
+  | "UNKNOWN_NEWS_AGE";
 
-type HunterInput = {
-  ticker?: string;
-  symbol?: string;
-  price?: NumericInput;
-  currentPremarketPrice?: NumericInput;
-  previousClose?: NumericInput;
-  priorGainPct?: NumericInput;
-  premarketVolume?: NumericInput;
-  volume?: NumericInput;
-  averagePremarketVolume?: NumericInput;
-  averageVolume?: NumericInput;
-  bid?: NumericInput;
-  ask?: NumericInput;
+type RankStatus =
+  | "NEW"
+  | "RANK_CLIMBER"
+  | "RANK_FADE"
+  | "HOLDING"
+  | "CONSISTENT_TOP_5";
+
+type ActionLabel =
+  | "NEW"
+  | "CLIMBING"
+  | "RUNNING"
+  | "SPRINTING"
+  | "HOLDING"
+  | "FADING"
+  | "WATCHING";
+
+type NewsCategory = "NO_NEWS" | "NEWS" | "PRESS_RELEASE" | "FILING_LIKE_NEWS";
+
+type PreviousScanEntry = {
+  rank: number;
+  gainPct: number;
 };
 
-const SOURCE = "polygon-massive-raw-hunter-self-contained";
+type TrackerEntry = {
+  bestRank: number;
+  topFiveHits: number;
+  seenCount: number;
+};
+
+type MemoryState = {
+  lastScan: Record<string, PreviousScanEntry>;
+  tracker: Record<string, TrackerEntry>;
+};
+
+type BaseRow = {
+  ticker: string;
+  symbol: string;
+  price: number;
+  previousClose: number;
+  gainPct: number;
+  volume: number;
+  averageVolume: number;
+  relativeVolume: number;
+  dollarVolume: number;
+};
+
+type AlgoItem = BaseRow & {
+  rank: number;
+  currentRank: number;
+  previousRank: number | null;
+  rankChange: number | null;
+  bestRank: number;
+  topFiveHits: number;
+  seenCount: number;
+  rankStatus: RankStatus;
+
+  priorGainPct: number | null;
+  gainChange: number;
+  algoPercent: number;
+
+  action: ActionLabel;
+  status: string;
+  observations: string[];
+
+  newsCategory: NewsCategory;
+  newsHeadline: string;
+  newsAgeMinutes: number | null;
+  newsFreshness: NewsFreshness;
+  isFreshCatalyst: boolean;
+  newsObservation: string;
+  newsUrl: string;
+  newsPublisher: string;
+  newsTime: string;
+};
+
+const SOURCE = "polygon-algo-runner-hunter";
+const MODE = "ALGO_RUNNER_HUNTER";
+const MEMORY_KEY = "__ALGO_RUNNER_HUNTER_MEMORY__";
 
 function getApiKey(): string {
   return (
@@ -43,17 +102,54 @@ function getApiKey(): string {
   );
 }
 
+function getMemory(): MemoryState {
+  const root = globalThis as typeof globalThis & {
+    [MEMORY_KEY]?: MemoryState;
+  };
+
+  if (!root[MEMORY_KEY]) {
+    root[MEMORY_KEY] = {
+      lastScan: {},
+      tracker: {},
+    };
+  }
+
+  return root[MEMORY_KEY] as MemoryState;
+}
+
+function resetMemory(): void {
+  const memory = getMemory();
+  memory.lastScan = {};
+  memory.tracker = {};
+}
+
 function num(value: unknown): number {
   const n = Number(value);
   return Number.isFinite(n) ? n : 0;
 }
 
 function str(value: unknown): string {
-  return String(value || "").trim();
+  return String(value ?? "").trim();
 }
 
 function cleanTicker(value: unknown): string {
   return str(value).toUpperCase();
+}
+
+function round(value: number, decimals = 2): number {
+  if (!Number.isFinite(value)) return 0;
+  const factor = 10 ** decimals;
+  return Math.round(value * factor) / factor;
+}
+
+function boolParam(value: string | null, fallback: boolean): boolean {
+  if (value === null) return fallback;
+  const v = value.toLowerCase();
+
+  if (v === "true" || v === "1" || v === "yes") return true;
+  if (v === "false" || v === "0" || v === "no") return false;
+
+  return fallback;
 }
 
 function isObj(value: unknown): value is AnyObj {
@@ -63,10 +159,9 @@ function isObj(value: unknown): value is AnyObj {
 function getPath(obj: unknown, path: string): unknown {
   if (!isObj(obj)) return undefined;
 
-  const parts = path.split(".");
   let current: unknown = obj;
 
-  for (const part of parts) {
+  for (const part of path.split(".")) {
     if (!isObj(current)) return undefined;
     current = current[part];
   }
@@ -77,241 +172,56 @@ function getPath(obj: unknown, path: string): unknown {
 function pickNumber(obj: unknown, paths: string[]): number {
   for (const path of paths) {
     const value = getPath(obj, path);
-    const n = num(value);
-    if (n !== 0) return n;
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
   }
 
   return 0;
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
-}
+function isJunkTicker(symbol: string): boolean {
+  const ticker = cleanTicker(symbol);
 
-function round(value: number, decimals = 2): number {
-  if (!Number.isFinite(value)) return 0;
-  const factor = 10 ** decimals;
-  return Math.round(value * factor) / factor;
-}
-
-function isJunkTicker(ticker: string): boolean {
-  const t = cleanTicker(ticker);
-
-  if (!t) return true;
-  if (t.includes(".")) return true;
-  if (t.includes("-")) return true;
-  if (t.length > 5) return true;
+  if (!ticker) return true;
+  if (ticker.includes(".") || ticker.includes("-") || ticker.length > 5) return true;
 
   return (
-    t.endsWith("W") ||
-    t.endsWith("WS") ||
-    t.endsWith("WT") ||
-    t.endsWith("U") ||
-    t.endsWith("R") ||
-    t.endsWith("RT")
+    ticker.endsWith("W") ||
+    ticker.endsWith("WS") ||
+    ticker.endsWith("WT") ||
+    ticker.endsWith("U") ||
+    ticker.endsWith("R") ||
+    ticker.endsWith("RT")
   );
 }
 
-function toBool(value: string | null, fallback: boolean): boolean {
-  if (value === null) return fallback;
+function getMarketMode(now = new Date()): string {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
 
-  const v = value.toLowerCase();
+  const parts = formatter.formatToParts(now);
+  const hour = Number(parts.find((part) => part.type === "hour")?.value ?? "0");
+  const minute = Number(parts.find((part) => part.type === "minute")?.value ?? "0");
+  const totalMinutes = hour * 60 + minute;
 
-  if (v === "true" || v === "1" || v === "yes") return true;
-  if (v === "false" || v === "0" || v === "no") return false;
-
-  return fallback;
+  if (totalMinutes < 4 * 60) return "OVERNIGHT";
+  if (totalMinutes < 9 * 60 + 30) return "PREMARKET";
+  if (totalMinutes < 16 * 60) return "REGULAR_HOURS";
+  return "AFTER_HOURS";
 }
 
-function getGainPct(input: HunterInput, price: number, previousClose: number): number {
-  const suppliedGain = num(input.priorGainPct);
-
-  if (suppliedGain !== 0) return suppliedGain;
-
-  if (price > 0 && previousClose > 0) {
-    return ((price - previousClose) / previousClose) * 100;
-  }
-
-  return 0;
-}
-
-function getGainScore(gainPct: number): number {
-  if (gainPct < 5) return 0;
-  if (gainPct < 15) return 5;
-  if (gainPct < 20) return 10;
-  if (gainPct <= 35) return 24;
-  if (gainPct <= 65) return 30;
-  if (gainPct <= 85) return 24;
-  if (gainPct <= 120) return 8;
-  return -20;
-}
-
-function getVolumeScore(volume: number): number {
-  if (volume >= 5_000_000) return 20;
-  if (volume >= 2_000_000) return 18;
-  if (volume >= 1_000_000) return 15;
-  if (volume >= 500_000) return 12;
-  if (volume >= 250_000) return 9;
-  if (volume >= 100_000) return 6;
-  if (volume >= 50_000) return 3;
-  return 0;
-}
-
-function getRelativeVolumeScore(rvol: number): number {
-  if (rvol >= 10) return 15;
-  if (rvol >= 5) return 12;
-  if (rvol >= 3) return 9;
-  if (rvol >= 2) return 6;
-  if (rvol >= 1) return 3;
-  return 0;
-}
-
-function getSpreadStatus(spreadPct: number): SpreadStatus {
-  if (!Number.isFinite(spreadPct) || spreadPct <= 0) return "UNKNOWN";
-  if (spreadPct <= 1) return "TIGHT";
-  if (spreadPct <= 2.5) return "OK";
-  return "WIDE";
-}
-
-function getSpreadScore(spreadPct: number): number {
-  if (!Number.isFinite(spreadPct) || spreadPct <= 0) return 0;
-  if (spreadPct <= 0.5) return 15;
-  if (spreadPct <= 1) return 12;
-  if (spreadPct <= 1.5) return 9;
-  if (spreadPct <= 2.5) return 5;
-  return -15;
-}
-
-function getPriceScore(price: number): number {
-  if (price >= 0.1 && price <= 1) return 10;
-  if (price > 1 && price <= 2) return 8;
-  if (price > 2 && price <= 5) return 5;
-  if (price > 5 && price <= 10) return 2;
-  return -5;
-}
-
-function getHunterPhase(gainPct: number): HunterPhase {
-  if (gainPct < 15) return "BELOW_RADAR";
-  if (gainPct <= 35) return "CLIMBER";
-  if (gainPct <= 85) return "ESTABLISHED";
-  return "EXTENDED_HOT";
-}
-
-function getHunterStatus(gainPct: number, rvol: number, spreadPct: number): HunterStatus {
-  if (gainPct >= 15 && gainPct <= 85 && rvol >= 2 && spreadPct > 0 && spreadPct <= 2.5) {
-    return "CLIMBING";
-  }
-
-  if (gainPct > 120 || spreadPct > 2.5) {
-    return "FADING";
-  }
-
-  return "FLAT";
-}
-
-function buildHunterScore(input: HunterInput) {
-  const ticker = cleanTicker(input.ticker || input.symbol);
-
-  const price =
-    num(input.currentPremarketPrice) ||
-    num(input.price);
-
-  const previousClose = num(input.previousClose);
-  const gainPct = getGainPct(input, price, previousClose);
-
-  const premarketVolume =
-    num(input.premarketVolume) ||
-    num(input.volume);
-
-  const averagePremarketVolume =
-    num(input.averagePremarketVolume) ||
-    num(input.averageVolume);
-
-  const relativePremarketVolume =
-    averagePremarketVolume > 0 ? premarketVolume / averagePremarketVolume : 0;
-
-  const bid = num(input.bid);
-  const ask = num(input.ask);
-
-  const spread = bid > 0 && ask > 0 ? ask - bid : 0;
-  const spreadPct = price > 0 && spread > 0 ? (spread / price) * 100 : 0;
-  const spreadStatus = getSpreadStatus(spreadPct);
-
-  const rawHunterScore =
-    getGainScore(gainPct) +
-    getVolumeScore(premarketVolume) +
-    getRelativeVolumeScore(relativePremarketVolume) +
-    getSpreadScore(spreadPct) +
-    getPriceScore(price);
-
-  const hunterScore = clamp(rawHunterScore, 0, 100);
-  const hunterPhase = getHunterPhase(gainPct);
-  const hunterStatus = getHunterStatus(gainPct, relativePremarketVolume, spreadPct);
-
-  const isInPreferredGainZone = gainPct >= 15 && gainPct <= 85;
-  const isExtended = gainPct > 120;
-  const isTradeableSpread = spreadPct > 0 && spreadPct <= 2.5;
-
-  const reasons: string[] = [];
-  const warnings: string[] = [];
-
-  if (gainPct >= 20 && gainPct <= 65) reasons.push("Prime hunter gain zone: 20% to 65%");
-  else if (isInPreferredGainZone) reasons.push("Preferred hunter gain zone: 15% to 85%");
-
-  if (premarketVolume >= 100_000) reasons.push("Premarket volume present");
-  if (relativePremarketVolume >= 2) reasons.push("Relative premarket volume elevated");
-  if (spreadStatus === "TIGHT") reasons.push("Spread tight by percentage");
-  if (spreadStatus === "OK") reasons.push("Spread acceptable by percentage");
-  if (price >= 0.1 && price <= 5) reasons.push("Small-cap hunter price range");
-
-  if (!ticker) warnings.push("Missing ticker");
-  if (price <= 0) warnings.push("Missing or invalid price");
-  if (premarketVolume <= 0) warnings.push("Missing premarket volume");
-  if (spreadStatus === "UNKNOWN") warnings.push("Spread unknown");
-  if (spreadStatus === "WIDE") warnings.push("Spread wide");
-  if (isExtended) warnings.push("Extended above 120%; possible late runner");
-  if (gainPct < 15) warnings.push("Below preferred hunter gain zone");
-
-  return {
-    ticker,
-
-    price: round(price, 4),
-    previousClose: round(previousClose, 4),
-    gainPct: round(gainPct, 2),
-
-    premarketVolume: round(premarketVolume, 0),
-    averagePremarketVolume: round(averagePremarketVolume, 0),
-    relativePremarketVolume: round(relativePremarketVolume, 2),
-
-    bid: round(bid, 4),
-    ask: round(ask, 4),
-    spread: round(spread, 4),
-    spreadPct: round(spreadPct, 2),
-    spreadStatus,
-
-    hunterScore: round(hunterScore, 2),
-    rawHunterScore: round(rawHunterScore, 2),
-
-    hunterStatus,
-    hunterPhase,
-
-    isInPreferredGainZone,
-    isExtended,
-    isTradeableSpread,
-
-    reasons,
-    warnings,
-  };
-}
-
-function buildSnapshotInput(row: AnyObj): HunterInput {
+function buildBaseRow(row: AnyObj): BaseRow {
   const ticker = cleanTicker(row.ticker || row.symbol || row.T);
 
   const price = pickNumber(row, [
     "lastTrade.p",
+    "lastTrade.price",
     "min.c",
     "day.c",
-    "value",
     "price",
     "close",
     "c",
@@ -324,61 +234,322 @@ function buildSnapshotInput(row: AnyObj): HunterInput {
     "pc",
   ]);
 
-  const priorGainPct = pickNumber(row, [
-    "todaysChangePerc",
-    "changePercent",
-    "percentChange",
-    "gainPct",
-  ]);
+  const gainPct =
+    price > 0 && previousClose > 0
+      ? ((price - previousClose) / previousClose) * 100
+      : 0;
 
-  const premarketVolume = pickNumber(row, [
-    "day.v",
-    "volume",
-    "v",
-    "min.av",
-    "min.v",
-  ]);
+  const volume = pickNumber(row, ["day.v", "volume", "v", "min.av", "min.v"]);
 
-  const averagePremarketVolume = pickNumber(row, [
+  const averageVolume = pickNumber(row, [
     "averagePremarketVolume",
+    "avgPremarketVolume",
+    "pmAvgVolume",
     "averageVolume",
     "avgVolume",
+    "day.av",
   ]);
 
-  const bid = pickNumber(row, [
-    "lastQuote.p",
-    "lastQuote.bid",
-    "lastQuote.bidPrice",
-    "bid",
-    "bidPrice",
-  ]);
-
-  const ask = pickNumber(row, [
-    "lastQuote.P",
-    "lastQuote.ask",
-    "lastQuote.askPrice",
-    "ask",
-    "askPrice",
-  ]);
+  const relativeVolume = averageVolume > 0 ? volume / averageVolume : 0;
+  const dollarVolume = volume * price;
 
   return {
     ticker,
     symbol: ticker,
-    price,
-    currentPremarketPrice: price,
-    previousClose,
-    priorGainPct,
-    premarketVolume,
-    averagePremarketVolume,
-    bid,
-    ask,
+    price: round(price, 4),
+    previousClose: round(previousClose, 4),
+    gainPct: round(gainPct, 2),
+    volume: round(volume, 0),
+    averageVolume: round(averageVolume, 0),
+    relativeVolume: round(relativeVolume, 4),
+    dollarVolume: round(dollarVolume, 2),
+  };
+}
+
+function deriveRankStatus(
+  previousRank: number | null,
+  currentRank: number,
+  topFiveHits: number
+): RankStatus {
+  if (previousRank === null) return "NEW";
+  if (currentRank <= 5 && topFiveHits >= 3) return "CONSISTENT_TOP_5";
+  if (currentRank < previousRank) return "RANK_CLIMBER";
+  if (currentRank > previousRank) return "RANK_FADE";
+  return "HOLDING";
+}
+
+function deriveAction(
+  previousRank: number | null,
+  currentRank: number,
+  gainChange: number
+): ActionLabel {
+  if (previousRank === null) return "NEW";
+
+  const rankChange = previousRank - currentRank;
+
+  if (rankChange >= 5 && gainChange > 1.5) return "SPRINTING";
+  if (rankChange >= 3 && gainChange > 0.75) return "RUNNING";
+  if (currentRank < previousRank && gainChange > 0.25) return "CLIMBING";
+  if (currentRank === previousRank && gainChange >= -0.25 && gainChange <= 0.25) return "HOLDING";
+  if (currentRank > previousRank && gainChange < -0.25) return "FADING";
+  return "WATCHING";
+}
+
+function deriveStatus(
+  previousRank: number | null,
+  currentRank: number,
+  topFiveHits: number,
+  priorGainPct: number | null,
+  gainChange: number
+): string {
+  const gainFlat = priorGainPct !== null && gainChange >= -0.25 && gainChange <= 0.25;
+  const rankWorsened = previousRank !== null && currentRank > previousRank;
+  const rankImproved = previousRank !== null && currentRank < previousRank;
+
+  if (currentRank <= 5 && topFiveHits >= 3) return "CONSISTENT TOP 5";
+  if (previousRank === null) return "NEW";
+  if (rankImproved) return "RANK CLIMBER";
+  if (rankWorsened && gainChange < -0.25) return "PUMP LOSING CONTROL";
+  if (rankWorsened && gainFlat) return "RANK FADE";
+  if (rankWorsened) return "RANK FADE";
+  return "HOLDING";
+}
+
+function buildObservations(
+  previousRank: number | null,
+  currentRank: number,
+  topFiveHits: number,
+  priorGainPct: number | null,
+  gainChange: number
+): string[] {
+  const notes: string[] = [];
+
+  if (topFiveHits >= 3 && currentRank <= 5) {
+    notes.push("Holding top 5 across scans.");
+  }
+
+  if (previousRank === null) {
+    notes.push("New to this scan.");
+  } else if (currentRank < previousRank) {
+    notes.push(`Rank improved from #${previousRank} to #${currentRank}.`);
+  } else if (currentRank > previousRank) {
+    notes.push(`Rank faded from #${previousRank} to #${currentRank}.`);
+  } else {
+    notes.push("Holding rank across scans.");
+  }
+
+  if (priorGainPct !== null && gainChange >= -0.25 && gainChange <= 0.25) {
+    notes.push("Gain is flat since last scan.");
+  }
+
+  return notes;
+}
+
+function classifyNewsCategory(headline: string, publisher: string, url: string): NewsCategory {
+  const text = `${headline} ${publisher} ${url}`.toLowerCase();
+
+  const filingLike = [
+    "8-k",
+    "10-q",
+    "10-k",
+    "s-1",
+    "s-3",
+    "424b",
+    "prospectus",
+    "offering",
+    "shelf",
+    "registration",
+    "reverse split",
+    "atm",
+    "edgar",
+  ].some((value) => text.includes(value));
+
+  if (filingLike) return "FILING_LIKE_NEWS";
+
+  const pressLike = [
+    "globenewswire",
+    "pr newswire",
+    "business wire",
+    "accesswire",
+    "press release",
+    "announces",
+    "reports",
+    "launches",
+    "receives",
+    "agreement",
+  ].some((value) => text.includes(value));
+
+  if (pressLike) return "PRESS_RELEASE";
+  return "NEWS";
+}
+
+function getNewsAgeData(newsTime: string): {
+  newsAgeMinutes: number | null;
+  newsFreshness: NewsFreshness;
+} {
+  if (!newsTime) {
+    return {
+      newsAgeMinutes: null,
+      newsFreshness: "UNKNOWN_NEWS_AGE",
+    };
+  }
+
+  const publishedAt = new Date(newsTime).getTime();
+
+  if (!Number.isFinite(publishedAt)) {
+    return {
+      newsAgeMinutes: null,
+      newsFreshness: "UNKNOWN_NEWS_AGE",
+    };
+  }
+
+  const ageMinutes = Math.round((Date.now() - publishedAt) / 60000);
+
+  if (!Number.isFinite(ageMinutes) || ageMinutes < 0) {
+    return {
+      newsAgeMinutes: null,
+      newsFreshness: "UNKNOWN_NEWS_AGE",
+    };
+  }
+
+  if (ageMinutes <= 90) {
+    return {
+      newsAgeMinutes: ageMinutes,
+      newsFreshness: "FRESH_CATALYST",
+    };
+  }
+
+  if (ageMinutes <= 12 * 60) {
+    return {
+      newsAgeMinutes: ageMinutes,
+      newsFreshness: "RECENT_CATALYST",
+    };
+  }
+
+  if (ageMinutes <= 24 * 60) {
+    return {
+      newsAgeMinutes: ageMinutes,
+      newsFreshness: "BACKGROUND_NEWS",
+    };
+  }
+
+  return {
+    newsAgeMinutes: null,
+    newsFreshness: "STALE_NEWS",
+  };
+}
+
+function buildNewsObservation(newsFreshness: NewsFreshness): string {
+  if (newsFreshness === "FRESH_CATALYST" || newsFreshness === "RECENT_CATALYST") {
+    return "Possible live catalyst.";
+  }
+
+  return "Background news only — not confirmed as current move catalyst.";
+}
+
+async function fetchTickerNews(
+  ticker: string,
+  apiKey: string
+): Promise<{
+  newsCategory: NewsCategory;
+  newsHeadline: string;
+  newsAgeMinutes: number | null;
+  newsFreshness: NewsFreshness;
+  isFreshCatalyst: boolean;
+  newsObservation: string;
+  newsUrl: string;
+  newsPublisher: string;
+  newsTime: string;
+}> {
+  const fallback = {
+    newsCategory: "NO_NEWS" as NewsCategory,
+    newsHeadline: "",
+    newsAgeMinutes: null,
+    newsFreshness: "UNKNOWN_NEWS_AGE" as NewsFreshness,
+    isFreshCatalyst: false,
+    newsObservation: "",
+    newsUrl: "",
+    newsPublisher: "",
+    newsTime: "",
+  };
+
+  try {
+    if (!ticker || !apiKey) return fallback;
+
+    const url =
+      `https://api.polygon.io/v2/reference/news?ticker=${encodeURIComponent(ticker)}` +
+      `&order=desc&sort=published_utc&limit=1&apiKey=${encodeURIComponent(apiKey)}`;
+
+    const res = await fetch(url, {
+      method: "GET",
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+    });
+
+    if (!res.ok) return fallback;
+
+    const json = (await res.json()) as { results?: unknown[] };
+    const first = Array.isArray(json.results) ? json.results.find(isObj) : undefined;
+
+    if (!first) return fallback;
+
+    const newsHeadline = str(first.title);
+    const newsUrl = str(first.article_url || first.url);
+    const newsTime = str(first.published_utc);
+    const publisherObj = isObj(first.publisher) ? first.publisher : {};
+    const newsPublisher = str(publisherObj.name || first.publisher || first.source);
+
+    if (!newsHeadline && !newsUrl) return fallback;
+
+    const newsCategory = classifyNewsCategory(newsHeadline, newsPublisher, newsUrl);
+    const { newsAgeMinutes, newsFreshness } = getNewsAgeData(newsTime);
+    const isFreshCatalyst =
+      newsFreshness === "FRESH_CATALYST" || newsFreshness === "RECENT_CATALYST";
+
+    return {
+      newsCategory,
+      newsHeadline,
+      newsAgeMinutes,
+      newsFreshness,
+      isFreshCatalyst,
+      newsObservation: buildNewsObservation(newsFreshness),
+      newsUrl,
+      newsPublisher,
+      newsTime,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function buildEmptyPayload(message: string, startedAt: string) {
+  const runnerHunter: AlgoItem[] = [];
+  const leaderHunter: AlgoItem[] = [];
+
+  return {
+    ok: false,
+    source: SOURCE,
+    mode: MODE,
+    marketMode: getMarketMode(),
+    message,
+    startedAt,
+    finishedAt: new Date().toISOString(),
+    rawCount: 0,
+    showing: 0,
+    topTicker: null,
+    topAlgoPercent: 0,
+    runnerHunter,
+    leaderHunter,
+    data: {
+      runnerHunter,
+      leaderHunter,
+    },
   };
 }
 
 export async function GET(req: Request) {
   const startedAt = new Date().toISOString();
   const apiKey = getApiKey();
-
   const { searchParams } = new URL(req.url);
 
   const minPrice = num(searchParams.get("minPrice")) || 0.1;
@@ -386,33 +557,25 @@ export async function GET(req: Request) {
   const minGain = num(searchParams.get("minGain")) || 0;
   const maxGain = num(searchParams.get("maxGain")) || 120;
   const minVolume = num(searchParams.get("minVolume")) || 0;
-  const limit = num(searchParams.get("limit")) || 10;
-  const removeJunk = toBool(searchParams.get("removeJunk"), true);
+  const runnerMaxRank = Math.max(6, Math.min(num(searchParams.get("runnerMaxRank")) || 30, 100));
+  const runnerLimit = Math.max(1, Math.min(num(searchParams.get("runnerLimit")) || 15, 50));
+  const removeJunk = boolParam(searchParams.get("removeJunk"), true);
+  const reset = boolParam(searchParams.get("resetMemory"), false);
+
+  if (reset) {
+    resetMemory();
+  }
 
   if (!apiKey) {
-    return NextResponse.json(
-      {
-        ok: false,
-        source: SOURCE,
-        message: "Missing POLYGON_API_KEY or MASSIVE_API_KEY.",
-        startedAt,
-        rawCount: 0,
-        showing: 0,
-        results: [],
-        gainers: [],
-        tickers: [],
-        data: [],
-      },
-      {
-        status: 200,
-        headers: { "Cache-Control": "no-store, max-age=0" },
-      }
-    );
+    return NextResponse.json(buildEmptyPayload("Missing POLYGON_API_KEY or MASSIVE_API_KEY.", startedAt), {
+      status: 200,
+      headers: { "Cache-Control": "no-store, max-age=0" },
+    });
   }
 
   try {
     const url =
-      "https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers" +
+      `https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers` +
       `?apiKey=${encodeURIComponent(apiKey)}`;
 
     const res = await fetch(url, {
@@ -423,18 +586,7 @@ export async function GET(req: Request) {
 
     if (!res.ok) {
       return NextResponse.json(
-        {
-          ok: false,
-          source: SOURCE,
-          message: `Polygon/Massive request failed with status ${res.status}.`,
-          startedAt,
-          rawCount: 0,
-          showing: 0,
-          results: [],
-          gainers: [],
-          tickers: [],
-          data: [],
-        },
+        buildEmptyPayload(`Polygon request failed with status ${res.status}.`, startedAt),
         {
           status: 200,
           headers: { "Cache-Control": "no-store, max-age=0" },
@@ -450,36 +602,176 @@ export async function GET(req: Request) {
         ? json.results
         : [];
 
-    const scored = rowsRaw
+    const memory = getMemory();
+
+    const filteredUniverse = rowsRaw
       .filter(isObj)
-      .map((row) => buildSnapshotInput(row))
-      .filter((input) => Boolean(input.ticker))
-      .filter((input) => {
-        if (!removeJunk) return true;
-        return !isJunkTicker(String(input.ticker));
-      })
-      .map((input) => buildHunterScore(input))
+      .map((row) => buildBaseRow(row))
+      .filter((item) => Boolean(item.ticker))
+      .filter((item) => !removeJunk || !isJunkTicker(item.ticker))
       .filter((item) => item.price >= minPrice)
       .filter((item) => item.price <= maxPrice)
       .filter((item) => item.gainPct >= minGain)
       .filter((item) => item.gainPct <= maxGain)
-      .filter((item) => item.premarketVolume >= minVolume)
+      .filter((item) => item.volume >= minVolume)
+      .map((item) => {
+        const previous = memory.lastScan[item.ticker];
+        const priorGainPct = previous ? previous.gainPct : null;
+        const gainChange = priorGainPct === null ? 0 : item.gainPct - priorGainPct;
+        const algoPercent = item.gainPct + 2 * gainChange + 1.5 * item.relativeVolume;
+
+        return {
+          ...item,
+          previousRank: previous ? previous.rank : null,
+          priorGainPct,
+          gainChange,
+          algoPercent,
+        };
+      });
+
+    filteredUniverse.sort((a, b) => {
+      if (b.gainPct !== a.gainPct) return b.gainPct - a.gainPct;
+      if (b.gainChange !== a.gainChange) return b.gainChange - a.gainChange;
+      if (b.volume !== a.volume) return b.volume - a.volume;
+      return a.ticker.localeCompare(b.ticker);
+    });
+
+    const nextLastScan: Record<string, PreviousScanEntry> = {};
+
+    const rankedUniverse: AlgoItem[] = filteredUniverse.map((item, index) => {
+      const currentRank = index + 1;
+      const tracker = memory.tracker[item.ticker];
+      const seenCount = (tracker?.seenCount ?? 0) + 1;
+      const topFiveHits = (tracker?.topFiveHits ?? 0) + (currentRank <= 5 ? 1 : 0);
+      const bestRank = tracker ? Math.min(tracker.bestRank, currentRank) : currentRank;
+      const rankChange = item.previousRank === null ? null : item.previousRank - currentRank;
+      const rankStatus = deriveRankStatus(item.previousRank, currentRank, topFiveHits);
+      const action = deriveAction(item.previousRank, currentRank, item.gainChange);
+      const status = deriveStatus(
+        item.previousRank,
+        currentRank,
+        topFiveHits,
+        item.priorGainPct,
+        item.gainChange
+      );
+      const observations = buildObservations(
+        item.previousRank,
+        currentRank,
+        topFiveHits,
+        item.priorGainPct,
+        item.gainChange
+      );
+
+      memory.tracker[item.ticker] = {
+        bestRank,
+        topFiveHits,
+        seenCount,
+      };
+
+      nextLastScan[item.ticker] = {
+        rank: currentRank,
+        gainPct: item.gainPct,
+      };
+
+      return {
+        rank: currentRank,
+        currentRank,
+        previousRank: item.previousRank,
+        rankChange,
+        bestRank,
+        topFiveHits,
+        seenCount,
+        rankStatus,
+
+        ticker: item.ticker,
+        symbol: item.symbol,
+        price: item.price,
+        previousClose: item.previousClose,
+
+        gainPct: round(item.gainPct, 2),
+        priorGainPct: item.priorGainPct === null ? null : round(item.priorGainPct, 2),
+        gainChange: round(item.gainChange, 2),
+
+        volume: round(item.volume, 0),
+        averageVolume: round(item.averageVolume, 0),
+        relativeVolume: round(item.relativeVolume, 4),
+        dollarVolume: round(item.dollarVolume, 2),
+
+        algoPercent: round(item.algoPercent, 2),
+
+        action,
+        status,
+        observations,
+
+        newsCategory: "NO_NEWS",
+        newsHeadline: "",
+        newsAgeMinutes: null,
+        newsFreshness: "UNKNOWN_NEWS_AGE",
+        isFreshCatalyst: false,
+        newsObservation: "",
+        newsUrl: "",
+        newsPublisher: "",
+        newsTime: "",
+      };
+    });
+
+    memory.lastScan = nextLastScan;
+
+    const leadersBase = rankedUniverse
+      .filter((item) => item.currentRank <= 5)
+      .sort((a, b) => a.currentRank - b.currentRank);
+
+    const runnersBase = rankedUniverse
+      .filter((item) => item.currentRank > 5 && item.currentRank <= runnerMaxRank)
       .sort((a, b) => {
-        if (b.hunterScore !== a.hunterScore) return b.hunterScore - a.hunterScore;
-        if (b.gainPct !== a.gainPct) return b.gainPct - a.gainPct;
-        return b.premarketVolume - a.premarketVolume;
+        if (b.algoPercent !== a.algoPercent) return b.algoPercent - a.algoPercent;
+        if (b.gainChange !== a.gainChange) return b.gainChange - a.gainChange;
+        if ((b.rankChange ?? -999) !== (a.rankChange ?? -999)) {
+          return (b.rankChange ?? -999) - (a.rankChange ?? -999);
+        }
+        if (b.volume !== a.volume) return b.volume - a.volume;
+        return a.ticker.localeCompare(b.ticker);
       })
-      .slice(0, Math.max(1, Math.min(limit, 100)))
-      .map((item, index) => ({
-        rank: index + 1,
+      .slice(0, runnerLimit);
+
+    const uniqueTickers = Array.from(
+      new Set([...leadersBase, ...runnersBase].map((item) => item.ticker).filter(Boolean))
+    );
+
+    const newsMap = new Map<string, Awaited<ReturnType<typeof fetchTickerNews>>>();
+
+    await Promise.all(
+      uniqueTickers.map(async (ticker) => {
+        newsMap.set(ticker, await fetchTickerNews(ticker, apiKey));
+      })
+    );
+
+    const attachNews = (item: AlgoItem): AlgoItem => {
+      const news = newsMap.get(item.ticker);
+
+      if (!news) return item;
+
+      const observations = [...item.observations];
+      if (news.newsObservation) {
+        observations.push(news.newsObservation);
+      }
+
+      return {
         ...item,
-      }));
+        ...news,
+        observations,
+      };
+    };
+
+    const leaderHunter = leadersBase.map(attachNews);
+    const runnerHunter = runnersBase.map(attachNews);
 
     return NextResponse.json(
       {
         ok: true,
         source: SOURCE,
-        mode: "RAW_HUNTER_GATHERER",
+        mode: MODE,
+        marketMode: getMarketMode(),
         startedAt,
         finishedAt: new Date().toISOString(),
         filters: {
@@ -488,17 +780,20 @@ export async function GET(req: Request) {
           minGain,
           maxGain,
           minVolume,
-          limit,
+          runnerMaxRank,
+          runnerLimit,
           removeJunk,
         },
         rawCount: rowsRaw.length,
-        showing: scored.length,
-        topTicker: scored[0]?.ticker || null,
-        topScore: scored[0]?.hunterScore || 0,
-        results: scored,
-        gainers: scored,
-        tickers: scored,
-        data: scored,
+        showing: runnerHunter.length + leaderHunter.length,
+        topTicker: runnerHunter[0]?.ticker || leaderHunter[0]?.ticker || null,
+        topAlgoPercent: runnerHunter[0]?.algoPercent || leaderHunter[0]?.algoPercent || 0,
+        runnerHunter,
+        leaderHunter,
+        data: {
+          runnerHunter,
+          leaderHunter,
+        },
       },
       {
         status: 200,
@@ -508,23 +803,9 @@ export async function GET(req: Request) {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown route error.";
 
-    return NextResponse.json(
-      {
-        ok: false,
-        source: SOURCE,
-        message,
-        startedAt,
-        rawCount: 0,
-        showing: 0,
-        results: [],
-        gainers: [],
-        tickers: [],
-        data: [],
-      },
-      {
-        status: 200,
-        headers: { "Cache-Control": "no-store, max-age=0" },
-      }
-    );
+    return NextResponse.json(buildEmptyPayload(message, startedAt), {
+      status: 200,
+      headers: { "Cache-Control": "no-store, max-age=0" },
+    });
   }
 }
