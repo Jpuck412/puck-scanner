@@ -2,36 +2,19 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-type AnyObj = Record<string, unknown>;
-
 type HunterItem = {
   rank?: number;
   ticker?: string;
   symbol?: string;
-
   price?: number;
-  previousClose?: number;
   gainPct?: number;
-
   premarketVolume?: number;
-  averagePremarketVolume?: number;
   relativePremarketVolume?: number;
-
-  bid?: number;
-  ask?: number;
-  spread?: number;
   spreadPct?: number;
   spreadStatus?: string;
-
   hunterScore?: number;
-  rawHunterScore?: number;
   hunterStatus?: string;
   hunterPhase?: string;
-
-  isInPreferredGainZone?: boolean;
-  isExtended?: boolean;
-  isTradeableSpread?: boolean;
-
   reasons?: string[];
   warnings?: string[];
 };
@@ -51,17 +34,37 @@ type ApiResponse = {
   data?: HunterItem[];
 };
 
-function isObj(value: unknown): value is AnyObj {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+type Observation = {
+  ticker: string;
+  currentRank: number;
+  previousRank: number | null;
+  bestRank: number;
+  appearances: number;
+  top5Hits: number;
+  consecutiveTop5: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+
+  currentGainPct: number;
+  previousGainPct: number | null;
+
+  currentSpreadPct: number;
+  previousSpreadPct: number | null;
+
+  currentVolume: number;
+  previousVolume: number | null;
+
+  tag: string;
+  notes: string[];
+};
 
 function num(value: unknown): number {
   const n = Number(value);
   return Number.isFinite(n) ? n : 0;
 }
 
-function str(value: unknown): string {
-  return String(value || "").trim();
+function cleanTicker(value: unknown): string {
+  return String(value || "").trim().toUpperCase();
 }
 
 function normalizeList(json: ApiResponse): HunterItem[] {
@@ -80,54 +83,158 @@ function formatPrice(value: unknown): string {
 }
 
 function formatPct(value: unknown): string {
-  const n = num(value);
-  return `${n.toFixed(2)}%`;
+  return `${num(value).toFixed(2)}%`;
 }
 
-function formatVolume(value: unknown): string {
+function formatVol(value: unknown): string {
   const n = num(value);
-
   if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`;
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-
   return String(Math.round(n));
 }
 
-function statusClass(status?: string): string {
-  const s = String(status || "").toUpperCase();
+function pillClass(text?: string): string {
+  const t = String(text || "").toUpperCase();
 
-  if (s.includes("CLIMBING")) return "good";
-  if (s.includes("FADING")) return "bad";
-  if (s.includes("TIGHT")) return "good";
-  if (s.includes("WIDE")) return "bad";
-  if (s.includes("OK")) return "watch";
+  if (
+    t.includes("GHOST") ||
+    t.includes("CLIMBER") ||
+    t.includes("CONSISTENT") ||
+    t.includes("TIGHT") ||
+    t.includes("CLIMBING")
+  ) {
+    return "good";
+  }
+
+  if (
+    t.includes("FADING") ||
+    t.includes("LOOSENING") ||
+    t.includes("SLOWING") ||
+    t.includes("VANISHED") ||
+    t.includes("WIDE") ||
+    t.includes("PUMP")
+  ) {
+    return "bad";
+  }
+
+  if (t.includes("WATCH") || t.includes("OK") || t.includes("NEW")) {
+    return "watch";
+  }
 
   return "neutral";
 }
 
+function makeObservation(
+  item: HunterItem,
+  index: number,
+  previous: Observation | undefined,
+  scanTime: string
+): Observation {
+  const ticker = cleanTicker(item.ticker || item.symbol);
+  const currentRank = num(item.rank) || index + 1;
+
+  const currentGainPct = num(item.gainPct);
+  const currentSpreadPct = num(item.spreadPct);
+  const currentVolume = num(item.premarketVolume);
+
+  const previousRank = previous?.currentRank ?? null;
+  const previousGainPct = previous?.currentGainPct ?? null;
+  const previousSpreadPct = previous?.currentSpreadPct ?? null;
+  const previousVolume = previous?.currentVolume ?? null;
+
+  const appearances = (previous?.appearances || 0) + 1;
+  const bestRank = previous ? Math.min(previous.bestRank, currentRank) : currentRank;
+
+  const isTop5 = currentRank <= 5;
+  const top5Hits = (previous?.top5Hits || 0) + (isTop5 ? 1 : 0);
+  const consecutiveTop5 = isTop5 ? (previous?.consecutiveTop5 || 0) + 1 : 0;
+
+  const rankImproving = previousRank !== null && currentRank < previousRank;
+  const rankFading = previousRank !== null && currentRank > previousRank + 2;
+
+  const gainRising = previousGainPct !== null && currentGainPct > previousGainPct;
+  const speedSlowing = previousGainPct !== null && currentGainPct <= previousGainPct;
+
+  const spreadLoosening =
+    previousSpreadPct !== null &&
+    previousSpreadPct > 0 &&
+    currentSpreadPct > previousSpreadPct * 1.35;
+
+  const volumeFading =
+    previousVolume !== null &&
+    previousVolume > 0 &&
+    currentVolume < previousVolume * 0.7;
+
+  const newGhost = !previous && currentRank <= 5;
+  const consistentTop5 = consecutiveTop5 >= 2;
+
+  const notes: string[] = [];
+
+  if (newGhost) notes.push("Appeared in top 5 from nowhere.");
+  if (consistentTop5) notes.push("Holding top 5 across scans.");
+  if (rankImproving) notes.push(`Rank improved from #${previousRank} to #${currentRank}.`);
+  if (rankFading) notes.push(`Rank faded from #${previousRank} to #${currentRank}.`);
+  if (gainRising) notes.push("Gain percent still rising.");
+  if (speedSlowing) notes.push("Gain percent stopped rising.");
+  if (spreadLoosening) notes.push("Spread loosened since last scan.");
+  if (volumeFading) notes.push("Volume faded since last scan.");
+  if (notes.length === 0) notes.push("Still observing. No major change yet.");
+
+  let tag = "OBSERVING";
+
+  if (newGhost) tag = "GHOST IGNITION";
+  else if (consistentTop5) tag = "CONSISTENT TOP 5";
+  else if (rankImproving) tag = "RANK CLIMBER";
+  else if (rankFading || spreadLoosening || volumeFading) tag = "PUMP LOSING CONTROL";
+  else if (speedSlowing) tag = "SPEED SLOWING";
+  else if (isTop5) tag = "TOP 5 WATCH";
+
+  return {
+    ticker,
+    currentRank,
+    previousRank,
+    bestRank,
+    appearances,
+    top5Hits,
+    consecutiveTop5,
+    firstSeenAt: previous?.firstSeenAt || scanTime,
+    lastSeenAt: scanTime,
+
+    currentGainPct,
+    previousGainPct,
+
+    currentSpreadPct,
+    previousSpreadPct,
+
+    currentVolume,
+    previousVolume,
+
+    tag,
+    notes,
+  };
+}
+
 export default function HomePage() {
   const [items, setItems] = useState<HunterItem[]>([]);
+  const [observations, setObservations] = useState<Record<string, Observation>>({});
+
   const [rawCount, setRawCount] = useState(0);
   const [showing, setShowing] = useState(0);
   const [topTicker, setTopTicker] = useState<string | null>(null);
   const [topScore, setTopScore] = useState(0);
   const [source, setSource] = useState("waiting");
-  const [mode, setMode] = useState("RAW_HUNTER_GATHERER");
   const [message, setMessage] = useState("");
+  const [lastScan, setLastScan] = useState("Never");
   const [loading, setLoading] = useState(false);
-  const [lastScan, setLastScan] = useState<string>("Never");
 
   const [minPrice, setMinPrice] = useState("0.10");
   const [maxPrice, setMaxPrice] = useState("10");
-  const [minGain, setMinGain] = useState("0");
-  const [maxGain, setMaxGain] = useState("120");
+  const [minGain, setMinGain] = useState("10");
+  const [maxGain, setMaxGain] = useState("65");
   const [minVolume, setMinVolume] = useState("0");
   const [limit, setLimit] = useState("10");
   const [removeJunk, setRemoveJunk] = useState(true);
-
-  const [manualInput, setManualInput] = useState("");
-  const [manualTickers, setManualTickers] = useState<string[]>([]);
 
   const fetchHunter = useCallback(async () => {
     setLoading(true);
@@ -149,24 +256,32 @@ export default function HomePage() {
         cache: "no-store",
       });
 
-      const jsonUnknown = await res.json();
-
-      if (!isObj(jsonUnknown)) {
-        throw new Error("Bad API response.");
-      }
-
-      const json = jsonUnknown as ApiResponse;
+      const json = (await res.json()) as ApiResponse;
       const list = normalizeList(json);
+
+      const scanTime = new Date().toLocaleTimeString();
 
       setItems(list);
       setRawCount(num(json.rawCount));
       setShowing(num(json.showing) || list.length);
-      setTopTicker(json.topTicker || list[0]?.ticker || list[0]?.symbol || null);
+      setTopTicker(json.topTicker || cleanTicker(list[0]?.ticker || list[0]?.symbol) || null);
       setTopScore(num(json.topScore) || num(list[0]?.hunterScore));
-      setSource(str(json.source) || "unknown");
-      setMode(str(json.mode) || "RAW_HUNTER_GATHERER");
-      setMessage(str(json.message));
-      setLastScan(new Date().toLocaleTimeString());
+      setSource(String(json.source || "unknown"));
+      setMessage(String(json.message || ""));
+      setLastScan(scanTime);
+
+      setObservations((previous) => {
+        const next: Record<string, Observation> = { ...previous };
+
+        list.forEach((item, index) => {
+          const ticker = cleanTicker(item.ticker || item.symbol);
+          if (!ticker) return;
+
+          next[ticker] = makeObservation(item, index, previous[ticker], scanTime);
+        });
+
+        return next;
+      });
     } catch (error) {
       const text = error instanceof Error ? error.message : "Unknown page error.";
       setMessage(text);
@@ -184,389 +299,307 @@ export default function HomePage() {
     fetchHunter();
   }, [fetchHunter]);
 
-  const addManualTickers = useCallback(() => {
-    const next = manualInput
-      .split(/[,\s]+/)
-      .map((x) => x.trim().toUpperCase())
-      .filter(Boolean)
-      .filter((x) => /^[A-Z]{1,5}$/.test(x));
+  const observationList = useMemo(() => {
+    return Object.values(observations)
+      .sort((a, b) => {
+        if (b.consecutiveTop5 !== a.consecutiveTop5) {
+          return b.consecutiveTop5 - a.consecutiveTop5;
+        }
 
-    setManualTickers((old) => Array.from(new Set([...old, ...next])));
-    setManualInput("");
-  }, [manualInput]);
+        if (a.currentRank !== b.currentRank) {
+          return a.currentRank - b.currentRank;
+        }
 
-  const manualMatches = useMemo(() => {
-    const lookup = new Map<string, HunterItem>();
-
-    for (const item of items) {
-      const ticker = String(item.ticker || item.symbol || "").toUpperCase();
-      if (ticker) lookup.set(ticker, item);
-    }
-
-    return manualTickers.map((ticker) => ({
-      ticker,
-      item: lookup.get(ticker) || null,
-    }));
-  }, [items, manualTickers]);
-
-  const best = items[0];
+        return b.appearances - a.appearances;
+      })
+      .slice(0, 12);
+  }, [observations]);
 
   return (
-    <main className="page-shell">
+    <main className="shell">
       <style>{`
-        * {
-          box-sizing: border-box;
-        }
+        * { box-sizing: border-box; }
 
         body {
           margin: 0;
           background:
-            radial-gradient(circle at top left, rgba(255, 199, 44, 0.18), transparent 32%),
-            radial-gradient(circle at top right, rgba(255, 255, 255, 0.08), transparent 28%),
-            linear-gradient(135deg, #030303 0%, #111111 44%, #050505 100%);
+            radial-gradient(circle at top left, rgba(255,199,44,.18), transparent 34%),
+            linear-gradient(135deg, #030303, #111, #050505);
           color: #f5f5f5;
           font-family: Arial, Helvetica, sans-serif;
         }
 
-        .page-shell {
+        .shell {
           min-height: 100vh;
-          padding: 24px;
+          padding: 22px;
         }
 
-        .hero {
-          border: 1px solid rgba(255, 199, 44, 0.35);
-          background:
-            linear-gradient(135deg, rgba(255, 199, 44, 0.16), rgba(255, 255, 255, 0.03)),
-            rgba(0, 0, 0, 0.72);
-          border-radius: 28px;
-          padding: 24px;
-          box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55);
+        .hero, .panel {
+          border: 1px solid rgba(255,199,44,.26);
+          background: rgba(0,0,0,.68);
+          border-radius: 24px;
+          padding: 18px;
+          box-shadow: 0 24px 70px rgba(0,0,0,.45);
         }
 
-        .hero-top {
+        .top {
           display: flex;
           align-items: flex-start;
           justify-content: space-between;
-          gap: 18px;
+          gap: 14px;
           flex-wrap: wrap;
         }
 
         .eyebrow {
           color: #ffc72c;
-          font-weight: 900;
-          letter-spacing: 0.16em;
           font-size: 12px;
+          font-weight: 950;
+          letter-spacing: .16em;
           text-transform: uppercase;
-          margin-bottom: 8px;
         }
 
         h1 {
-          margin: 0;
-          font-size: clamp(32px, 6vw, 74px);
-          line-height: 0.95;
-          letter-spacing: -0.06em;
+          margin: 6px 0 0;
+          font-size: clamp(34px, 6vw, 68px);
+          line-height: .95;
+          letter-spacing: -.06em;
           text-transform: uppercase;
         }
 
-        .subtitle {
-          max-width: 980px;
-          color: #cfcfcf;
-          font-size: 15px;
-          line-height: 1.6;
-          margin-top: 14px;
+        h2 {
+          margin: 0 0 12px;
+          font-size: 19px;
+          text-transform: uppercase;
+          letter-spacing: -.03em;
         }
 
-        .button-row {
-          display: flex;
-          gap: 10px;
-          flex-wrap: wrap;
+        .sub {
+          color: #cfcfcf;
+          max-width: 900px;
+          line-height: 1.5;
+          margin-top: 12px;
+          font-size: 14px;
         }
 
         button {
           border: 0;
+          border-radius: 15px;
+          padding: 12px 15px;
+          font-weight: 950;
           cursor: pointer;
-          border-radius: 16px;
-          padding: 13px 16px;
-          font-weight: 900;
           text-transform: uppercase;
-          letter-spacing: 0.04em;
+          letter-spacing: .04em;
         }
 
-        .gold-button {
-          background: linear-gradient(135deg, #ffc72c, #d89b00);
-          color: #050505;
-          box-shadow: 0 10px 30px rgba(255, 199, 44, 0.2);
+        .gold {
+          background: linear-gradient(135deg, #ffc72c, #c99000);
+          color: #030303;
         }
 
-        .dark-button {
-          background: rgba(255, 255, 255, 0.08);
-          color: #f5f5f5;
-          border: 1px solid rgba(255, 255, 255, 0.14);
+        .dark {
+          background: rgba(255,255,255,.08);
+          color: #fff;
+          border: 1px solid rgba(255,255,255,.15);
         }
 
-        .grid {
+        .stats {
           display: grid;
-          grid-template-columns: repeat(4, minmax(0, 1fr));
-          gap: 14px;
-          margin-top: 18px;
+          grid-template-columns: repeat(4, minmax(0,1fr));
+          gap: 12px;
+          margin-top: 16px;
         }
 
-        .card {
-          border: 1px solid rgba(255, 255, 255, 0.12);
-          background: rgba(255, 255, 255, 0.055);
-          border-radius: 22px;
-          padding: 16px;
-          box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+        .stat {
+          border: 1px solid rgba(255,255,255,.12);
+          border-radius: 18px;
+          padding: 14px;
+          background: rgba(255,255,255,.055);
         }
 
         .label {
           color: #9f9f9f;
           font-size: 11px;
           text-transform: uppercase;
-          letter-spacing: 0.12em;
-          font-weight: 900;
+          letter-spacing: .12em;
+          font-weight: 950;
         }
 
-        .big-value {
-          font-size: 30px;
+        .value {
+          font-size: 28px;
           font-weight: 950;
-          margin-top: 6px;
-          letter-spacing: -0.04em;
+          margin-top: 5px;
         }
 
         .filters {
           display: grid;
-          grid-template-columns: repeat(7, minmax(0, 1fr));
-          gap: 12px;
-          margin-top: 18px;
+          grid-template-columns: repeat(7, minmax(0,1fr));
+          gap: 10px;
+          margin-top: 16px;
         }
 
         .field {
           display: flex;
           flex-direction: column;
-          gap: 7px;
-        }
-
-        .field label {
-          color: #bdbdbd;
-          font-size: 11px;
-          text-transform: uppercase;
-          letter-spacing: 0.1em;
-          font-weight: 900;
+          gap: 6px;
         }
 
         input {
-          width: 100%;
-          background: rgba(0, 0, 0, 0.55);
-          border: 1px solid rgba(255, 255, 255, 0.14);
+          background: rgba(0,0,0,.55);
+          border: 1px solid rgba(255,255,255,.14);
           color: #fff;
-          border-radius: 14px;
-          padding: 12px;
+          border-radius: 13px;
+          padding: 11px;
+          font-weight: 850;
           outline: none;
-          font-weight: 800;
+          width: 100%;
         }
 
         input:focus {
-          border-color: rgba(255, 199, 44, 0.75);
-          box-shadow: 0 0 0 3px rgba(255, 199, 44, 0.1);
+          border-color: rgba(255,199,44,.75);
         }
 
-        .check-line {
+        .check {
           display: flex;
           align-items: center;
-          gap: 9px;
-          height: 100%;
-          padding-top: 19px;
+          gap: 8px;
+          padding-top: 20px;
+          font-weight: 850;
           color: #d8d8d8;
-          font-size: 13px;
-          font-weight: 800;
         }
 
-        .check-line input {
+        .check input {
           width: auto;
         }
 
-        .content-grid {
+        .grid {
           display: grid;
-          grid-template-columns: 1.2fr 0.8fr;
-          gap: 18px;
-          margin-top: 18px;
-        }
-
-        .panel {
-          border: 1px solid rgba(255, 255, 255, 0.12);
-          background: rgba(0, 0, 0, 0.56);
-          border-radius: 26px;
-          padding: 18px;
-          box-shadow: 0 24px 60px rgba(0, 0, 0, 0.36);
-        }
-
-        .panel-title {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 10px;
-          margin-bottom: 14px;
-        }
-
-        .panel-title h2 {
-          margin: 0;
-          font-size: 20px;
-          letter-spacing: -0.03em;
-          text-transform: uppercase;
-        }
-
-        .pill {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          border-radius: 999px;
-          padding: 7px 10px;
-          font-size: 11px;
-          font-weight: 950;
-          text-transform: uppercase;
-          letter-spacing: 0.06em;
-          background: rgba(255,255,255,0.08);
-          color: #d7d7d7;
-          border: 1px solid rgba(255,255,255,0.1);
-          white-space: nowrap;
-        }
-
-        .pill.good {
-          color: #72ff9d;
-          background: rgba(114, 255, 157, 0.09);
-          border-color: rgba(114, 255, 157, 0.25);
-        }
-
-        .pill.watch {
-          color: #ffc72c;
-          background: rgba(255, 199, 44, 0.09);
-          border-color: rgba(255, 199, 44, 0.25);
-        }
-
-        .pill.bad {
-          color: #ff6b6b;
-          background: rgba(255, 107, 107, 0.09);
-          border-color: rgba(255, 107, 107, 0.25);
+          grid-template-columns: 1.25fr .75fr;
+          gap: 16px;
+          margin-top: 16px;
         }
 
         .table-wrap {
           overflow-x: auto;
-          border-radius: 18px;
-          border: 1px solid rgba(255,255,255,0.08);
+          border: 1px solid rgba(255,255,255,.08);
+          border-radius: 17px;
         }
 
         table {
           width: 100%;
+          min-width: 860px;
           border-collapse: collapse;
-          min-width: 980px;
         }
 
         th {
           text-align: left;
-          color: #999;
+          color: #aaa;
+          background: rgba(255,255,255,.055);
+          padding: 11px;
           font-size: 11px;
           text-transform: uppercase;
-          letter-spacing: 0.08em;
-          padding: 12px;
-          background: rgba(255,255,255,0.05);
+          letter-spacing: .08em;
         }
 
         td {
-          padding: 12px;
-          border-top: 1px solid rgba(255,255,255,0.08);
-          vertical-align: middle;
-          font-weight: 800;
+          padding: 11px;
+          border-top: 1px solid rgba(255,255,255,.08);
+          font-weight: 850;
         }
 
         .ticker {
+          color: #ffc72c;
           font-size: 18px;
           font-weight: 950;
-          color: #ffc72c;
-          letter-spacing: 0.02em;
         }
 
-        .score {
-          font-size: 22px;
+        .pill {
+          display: inline-flex;
+          border-radius: 999px;
+          padding: 6px 9px;
+          font-size: 10px;
           font-weight: 950;
+          text-transform: uppercase;
+          letter-spacing: .05em;
+          border: 1px solid rgba(255,255,255,.12);
+          background: rgba(255,255,255,.08);
+          color: #ddd;
+          white-space: nowrap;
         }
 
-        .muted {
-          color: #9f9f9f;
+        .pill.good {
+          color: #76ff9f;
+          background: rgba(118,255,159,.09);
+          border-color: rgba(118,255,159,.25);
         }
 
-        .reason-list {
-          display: flex;
-          flex-direction: column;
-          gap: 8px;
-          margin-top: 10px;
+        .pill.watch {
+          color: #ffc72c;
+          background: rgba(255,199,44,.09);
+          border-color: rgba(255,199,44,.25);
         }
 
-        .reason {
-          padding: 10px 12px;
-          border-radius: 14px;
-          background: rgba(255,255,255,0.06);
-          color: #d9d9d9;
-          font-size: 13px;
-          line-height: 1.35;
+        .pill.bad {
+          color: #ff7b7b;
+          background: rgba(255,123,123,.09);
+          border-color: rgba(255,123,123,.25);
         }
 
-        .manual-row {
-          display: grid;
-          grid-template-columns: 1fr auto;
-          gap: 10px;
-          margin-bottom: 12px;
-        }
-
-        .watch-item {
-          display: grid;
-          grid-template-columns: 0.8fr 1fr 1fr 1fr;
-          gap: 8px;
-          align-items: center;
-          border-top: 1px solid rgba(255,255,255,0.08);
+        .obs {
+          border-top: 1px solid rgba(255,255,255,.08);
           padding: 12px 0;
         }
 
-        .remove {
-          background: rgba(255, 107, 107, 0.12);
-          color: #ff8a8a;
-          border: 1px solid rgba(255, 107, 107, 0.24);
-          padding: 8px 10px;
-          border-radius: 12px;
+        .obs-top {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 7px;
         }
 
-        .empty {
-          border: 1px dashed rgba(255, 255, 255, 0.18);
-          border-radius: 20px;
-          padding: 24px;
-          color: #a9a9a9;
-          line-height: 1.5;
+        .obs-meta {
+          color: #aaa;
+          font-size: 12px;
+          line-height: 1.45;
+        }
+
+        .notes {
+          margin-top: 7px;
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+
+        .note {
+          color: #d7d7d7;
+          background: rgba(255,255,255,.06);
+          border-radius: 12px;
+          padding: 8px 10px;
+          font-size: 12px;
+          line-height: 1.35;
+        }
+
+        .empty, .error {
+          border-radius: 18px;
+          padding: 18px;
+          color: #aaa;
+          border: 1px dashed rgba(255,255,255,.18);
           text-align: center;
+          line-height: 1.45;
         }
 
         .error {
-          margin-top: 14px;
-          border: 1px solid rgba(255, 107, 107, 0.35);
-          background: rgba(255, 107, 107, 0.08);
+          margin-top: 12px;
+          border-style: solid;
           color: #ffd1d1;
-          border-radius: 16px;
-          padding: 12px;
-          font-weight: 800;
+          background: rgba(255,90,90,.08);
+          border-color: rgba(255,90,90,.25);
+          font-weight: 850;
         }
 
         @media (max-width: 1100px) {
-          .grid,
-          .filters,
-          .content-grid {
+          .stats, .filters, .grid {
             grid-template-columns: 1fr;
-          }
-
-          .hero-top {
-            flex-direction: column;
-          }
-
-          .button-row {
-            width: 100%;
           }
 
           button {
@@ -576,90 +609,81 @@ export default function HomePage() {
       `}</style>
 
       <section className="hero">
-        <div className="hero-top">
+        <div className="top">
           <div>
             <div className="eyebrow">Proof Of Structure™</div>
-            <h1>Raw Hunter Gatherer</h1>
-            <p className="subtitle">
-              Discovery only. This page reads <b>/api/gainers</b>, ranks the 4AM-style runners, and shows evidence without pretending it is a buy signal.
-            </p>
+            <h1>Raw Hunter</h1>
+            <div className="sub">
+              Light observation tracker. It watches who stays, who climbs, who appears from nowhere, and who starts failing.
+              This is not permission. It is pattern memory.
+            </div>
           </div>
 
-          <div className="button-row">
-            <button className="gold-button" onClick={fetchHunter} disabled={loading}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button className="gold" onClick={fetchHunter} disabled={loading}>
               {loading ? "Scanning..." : "New Scan"}
             </button>
-            <button
-              className="dark-button"
-              onClick={() => {
-                setMinPrice("0.10");
-                setMaxPrice("10");
-                setMinGain("0");
-                setMaxGain("120");
-                setMinVolume("0");
-                setLimit("10");
-                setRemoveJunk(true);
-              }}
-            >
-              Reset Filters
+
+            <button className="dark" onClick={() => setObservations({})}>
+              Clear Memory
             </button>
           </div>
         </div>
 
-        <div className="grid">
-          <div className="card">
+        <div className="stats">
+          <div className="stat">
             <div className="label">Top Ticker</div>
-            <div className="big-value">{topTicker || "—"}</div>
+            <div className="value">{topTicker || "—"}</div>
           </div>
 
-          <div className="card">
+          <div className="stat">
             <div className="label">Top Score</div>
-            <div className="big-value">{topScore.toFixed(0)}</div>
+            <div className="value">{topScore.toFixed(0)}</div>
           </div>
 
-          <div className="card">
+          <div className="stat">
             <div className="label">Raw Count</div>
-            <div className="big-value">{rawCount}</div>
+            <div className="value">{rawCount}</div>
           </div>
 
-          <div className="card">
+          <div className="stat">
             <div className="label">Showing</div>
-            <div className="big-value">{showing}</div>
+            <div className="value">{showing}</div>
           </div>
         </div>
 
         <div className="filters">
           <div className="field">
-            <label>Min Price</label>
+            <label className="label">Min Price</label>
             <input value={minPrice} onChange={(e) => setMinPrice(e.target.value)} />
           </div>
 
           <div className="field">
-            <label>Max Price</label>
+            <label className="label">Max Price</label>
             <input value={maxPrice} onChange={(e) => setMaxPrice(e.target.value)} />
           </div>
 
           <div className="field">
-            <label>Min Gain %</label>
+            <label className="label">Min Gain %</label>
             <input value={minGain} onChange={(e) => setMinGain(e.target.value)} />
           </div>
 
           <div className="field">
-            <label>Max Gain %</label>
+            <label className="label">Max Gain %</label>
             <input value={maxGain} onChange={(e) => setMaxGain(e.target.value)} />
           </div>
 
           <div className="field">
-            <label>Min Volume</label>
+            <label className="label">Min Volume</label>
             <input value={minVolume} onChange={(e) => setMinVolume(e.target.value)} />
           </div>
 
           <div className="field">
-            <label>Limit</label>
+            <label className="label">Limit</label>
             <input value={limit} onChange={(e) => setLimit(e.target.value)} />
           </div>
 
-          <label className="check-line">
+          <label className="check">
             <input
               type="checkbox"
               checked={removeJunk}
@@ -672,16 +696,13 @@ export default function HomePage() {
         {message ? <div className="error">{message}</div> : null}
       </section>
 
-      <section className="content-grid">
+      <section className="grid">
         <div className="panel">
-          <div className="panel-title">
-            <h2>Hunter Top List</h2>
-            <span className="pill watch">Last Scan: {lastScan}</span>
-          </div>
+          <h2>Current Hunter List</h2>
 
           {items.length === 0 ? (
             <div className="empty">
-              No Hunter results showing. Check API key, route build, market data, or filters.
+              No live movers showing. If raw count is high and showing is 0, the scanner is connected but no object is moving.
             </div>
           ) : (
             <div className="table-wrap">
@@ -693,9 +714,7 @@ export default function HomePage() {
                     <th>Price</th>
                     <th>Gain</th>
                     <th>Volume</th>
-                    <th>RVOL</th>
                     <th>Spread</th>
-                    <th>Score</th>
                     <th>Status</th>
                     <th>Phase</th>
                   </tr>
@@ -703,26 +722,23 @@ export default function HomePage() {
 
                 <tbody>
                   {items.map((item, index) => {
-                    const ticker = String(item.ticker || item.symbol || "—").toUpperCase();
-
+                    const ticker = cleanTicker(item.ticker || item.symbol);
                     return (
                       <tr key={`${ticker}-${index}`}>
-                        <td>{item.rank || index + 1}</td>
-                        <td className="ticker">{ticker}</td>
+                        <td>#{item.rank || index + 1}</td>
+                        <td className="ticker">{ticker || "—"}</td>
                         <td>{formatPrice(item.price)}</td>
                         <td>{formatPct(item.gainPct)}</td>
-                        <td>{formatVolume(item.premarketVolume)}</td>
-                        <td>{num(item.relativePremarketVolume).toFixed(2)}</td>
+                        <td>{formatVol(item.premarketVolume)}</td>
                         <td>
                           {formatPct(item.spreadPct)}{" "}
-                          <span className={`pill ${statusClass(item.spreadStatus)}`}>
+                          <span className={`pill ${pillClass(item.spreadStatus)}`}>
                             {item.spreadStatus || "UNKNOWN"}
                           </span>
                         </td>
-                        <td className="score">{num(item.hunterScore).toFixed(0)}</td>
                         <td>
-                          <span className={`pill ${statusClass(item.hunterStatus)}`}>
-                            {item.hunterStatus || "FLAT"}
+                          <span className={`pill ${pillClass(item.hunterStatus)}`}>
+                            {item.hunterStatus || "OBSERVE"}
                           </span>
                         </td>
                         <td>
@@ -738,88 +754,44 @@ export default function HomePage() {
         </div>
 
         <aside className="panel">
-          <div className="panel-title">
-            <h2>Mission Control</h2>
-            <span className="pill">{mode}</span>
+          <h2>Hunter Observations</h2>
+
+          <div className="obs-meta" style={{ marginBottom: 12 }}>
+            Last scan: <b>{lastScan}</b>
+            <br />
+            Source: <b>{source}</b>
           </div>
 
-          <div className="card">
-            <div className="label">Source</div>
-            <div className="big-value" style={{ fontSize: 18 }}>{source}</div>
-          </div>
-
-          <div style={{ height: 12 }} />
-
-          <div className="card">
-            <div className="label">Best Read</div>
-            <div className="big-value">{best?.ticker || best?.symbol || "—"}</div>
-            <div className="reason-list">
-              {(best?.reasons || []).slice(0, 5).map((reason, index) => (
-                <div className="reason" key={`reason-${index}`}>
-                  ✅ {reason}
-                </div>
-              ))}
-
-              {(best?.warnings || []).slice(0, 5).map((warning, index) => (
-                <div className="reason" key={`warning-${index}`}>
-                  ⚠️ {warning}
-                </div>
-              ))}
-
-              {!best ? (
-                <div className="reason">No top ticker yet.</div>
-              ) : null}
-            </div>
-          </div>
-
-          <div style={{ height: 18 }} />
-
-          <div className="panel-title">
-            <h2>Manual Watch</h2>
-            <span className="pill watch">Local</span>
-          </div>
-
-          <div className="manual-row">
-            <input
-              value={manualInput}
-              onChange={(e) => setManualInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") addManualTickers();
-              }}
-              placeholder="AZTR, IONZ, ONCY"
-            />
-            <button className="gold-button" onClick={addManualTickers}>
-              Add
-            </button>
-          </div>
-
-          {manualMatches.length === 0 ? (
+          {observationList.length === 0 ? (
             <div className="empty">
-              Type tickers here. If the Hunter API returns them, this panel shows their score.
+              Hit New Scan a few times. This panel starts learning who stays, who climbs, and who ghosts in.
             </div>
           ) : (
-            manualMatches.map(({ ticker, item }) => (
-              <div className="watch-item" key={ticker}>
-                <div className="ticker">{ticker}</div>
-
-                <div>
-                  <div className="label">Score</div>
-                  <div>{item ? num(item.hunterScore).toFixed(0) : "Not found"}</div>
+            observationList.map((obs) => (
+              <div className="obs" key={obs.ticker}>
+                <div className="obs-top">
+                  <div className="ticker">{obs.ticker}</div>
+                  <span className={`pill ${pillClass(obs.tag)}`}>{obs.tag}</span>
                 </div>
 
-                <div>
-                  <div className="label">Gain</div>
-                  <div>{item ? formatPct(item.gainPct) : "—"}</div>
+                <div className="obs-meta">
+                  Now: #{obs.currentRank}
+                  {obs.previousRank ? ` | Prev: #${obs.previousRank}` : " | Prev: new"}
+                  {" | "}
+                  Best: #{obs.bestRank}
+                  {" | "}
+                  Top 5 hits: {obs.top5Hits}
+                  {" | "}
+                  Seen: {obs.appearances}x
                 </div>
 
-                <button
-                  className="remove"
-                  onClick={() => {
-                    setManualTickers((old) => old.filter((x) => x !== ticker));
-                  }}
-                >
-                  X
-                </button>
+                <div className="notes">
+                  {obs.notes.slice(0, 3).map((note, index) => (
+                    <div className="note" key={`${obs.ticker}-note-${index}`}>
+                      {note}
+                    </div>
+                  ))}
+                </div>
               </div>
             ))
           )}
