@@ -157,7 +157,7 @@ const functionList = [
   ["Spread check", "Tells if the buying/selling price gap is clean or dangerous."],
   ["Volume check", "Shows whether enough shares are trading."],
   ["Speed check", "Measures how fast pressure is building."],
-  ["Permission verdict", "YES, WAIT, or NO."],
+  ["Raw Hunter verdict", "WAIT means raw candidate. NO means rejected. This is not entry permission."],
   ["Rejection reason", "Tells why a ticker failed."],
   ["Entry zones", "Shows support, middle, and breakout proof entry numbers."],
   ["Trader journal", "Forces the trader to answer the important questions before acting."]
@@ -841,7 +841,7 @@ export default function Home() {
             <br />
             STRUCTURE
           </h2>
-          <p>ELITE DEV 4</p>
+          <p>ELITE DEV 5</p>
         </div>
 
         <nav>
@@ -868,7 +868,7 @@ export default function Home() {
       <section className="main">
         <header className="hero">
           <div>
-            <p>PROOF OF STRUCTURE™ ELITE DEV 4</p>
+            <p>PROOF OF STRUCTURE™ ELITE DEV 5</p>
             <h1>MISSION CONTROL</h1>
             <span>The market must earn permission. No Proof = No Trade.</span>
           </div>
@@ -887,7 +887,7 @@ export default function Home() {
         {page === "dashboard" && (
           <>
             <section className="demoNotice">
-              <strong>(SAT/SUN SCANNER IS IN DEMO MODE — NOT A REAL LIVE GAINERS SCAN.)</strong>
+              <strong>RAW HUNTER MODE — EMPTY LIST MEANS NOTHING QUALIFIED. NO FAKE BACKUP STOCKS.</strong>
             </section>
 
             <section className="modebar">
@@ -1195,7 +1195,7 @@ export default function Home() {
         {page === "help" && (
           <>
             <div className="demoNotice">
-              <strong>(SAT/SUN SCANNER IS IN DEMO MODE — NOT A REAL LIVE GAINERS SCAN.)</strong>
+              <strong>RAW HUNTER MODE — EMPTY LIST MEANS NOTHING QUALIFIED. NO FAKE BACKUP STOCKS.</strong>
             </div>
 
             <Info
