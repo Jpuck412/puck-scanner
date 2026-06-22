@@ -609,9 +609,6 @@ export async function GET(req: Request) {
         };
       })
     );
-        rank: index + 1,
-        ...item,
-      }));
 
     return NextResponse.json(
       {
