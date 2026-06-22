@@ -1,3 +1,5 @@
+// app/api/gainers/route.ts
+
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -5,7 +7,7 @@ export const revalidate = 0;
 
 const SOURCE = "polygon-raw-hunter-elite5";
 
-type AnyObj = Record<string, any>;
+type AnyObj = Record<string, unknown>;
 type NumericInput = number | string | null | undefined;
 
 type HunterStatus = "CLIMBING" | "FLAT" | "FADING";
@@ -25,9 +27,24 @@ type FourAmGainerFormulaInput = {
   ask?: NumericInput;
 };
 
-function num(value: any): number {
+type SpreadResult = {
+  spread: number;
+  spreadPct: number;
+  spreadStatus: SpreadStatus;
+  spreadScore: number;
+};
+
+function num(value: unknown): number {
   const n = Number(value);
   return Number.isFinite(n) ? n : 0;
+}
+
+function str(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function obj(value: unknown): AnyObj {
+  return value && typeof value === "object" ? (value as AnyObj) : {};
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -39,12 +56,12 @@ function round(value: number, places = 4): number {
   return Math.round(num(value) * p) / p;
 }
 
-function cleanTicker(value: string | undefined): string {
+function cleanTicker(value: unknown): string {
   return String(value || "").trim().toUpperCase();
 }
 
 function rawTickerSymbol(raw: AnyObj): string {
-  return cleanTicker(raw?.ticker || raw?.T || raw?.symbol);
+  return cleanTicker(raw.ticker || raw.T || raw.symbol);
 }
 
 function isJunkTicker(ticker: string): boolean {
@@ -61,7 +78,7 @@ function isJunkTicker(ticker: string): boolean {
   );
 }
 
-function buildSpread(bid: number, ask: number, price: number) {
+function buildSpread(bid: number, ask: number, price: number): SpreadResult {
   if (bid > 0 && ask > 0 && ask >= bid) {
     const mid = (bid + ask) / 2 || price;
     const spread = ask - bid;
@@ -71,7 +88,7 @@ function buildSpread(bid: number, ask: number, price: number) {
       return {
         spread,
         spreadPct,
-        spreadStatus: "TIGHT" as SpreadStatus,
+        spreadStatus: "TIGHT",
         spreadScore: 12
       };
     }
@@ -80,7 +97,7 @@ function buildSpread(bid: number, ask: number, price: number) {
       return {
         spread,
         spreadPct,
-        spreadStatus: "OK" as SpreadStatus,
+        spreadStatus: "OK",
         spreadScore: 5
       };
     }
@@ -88,7 +105,7 @@ function buildSpread(bid: number, ask: number, price: number) {
     return {
       spread,
       spreadPct,
-      spreadStatus: "WIDE" as SpreadStatus,
+      spreadStatus: "WIDE",
       spreadScore: -18
     };
   }
@@ -96,7 +113,7 @@ function buildSpread(bid: number, ask: number, price: number) {
   return {
     spread: 0,
     spreadPct: 0,
-    spreadStatus: "UNKNOWN" as SpreadStatus,
+    spreadStatus: "UNKNOWN",
     spreadScore: 0
   };
 }
@@ -114,14 +131,14 @@ function buildHunterStatus(gainPct: number, volume: number): HunterStatus {
   return "FLAT";
 }
 
-function mapSpreadForPage(rawSpread: string): string {
+function mapSpreadForPage(rawSpread: SpreadStatus): string {
   if (rawSpread === "TIGHT") return "PASS";
   if (rawSpread === "OK") return "CAUTION";
   if (rawSpread === "WIDE") return "FAIL";
   return "CHECK";
 }
 
-function gainBandFromPhase(phase: string, gainPct: number): string {
+function gainBandFromPhase(phase: HunterPhase, gainPct: number): string {
   if (gainPct >= 1000) return "EXTREME TRAP RISK";
   if (phase === "EXTENDED_HOT") return "EXTENDED HOT";
   if (phase === "ESTABLISHED") return "RAW HUNTER BAND";
@@ -136,11 +153,6 @@ function speedLabelFromScore(score: number): string {
   return "SLOW";
 }
 
-/*
-  IMPORTANT:
-  This function is intentionally NOT exported.
-  Next.js route.ts files cannot export random helper functions.
-*/
 function buildFourAmGainerFormula(input: FourAmGainerFormulaInput) {
   const ticker = cleanTicker(input.ticker || input.symbol);
   const price = num(input.currentPremarketPrice || input.price);
@@ -174,28 +186,22 @@ function buildFourAmGainerFormula(input: FourAmGainerFormulaInput) {
     price >= 0.1 && price <= 2
       ? 16
       : price > 2 && price <= 5
-      ? 10
-      : price > 5 && price <= 10
-      ? 4
-      : -28;
+        ? 10
+        : price > 5 && price <= 10
+          ? 4
+          : -28;
 
   const phaseBonus =
     hunterPhase === "CLIMBER"
       ? 10
       : hunterPhase === "ESTABLISHED"
-      ? 16
-      : hunterPhase === "EXTENDED_HOT"
-      ? -25
-      : 0;
+        ? 16
+        : hunterPhase === "EXTENDED_HOT"
+          ? -25
+          : 0;
 
   const extensionPenalty =
-    gainPct >= 1000
-      ? -100
-      : gainPct > 150
-      ? -60
-      : gainPct > 65
-      ? -28
-      : 0;
+    gainPct >= 1000 ? -100 : gainPct > 150 ? -60 : gainPct > 65 ? -28 : 0;
 
   const junkPenalty = junk ? -75 : 0;
 
@@ -220,8 +226,12 @@ function buildFourAmGainerFormula(input: FourAmGainerFormulaInput) {
   if (gainPct >= 5) reasons.push("GAINER");
   if (gainPct >= 20 && gainPct <= 65) reasons.push("CORE_20_TO_65_GAIN_BAND");
   if (premarketVolume >= 100000) reasons.push("PREMARKET_VOLUME_ACTIVE");
-  if (relativePremarketVolume >= 2) reasons.push("RELATIVE_PREMARKET_VOLUME_EXPANSION");
-  if (spread.spreadStatus === "TIGHT" || spread.spreadStatus === "OK") reasons.push("SPREAD_TRACKABLE");
+  if (relativePremarketVolume >= 2) {
+    reasons.push("RELATIVE_PREMARKET_VOLUME_EXPANSION");
+  }
+  if (spread.spreadStatus === "TIGHT" || spread.spreadStatus === "OK") {
+    reasons.push("SPREAD_TRACKABLE");
+  }
   if (price >= 0.1 && price <= 10) reasons.push("PRICE_IN_RAW_HUNTER_RANGE");
 
   if (!ticker) warnings.push("MISSING_TICKER");
@@ -270,14 +280,20 @@ function buildFourAmGainerFormula(input: FourAmGainerFormulaInput) {
     extensionPenalty,
     junkPenalty,
     isCandidate,
-    rankKey: round(rawHunterScore * 1000000 + gainPct * 1000 + premarketVolume / 100000, 2),
-    percentRankKey: round(gainPct * 1000000 + rawHunterScore * 1000 + premarketVolume / 100000, 2),
+    rankKey: round(
+      rawHunterScore * 1_000_000 + gainPct * 1000 + premarketVolume / 100000,
+      2
+    ),
+    percentRankKey: round(
+      gainPct * 1_000_000 + rawHunterScore * 1000 + premarketVolume / 100000,
+      2
+    ),
     reasons,
     warnings
   };
 }
 
-async function polygonFetch(path: string, apiKey: string) {
+async function polygonFetch(path: string, apiKey: string): Promise<AnyObj | null> {
   if (!apiKey) return null;
 
   const joiner = path.includes("?") ? "&" : "?";
@@ -292,59 +308,51 @@ async function polygonFetch(path: string, apiKey: string) {
 
   if (!res.ok) return null;
 
-  return res.json();
+  return (await res.json()) as AnyObj;
 }
 
 function normalizeSnapshot(raw: AnyObj) {
+  const prevDay = obj(raw.prevDay);
+  const lastTrade = obj(raw.lastTrade);
+  const day = obj(raw.day);
+  const min = obj(raw.min);
+  const lastQuote = obj(raw.lastQuote);
+
   const ticker = rawTickerSymbol(raw);
 
   const previousClose = num(
-    raw?.prevDay?.c ??
-      raw?.previousClose ??
-      raw?.prevClose ??
-      raw?.pc
+    prevDay.c || raw.previousClose || raw.prevClose || raw.pc
   );
 
   const price = num(
-    raw?.lastTrade?.p ??
-      raw?.day?.c ??
-      raw?.min?.c ??
-      raw?.price ??
-      raw?.currentPremarketPrice ??
-      (previousClose ? previousClose + num(raw?.todaysChange) : 0)
+    lastTrade.p ||
+      day.c ||
+      min.c ||
+      raw.price ||
+      raw.currentPremarketPrice ||
+      (previousClose ? previousClose + num(raw.todaysChange) : 0)
   );
 
   const gain = num(
-    raw?.todaysChangePerc ??
-      raw?.gain ??
-      raw?.gainPct ??
-      raw?.priorGainPct
+    raw.todaysChangePerc || raw.gain || raw.gainPct || raw.priorGainPct
   );
 
   const change =
-    num(raw?.todaysChange ?? raw?.change) ||
+    num(raw.todaysChange || raw.change) ||
     (previousClose > 0 && price > 0 ? price - previousClose : 0);
 
-  const volume = num(
-    raw?.day?.v ??
-      raw?.min?.av ??
-      raw?.min?.v ??
-      raw?.volume ??
-      raw?.premarketVolume
-  );
+  const volume = num(day.v || min.av || min.v || raw.volume || raw.premarketVolume);
 
   const averagePremarketVolume = num(
-    raw?.averagePremarketVolume ??
-      raw?.avgPremarketVolume ??
-      raw?.prevDay?.v
+    raw.averagePremarketVolume || raw.avgPremarketVolume || prevDay.v
   );
 
-  const open = num(raw?.day?.o ?? raw?.min?.o ?? raw?.open ?? price);
-  const high = num(raw?.day?.h ?? raw?.min?.h ?? raw?.high ?? price);
-  const low = num(raw?.day?.l ?? raw?.min?.l ?? raw?.low ?? price);
+  const open = num(day.o || min.o || raw.open || price);
+  const high = num(day.h || min.h || raw.high || price);
+  const low = num(day.l || min.l || raw.low || price);
 
-  const bid = num(raw?.lastQuote?.p ?? raw?.bid);
-  const ask = num(raw?.lastQuote?.P ?? raw?.ask);
+  const bid = num(lastQuote.p || raw.bid);
+  const ask = num(lastQuote.P || raw.ask);
 
   return {
     ticker,
@@ -386,7 +394,6 @@ function buildRawHunterTicker(raw: AnyObj, marketMode: string, index: number) {
 
   const support = round(base.low || base.price);
   const resistance = round(base.high || base.price);
-
   const neutralEntry = round(base.price);
   const neutralTarget = round(base.price);
 
@@ -403,16 +410,13 @@ function buildRawHunterTicker(raw: AnyObj, marketMode: string, index: number) {
   const spreadOk = spreadStatus === "PASS" || spreadStatus === "CAUTION";
 
   const signalAlignment =
-    (speedOk ? 1 : 0) +
-    (volumeOk ? 1 : 0) +
-    (spreadOk ? 1 : 0);
+    (speedOk ? 1 : 0) + (volumeOk ? 1 : 0) + (spreadOk ? 1 : 0);
 
   const verdict = formula.isCandidate ? "WAIT" : "NO";
   const rejection = formula.isCandidate
     ? ""
     : formula.warnings[0] || "NOT_RAW_HUNTER_CANDIDATE";
 
-  const permissionText = "RAW HUNTER ONLY — NOT ENTRY PERMISSION";
   const actionRank = formula.isCandidate ? 2 : 1;
 
   return {
@@ -508,7 +512,7 @@ function buildRawHunterTicker(raw: AnyObj, marketMode: string, index: number) {
 
     verdict,
     rejection,
-    permissionText,
+    permissionText: "RAW HUNTER ONLY — NOT ENTRY PERMISSION",
     candles: index + 1,
 
     isCandidate: formula.isCandidate,
@@ -519,18 +523,25 @@ function buildRawHunterTicker(raw: AnyObj, marketMode: string, index: number) {
   };
 }
 
-export async function GET() {
+function jsonResponse(body: AnyObj, status = 200): NextResponse {
+  return NextResponse.json(body, {
+    status,
+    headers: {
+      "Cache-Control": "no-store, max-age=0"
+    }
+  });
+}
+
+export async function GET(): Promise<NextResponse> {
   const apiKey =
-    process.env.POLYGON_API_KEY ||
-    process.env.NEXT_PUBLIC_POLYGON_API_KEY ||
-    "";
+    process.env.POLYGON_API_KEY || process.env.NEXT_PUBLIC_POLYGON_API_KEY || "";
 
   let marketMode = "LIVE_GAINERS_RAW_HUNTER";
   let liveGainersCount = 0;
   let rawList: AnyObj[] = [];
 
   if (!apiKey) {
-    return NextResponse.json(
+    return jsonResponse(
       {
         ok: false,
         source: SOURCE,
@@ -549,11 +560,7 @@ export async function GET() {
         },
         tickers: []
       },
-      {
-        headers: {
-          "Cache-Control": "no-store, max-age=0"
-        }
-      }
+      500
     );
   }
 
@@ -564,10 +571,10 @@ export async function GET() {
     );
 
     rawList = Array.isArray(gainers?.tickers)
-      ? gainers.tickers
+      ? (gainers.tickers as AnyObj[])
       : Array.isArray(gainers?.results)
-      ? gainers.results
-      : [];
+        ? (gainers.results as AnyObj[])
+        : [];
 
     liveGainersCount = rawList.length;
   } catch {
@@ -577,75 +584,72 @@ export async function GET() {
   if (!rawList.length) {
     marketMode = "EMPTY_LIVE_GAINERS";
 
-    return NextResponse.json(
-      {
-        ok: true,
-        source: SOURCE,
-        marketMode,
-        liveGainersCount,
-        count: 0,
-        timestamp: new Date().toISOString(),
-        rules: {
-          scannerType: "RAW HUNTER GATHERER",
-          purpose: "Locate live 4AM/premarket gainers and climbers",
-          permission: "NOT BUY/SELL. NOT ENTRY PERMISSION.",
-          ranking: "percent move first, raw hunter score second, volume third",
-          backup: "NO FAKE BACKUP STOCKS. EMPTY MEANS EMPTY."
-        },
-        data: {
-          tickers: []
-        },
-        tickers: []
-      },
-      {
-        headers: {
-          "Cache-Control": "no-store, max-age=0"
-        }
-      }
-    );
-  }
-
-  const cleaned = rawList
-    .filter((x) => rawTickerSymbol(x))
-    .slice(0, 100);
-
-  const enriched = cleaned
-    .map((raw, index) => buildRawHunterTicker(raw, marketMode, index))
-    .filter(Boolean) as AnyObj[];
-
-  enriched.sort((a, b) => {
-    if (b.percentRankKey !== a.percentRankKey) return b.percentRankKey - a.percentRankKey;
-    if (b.rawHunterScore !== a.rawHunterScore) return b.rawHunterScore - a.rawHunterScore;
-    return b.premarketVolume - a.premarketVolume;
-  });
-
-  return NextResponse.json(
-    {
+    return jsonResponse({
       ok: true,
       source: SOURCE,
       marketMode,
       liveGainersCount,
-      count: enriched.length,
+      count: 0,
       timestamp: new Date().toISOString(),
       rules: {
         scannerType: "RAW HUNTER GATHERER",
         purpose: "Locate live 4AM/premarket gainers and climbers",
         permission: "NOT BUY/SELL. NOT ENTRY PERMISSION.",
-        priceRange: "$0.10 to $10.00 preferred",
-        rawGainBand: "5% to 65%",
-        coreHunterBand: "20% to 65%",
         ranking: "percent move first, raw hunter score second, volume third",
-        backup: "NO FAKE BACKUP STOCKS"
+        backup: "NO FAKE BACKUP STOCKS. EMPTY MEANS EMPTY."
       },
       data: {
-        tickers: enriched
+        tickers: []
       },
+      tickers: []
+    });
+  }
+
+  const cleaned = rawList.filter((x) => rawTickerSymbol(x)).slice(0, 100);
+
+  const enriched = cleaned
+    .map((raw, index) => buildRawHunterTicker(raw, marketMode, index))
+    .filter((item): item is AnyObj => Boolean(item));
+
+  enriched.sort((a, b) => {
+    const aPercentRankKey = num(a.percentRankKey);
+    const bPercentRankKey = num(b.percentRankKey);
+    const aRawHunterScore = num(a.rawHunterScore);
+    const bRawHunterScore = num(b.rawHunterScore);
+    const aPremarketVolume = num(a.premarketVolume);
+    const bPremarketVolume = num(b.premarketVolume);
+
+    if (bPercentRankKey !== aPercentRankKey) {
+      return bPercentRankKey - aPercentRankKey;
+    }
+
+    if (bRawHunterScore !== aRawHunterScore) {
+      return bRawHunterScore - aRawHunterScore;
+    }
+
+    return bPremarketVolume - aPremarketVolume;
+  });
+
+  return jsonResponse({
+    ok: true,
+    source: SOURCE,
+    marketMode,
+    liveGainersCount,
+    count: enriched.length,
+    timestamp: new Date().toISOString(),
+    rules: {
+      scannerType: "RAW HUNTER GATHERER",
+      purpose: "Locate live 4AM/premarket gainers and climbers",
+      permission: "NOT BUY/SELL. NOT ENTRY PERMISSION.",
+      priceRange: "$0.10 to $10.00 preferred",
+      rawGainBand: "5% to 65%",
+      coreHunterBand: "20% to 65%",
+      ranking: "percent move first, raw hunter score second, volume third",
+      backup: "NO FAKE BACKUP STOCKS"
+    },
+    data: {
       tickers: enriched
     },
-    {
-      headers: {
-        "Cache-Control": "no-store, max-age=0"
-      }
-    }
-  );
+    tickers: enriched
+  });
 }
