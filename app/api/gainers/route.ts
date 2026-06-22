@@ -14,7 +14,6 @@ type HunterStatus = "CLIMBING" | "FLAT" | "FADING";
 type HunterPhase = "BELOW_RADAR" | "CLIMBER" | "ESTABLISHED" | "EXTENDED_HOT";
 type SpreadStatus = "TIGHT" | "OK" | "WIDE" | "UNKNOWN";
 
-type FourAmGainerFormulaInput = {
   ticker?: string;
   symbol?: string;
   price?: NumericInput;
@@ -153,7 +152,6 @@ function speedLabelFromScore(score: number): string {
   return "SLOW";
 }
 
-function buildFourAmGainerFormula(input: FourAmGainerFormulaInput) {
   const ticker = cleanTicker(input.ticker || input.symbol);
   const price = num(input.currentPremarketPrice || input.price);
   const previousClose = num(input.previousClose);
@@ -375,7 +373,6 @@ function buildRawHunterTicker(raw: AnyObj, marketMode: string, index: number) {
 
   if (!base.ticker || !base.price) return null;
 
-  const formula = buildFourAmGainerFormula({
     ticker: base.ticker,
     price: base.price,
     currentPremarketPrice: base.price,
