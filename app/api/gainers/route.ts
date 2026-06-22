@@ -1,441 +1,344 @@
-// app/api/gainers/route.ts
+// ============================================================
+// FILE: app/api/gainers/route.ts
+// PURPOSE: Raw Hunter Gatherer API route.
+// Uses Polygon/Massive live snapshot data.
+// No fake backup list.
+// No resistance-based scoring.
+// No buy/sell signal.
+// ============================================================
 
 import { NextResponse } from "next/server";
+import { buildFourAmGainerScore } from "./fourAmGainerFormula";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-type AnyObj = Record<string, any>;
+type AnyObj = Record<string, unknown>;
 
-const SOURCE = "polygon-raw-hunter-clean";
+const SOURCE = "polygon-massive-raw-hunter";
+
+function getApiKey(): string {
+  return (
+    process.env.POLYGON_API_KEY ||
+    process.env.MASSIVE_API_KEY ||
+    process.env.NEXT_PUBLIC_POLYGON_API_KEY ||
+    process.env.NEXT_PUBLIC_MASSIVE_API_KEY ||
+    ""
+  );
+}
 
 function num(value: unknown): number {
   const n = Number(value);
   return Number.isFinite(n) ? n : 0;
 }
 
-function round(value: number, places = 4): number {
-  const p = Math.pow(10, places);
-  return Math.round(num(value) * p) / p;
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
+function str(value: unknown): string {
+  return String(value || "").trim();
 }
 
 function cleanTicker(value: unknown): string {
-  return String(value || "").trim().toUpperCase();
+  return str(value).toUpperCase();
 }
 
-function tickerFromRaw(raw: AnyObj): string {
-  return cleanTicker(raw?.ticker || raw?.T || raw?.symbol);
+function isObj(value: unknown): value is AnyObj {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function getPath(obj: unknown, path: string): unknown {
+  if (!isObj(obj)) return undefined;
+
+  const parts = path.split(".");
+  let current: unknown = obj;
+
+  for (const part of parts) {
+    if (!isObj(current)) return undefined;
+    current = current[part];
+  }
+
+  return current;
+}
+
+function pickNumber(obj: unknown, paths: string[]): number {
+  for (const path of paths) {
+    const value = getPath(obj, path);
+    const n = num(value);
+    if (n !== 0) return n;
+  }
+
+  return 0;
 }
 
 function isJunkTicker(ticker: string): boolean {
-  const x = cleanTicker(ticker);
+  const t = cleanTicker(ticker);
+
+  if (!t) return true;
+  if (t.includes(".")) return true;
+  if (t.includes("-")) return true;
+  if (t.length > 5) return true;
 
   return (
-    !x ||
-    x.includes(".") ||
-    x.endsWith("W") ||
-    x.endsWith("WS") ||
-    x.endsWith("U") ||
-    x.endsWith("R") ||
-    x.endsWith("RT")
+    t.endsWith("W") ||
+    t.endsWith("WS") ||
+    t.endsWith("WT") ||
+    t.endsWith("U") ||
+    t.endsWith("R") ||
+    t.endsWith("RT")
   );
 }
 
-function buildSpread(bid: number, ask: number, price: number) {
-  if (bid > 0 && ask > 0 && ask >= bid) {
-    const mid = (bid + ask) / 2 || price;
-    const spread = ask - bid;
-    const spreadPct = mid > 0 ? (spread / mid) * 100 : 0;
+function toBool(value: string | null, fallback: boolean): boolean {
+  if (value === null) return fallback;
 
-    if (spreadPct <= 0.75) {
-      return {
-        spread,
-        spreadPct,
-        spreadStatus: "PASS",
-        spreadScore: 12
-      };
-    }
+  const v = value.toLowerCase();
 
-    if (spreadPct <= 2.5) {
-      return {
-        spread,
-        spreadPct,
-        spreadStatus: "CAUTION",
-        spreadScore: 5
-      };
-    }
+  if (v === "true" || v === "1" || v === "yes") return true;
+  if (v === "false" || v === "0" || v === "no") return false;
 
-    return {
-      spread,
-      spreadPct,
-      spreadStatus: "FAIL",
-      spreadScore: -18
-    };
-  }
-
-  return {
-    spread: 0,
-    spreadPct: 0,
-    spreadStatus: "CHECK",
-    spreadScore: 0
-  };
+  return fallback;
 }
 
-function gainBandFromGain(gain: number): string {
-  if (gain >= 1000) return "EXTREME TRAP RISK";
-  if (gain > 65) return "EXTENDED HOT";
-  if (gain >= 20) return "RAW HUNTER BAND";
-  if (gain >= 5) return "EARLY CLIMBER";
-  return "BELOW RADAR";
-}
+function buildSnapshotInput(row: AnyObj) {
+  const ticker = cleanTicker(row.ticker || row.symbol || row.T);
 
-function speedLabelFromScore(score: number): string {
-  if (score >= 85) return "VIOLENT";
-  if (score >= 65) return "FAST";
-  if (score >= 40) return "ACTIVE";
-  return "SLOW";
-}
+  const price = pickNumber(row, [
+    "lastTrade.p",
+    "min.c",
+    "day.c",
+    "value",
+    "price",
+    "close",
+    "c",
+  ]);
 
-function normalizePolygonTicker(raw: AnyObj, marketMode: string, index: number) {
-  const ticker = tickerFromRaw(raw);
-  if (!ticker) return null;
+  const previousClose = pickNumber(row, [
+    "prevDay.c",
+    "previousClose",
+    "prevClose",
+    "pc",
+  ]);
 
-  const prevDay = raw?.prevDay || {};
-  const lastTrade = raw?.lastTrade || {};
-  const lastQuote = raw?.lastQuote || {};
-  const day = raw?.day || {};
-  const min = raw?.min || {};
+  const priorGainPct = pickNumber(row, [
+    "todaysChangePerc",
+    "changePercent",
+    "percentChange",
+    "gainPct",
+  ]);
 
-  const previousClose = num(
-    prevDay?.c ?? raw?.previousClose ?? raw?.prevClose ?? raw?.pc
-  );
+  const premarketVolume = pickNumber(row, [
+    "day.v",
+    "volume",
+    "v",
+    "min.av",
+    "min.v",
+  ]);
 
-  const price = num(
-    lastTrade?.p ??
-      day?.c ??
-      min?.c ??
-      raw?.price ??
-      raw?.currentPremarketPrice ??
-      (previousClose > 0 ? previousClose + num(raw?.todaysChange) : 0)
-  );
+  const averagePremarketVolume = pickNumber(row, [
+    "averagePremarketVolume",
+    "averageVolume",
+    "avgVolume",
+  ]);
 
-  if (!price) return null;
+  const bid = pickNumber(row, [
+    "lastQuote.p",
+    "lastQuote.bid",
+    "lastQuote.bidPrice",
+    "bid",
+    "bidPrice",
+  ]);
 
-  const gain = num(
-    raw?.gain ??
-      raw?.gainPct ??
-      raw?.todaysChangePerc ??
-      (previousClose > 0 ? ((price - previousClose) / previousClose) * 100 : 0)
-  );
-
-  const change =
-    num(raw?.change ?? raw?.todaysChange) ||
-    (previousClose > 0 ? price - previousClose : 0);
-
-  const volume = num(
-    raw?.volume ?? raw?.premarketVolume ?? day?.v ?? min?.av ?? min?.v
-  );
-
-  const averagePremarketVolume = num(
-    raw?.averagePremarketVolume ?? raw?.avgPremarketVolume ?? prevDay?.v
-  );
-
-  const relativePremarketVolume =
-    averagePremarketVolume > 0 ? volume / averagePremarketVolume : 0;
-
-  const open = num(day?.o ?? min?.o ?? raw?.open ?? price);
-  const high = num(day?.h ?? min?.h ?? raw?.high ?? price);
-  const low = num(day?.l ?? min?.l ?? raw?.low ?? price);
-
-  const bid = num(lastQuote?.p ?? raw?.bid);
-  const ask = num(lastQuote?.P ?? raw?.ask);
-
-  const spread = buildSpread(bid, ask, price);
-  const junk = isJunkTicker(ticker);
-
-  const percentMoveScore = clamp(gain * 1.15, 0, 55);
-  const volumeScore = clamp(Math.log10(volume + 1) * 5.5, 0, 34);
-  const relativeVolumeScore = clamp(relativePremarketVolume * 8, 0, 24);
-
-  const priceScore =
-    price >= 0.1 && price <= 2
-      ? 16
-      : price > 2 && price <= 5
-        ? 10
-        : price > 5 && price <= 10
-          ? 4
-          : -28;
-
-  const phaseBonus =
-    gain >= 20 && gain <= 65
-      ? 16
-      : gain >= 5 && gain < 20
-        ? 10
-        : gain > 65
-          ? -25
-          : 0;
-
-  const extensionPenalty =
-    gain >= 1000 ? -100 : gain > 150 ? -60 : gain > 65 ? -28 : 0;
-
-  const junkPenalty = junk ? -75 : 0;
-
-  const rawScore = clamp(
-    Math.round(
-      percentMoveScore +
-        volumeScore +
-        relativeVolumeScore +
-        spread.spreadScore +
-        priceScore +
-        phaseBonus +
-        extensionPenalty +
-        junkPenalty
-    ),
-    0,
-    100
-  );
-
-  const warnings: string[] = [];
-
-  if (junk) warnings.push("JUNK_SYMBOL");
-  if (!previousClose) warnings.push("MISSING_PREVIOUS_CLOSE");
-  if (volume < 1000) warnings.push("LOW_VOLUME");
-  if (price < 0.1 || price > 10) warnings.push("OUTSIDE_PRICE_RANGE");
-  if (gain > 65) warnings.push("EXTENDED_ABOVE_RAW_BAND");
-  if (spread.spreadStatus === "FAIL") warnings.push("SPREAD_RISK");
-
-  const isCandidate =
-    !junk &&
-    previousClose > 0 &&
-    price >= 0.1 &&
-    price <= 10 &&
-    gain >= 5 &&
-    gain <= 65 &&
-    volume >= 1000 &&
-    rawScore > 0;
-
-  const verdict = isCandidate ? "WAIT" : "NO";
-  const rejection = isCandidate ? "" : warnings[0] || "NOT_RAW_HUNTER_CANDIDATE";
-
-  const support = round(low || price);
-  const resistance = round(high || price);
-  const neutralEntry = round(price);
-  const volumeSurge =
-    relativePremarketVolume > 0
-      ? relativePremarketVolume
-      : clamp(volume / 500000, 0, 20);
-
-  const speed = rawScore;
-  const speedLabel = speedLabelFromScore(speed);
-
-  const speedOk = gain >= 3 && volume >= 1000;
-  const volumeOk = volume >= 1000;
-  const spreadOk =
-    spread.spreadStatus === "PASS" || spread.spreadStatus === "CAUTION";
-
-  const signalAlignment =
-    (speedOk ? 1 : 0) + (volumeOk ? 1 : 0) + (spreadOk ? 1 : 0);
-
-  const actionRank = isCandidate ? 2 : 1;
+  const ask = pickNumber(row, [
+    "lastQuote.P",
+    "lastQuote.ask",
+    "lastQuote.askPrice",
+    "ask",
+    "askPrice",
+  ]);
 
   return {
     ticker,
-    price: round(price),
-    gain: round(gain, 2),
-    gainPct: round(gain, 2),
-    change: round(change),
-    volume: Math.round(volume),
-    premarketVolume: Math.round(volume),
-    averagePremarketVolume: Math.round(averagePremarketVolume),
-    relativePremarketVolume: round(relativePremarketVolume, 2),
-
-    open: round(open || price),
-    high: round(high || price),
-    low: round(low || price),
-
-    support,
-    resistance,
-
-    entryAggressive: neutralEntry,
-    entryConfirmation: neutralEntry,
-    entryProof: neutralEntry,
-    supportEntry: neutralEntry,
-    middleEntry: neutralEntry,
-    breakoutProofEntry: neutralEntry,
-    bestEntry: neutralEntry,
-    entryType: "RAW HUNTER DISCOVERY",
-    waitFor: "ENTRY PROOF COMES AFTER RAW HUNTER DISCOVERY",
-
-    stop: neutralEntry,
-    target1: neutralEntry,
-    target2: neutralEntry,
-    target3: neutralEntry,
-    risk: 0,
-    reward: 0,
-    rr: 0,
-
-    speed,
-    speedLabel,
-    volumeSurge: round(volumeSurge, 2),
-    spreadStatus: spread.spreadStatus,
-    spreadPct: round(spread.spreadPct, 3),
-    bid: round(bid),
-    ask: round(ask),
-
-    floatShares: 0,
-    sharesOutstanding: 0,
-    floatProxy: 0,
-    floatStatus: "UNKNOWN",
-    floatScore: 0,
-
-    marketMode,
-    gainBand: gainBandFromGain(gain),
-    runnerLane: "RAW HUNTER GATHERER",
-
-    bottomIgnitionScore: rawScore,
-    gainerStructureScore: rawScore,
-    runnerScore: rawScore,
-    proofScore: rawScore,
-    ignitionScore: rawScore,
-    rawHunterScore: rawScore,
-    overExtensionPenalty: extensionPenalty,
-
-    structurePosition: 0,
-    structureLocation: "RAW HUNTER ONLY",
-    structureLocationScore: 0,
-    riskLocation: "NO ENTRY PERMISSION",
-
-    speedOk,
-    volumeOk,
-    spreadOk,
-    signalAlignment,
-    actionRank,
-    actionRankScore: actionRank * 1000 + rawScore,
-
-    catalyst: "RAW HUNTER DOES NOT REQUIRE NEWS",
-    catalystGrade: "NONE",
-    newsScore: 0,
-    news: [],
-
-    verdict,
-    rejection,
-    permissionText: "RAW HUNTER ONLY — NOT ENTRY PERMISSION",
-    candles: index + 1,
-
-    isCandidate,
-    rankKey: round(rawScore * 1000000 + gain * 1000 + volume / 100000, 2),
-    percentRankKey: round(gain * 1000000 + rawScore * 1000 + volume / 100000, 2),
-    reasons: [],
-    warnings
+    symbol: ticker,
+    price,
+    currentPremarketPrice: price,
+    previousClose,
+    priorGainPct,
+    premarketVolume,
+    averagePremarketVolume,
+    bid,
+    ask,
   };
 }
 
-async function polygonFetch(path: string, apiKey: string): Promise<AnyObj | null> {
-  if (!apiKey) return null;
+export async function GET(req: Request) {
+  const startedAt = new Date().toISOString();
+  const apiKey = getApiKey();
 
-  const joiner = path.includes("?") ? "&" : "?";
-  const url = `https://api.polygon.io${path}${joiner}apiKey=${apiKey}`;
+  const { searchParams } = new URL(req.url);
 
-  const res = await fetch(url, {
-    cache: "no-store",
-    headers: {
-      accept: "application/json"
-    }
-  });
-
-  if (!res.ok) return null;
-
-  return (await res.json()) as AnyObj;
-}
-
-function jsonResponse(body: AnyObj, status = 200): NextResponse {
-  return NextResponse.json(body, {
-    status,
-    headers: {
-      "Cache-Control": "no-store, max-age=0"
-    }
-  });
-}
-
-export async function GET(): Promise<NextResponse> {
-  const apiKey =
-    process.env.POLYGON_API_KEY || process.env.NEXT_PUBLIC_POLYGON_API_KEY || "";
+  const minPrice = num(searchParams.get("minPrice")) || 0.1;
+  const maxPrice = num(searchParams.get("maxPrice")) || 10;
+  const minGain = num(searchParams.get("minGain")) || 0;
+  const maxGain = num(searchParams.get("maxGain")) || 120;
+  const minVolume = num(searchParams.get("minVolume")) || 0;
+  const limit = num(searchParams.get("limit")) || 10;
+  const removeJunk = toBool(searchParams.get("removeJunk"), true);
 
   if (!apiKey) {
-    return jsonResponse(
+    return NextResponse.json(
       {
         ok: false,
         source: SOURCE,
-        marketMode: "NO_API_KEY",
-        liveGainersCount: 0,
-        count: 0,
-        timestamp: new Date().toISOString(),
-        error: "Missing POLYGON_API_KEY or NEXT_PUBLIC_POLYGON_API_KEY",
-        data: {
-          tickers: []
-        },
-        tickers: []
+        message: "Missing POLYGON_API_KEY or MASSIVE_API_KEY.",
+        startedAt,
+        rawCount: 0,
+        showing: 0,
+        results: [],
+        gainers: [],
+        tickers: [],
+        data: [],
       },
-      500
+      {
+        status: 200,
+        headers: {
+          "Cache-Control": "no-store, max-age=0",
+        },
+      }
     );
   }
-
-  let rawList: AnyObj[] = [];
-  const marketMode = "LIVE_GAINERS_RAW_HUNTER";
 
   try {
-    const gainers = await polygonFetch(
-      "/v2/snapshot/locale/us/markets/stocks/gainers",
-      apiKey
-    );
+    const url =
+      "https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers" +
+      `?apiKey=${encodeURIComponent(apiKey)}`;
 
-    rawList = Array.isArray(gainers?.tickers)
-      ? gainers.tickers
-      : Array.isArray(gainers?.results)
-        ? gainers.results
+    const res = await fetch(url, {
+      method: "GET",
+      cache: "no-store",
+      headers: {
+        Accept: "application/json",
+      },
+    });
+
+    if (!res.ok) {
+      return NextResponse.json(
+        {
+          ok: false,
+          source: SOURCE,
+          message: `Polygon/Massive request failed with status ${res.status}.`,
+          startedAt,
+          rawCount: 0,
+          showing: 0,
+          results: [],
+          gainers: [],
+          tickers: [],
+          data: [],
+        },
+        {
+          status: 200,
+          headers: {
+            "Cache-Control": "no-store, max-age=0",
+          },
+        }
+      );
+    }
+
+    const json = (await res.json()) as AnyObj;
+
+    const rowsRaw = Array.isArray(json.tickers)
+      ? json.tickers
+      : Array.isArray(json.results)
+        ? json.results
         : [];
-  } catch {
-    rawList = [];
+
+    const scored = rowsRaw
+      .filter(isObj)
+      .map((row) => buildSnapshotInput(row))
+      .filter((input) => input.ticker)
+      .filter((input) => {
+        if (!removeJunk) return true;
+        return !isJunkTicker(input.ticker);
+      })
+      .map((input) => buildFourAmGainerScore(input))
+      .filter((item) => item.price >= minPrice)
+      .filter((item) => item.price <= maxPrice)
+      .filter((item) => item.gainPct >= minGain)
+      .filter((item) => item.gainPct <= maxGain)
+      .filter((item) => item.premarketVolume >= minVolume)
+      .sort((a, b) => {
+        if (b.hunterScore !== a.hunterScore) {
+          return b.hunterScore - a.hunterScore;
+        }
+
+        if (b.gainPct !== a.gainPct) {
+          return b.gainPct - a.gainPct;
+        }
+
+        return b.premarketVolume - a.premarketVolume;
+      })
+      .slice(0, Math.max(1, Math.min(limit, 100)))
+      .map((item, index) => ({
+        rank: index + 1,
+        ...item,
+      }));
+
+    return NextResponse.json(
+      {
+        ok: true,
+        source: SOURCE,
+        mode: "RAW_HUNTER_GATHERER",
+        startedAt,
+        finishedAt: new Date().toISOString(),
+
+        filters: {
+          minPrice,
+          maxPrice,
+          minGain,
+          maxGain,
+          minVolume,
+          limit,
+          removeJunk,
+        },
+
+        rawCount: rowsRaw.length,
+        showing: scored.length,
+
+        topTicker: scored[0]?.ticker || null,
+        topScore: scored[0]?.hunterScore || 0,
+
+        results: scored,
+        gainers: scored,
+        tickers: scored,
+        data: scored,
+      },
+      {
+        status: 200,
+        headers: {
+          "Cache-Control": "no-store, max-age=0",
+        },
+      }
+    );
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Unknown route error.";
+
+    return NextResponse.json(
+      {
+        ok: false,
+        source: SOURCE,
+        message,
+        startedAt,
+        rawCount: 0,
+        showing: 0,
+        results: [],
+        gainers: [],
+        tickers: [],
+        data: [],
+      },
+      {
+        status: 200,
+        headers: {
+          "Cache-Control": "no-store, max-age=0",
+        },
+      }
+    );
   }
-
-  const tickers = rawList
-    .filter((raw) => tickerFromRaw(raw))
-    .slice(0, 100)
-    .map((raw, index) => normalizePolygonTicker(raw, marketMode, index))
-    .filter(Boolean) as AnyObj[];
-
-  tickers.sort((a, b) => {
-    if (num(b.percentRankKey) !== num(a.percentRankKey)) {
-      return num(b.percentRankKey) - num(a.percentRankKey);
-    }
-
-    if (num(b.rawHunterScore) !== num(a.rawHunterScore)) {
-      return num(b.rawHunterScore) - num(a.rawHunterScore);
-    }
-
-    return num(b.premarketVolume) - num(a.premarketVolume);
-  });
-
-  return jsonResponse({
-    ok: true,
-    source: SOURCE,
-    marketMode: rawList.length ? marketMode : "EMPTY_LIVE_GAINERS",
-    liveGainersCount: rawList.length,
-    count: tickers.length,
-    timestamp: new Date().toISOString(),
-    rules: {
-      scannerType: "RAW HUNTER GATHERER",
-      purpose: "Locate live raw gainers and climbers",
-      permission: "NOT BUY/SELL. NOT ENTRY PERMISSION.",
-      backup: "NO FAKE BACKUP STOCKS. EMPTY MEANS EMPTY."
-    },
-    data: {
-      tickers
-    },
-    tickers
-  });
 }
