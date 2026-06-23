@@ -14,43 +14,76 @@ type NewsFreshness =
   | "UNKNOWN_NEWS_AGE";
 
 type NewsCategory = "NO_NEWS" | "NEWS" | "PRESS_RELEASE" | "FILING_LIKE_NEWS";
+type LightStatus = "LIGHT_GREEN" | "LIGHT_YELLOW" | "LIGHT_GREY";
 
-type DollarBand = "APPROACHING_1" | "AT_1" | "ABOVE_1";
+type PreviousScanEntry = {
+  gainPct: number;
+  speedPct: number;
+};
 
-type RubiconItem = {
+type NewsCacheEntry = {
+  fetchedAt: number;
+  data: NewsData;
+};
+
+type MemoryState = {
+  lastScan: Record<string, PreviousScanEntry>;
+  newsCache: Record<string, NewsCacheEntry>;
+};
+
+type BaseRow = {
   ticker: string;
   symbol: string;
   price: number;
   previousClose: number;
   gainPct: number;
-  volume: number;
-  averageVolume: number;
-  relativeVolume: number;
-  dollarVolume: number;
-
-  dollarBand: DollarBand;
-  dollarDistance: number;
-  rubiconScore: number;
-
   lastTradeTimestampMs: number | null;
   quoteAgeMinutes: number | null;
   isFreshTrade: boolean;
+};
 
+type NewsData = {
   newsHeadline: string;
   newsUrl: string;
   newsPublisher: string;
   newsCategory: NewsCategory;
   newsFreshness: NewsFreshness;
   newsAgeMinutes: number | null;
-
-  catalystScore: number;
-  catalystLabel: string;
-  catalystNote: string;
-  isStrongPositiveCatalyst: boolean;
+  headlineScore: number;
+  liveCatalystScore: number;
 };
 
-const SOURCE = "polygon-rubicon-hunter";
-const MODE = "RUBICON_HUNTER";
+type Candidate = {
+  ticker: string;
+  symbol: string;
+  price: number;
+  previousClose: number;
+  gainPct: number;
+  priorGainPct: number | null;
+  speedPct: number;
+  priorSpeedPct: number;
+  momentumPct: number;
+  climbPercent: number;
+  lastTradeTimestampMs: number | null;
+  quoteAgeMinutes: number | null;
+  isFreshTrade: boolean;
+  newsHeadline: string;
+  newsUrl: string;
+  newsPublisher: string;
+  newsCategory: NewsCategory;
+  newsFreshness: NewsFreshness;
+  newsAgeMinutes: number | null;
+  headlineScore: number;
+  liveCatalystScore: number;
+  light: LightStatus;
+};
+
+const SOURCE = "polygon-blue-runner-hunter";
+const MODE = "PERCENT_SPEED_MOMENTUM_CATALYST_ONLY";
+const MEMORY_KEY = "__BLUE_RUNNER_HUNTER_MEMORY__";
+const NEWS_CACHE_TTL_MS = 60_000;
+const PRE_CANDIDATE_COUNT = 25;
+const FINAL_LIMIT = 15;
 
 function getApiKey(): string {
   return (
@@ -60,6 +93,27 @@ function getApiKey(): string {
     process.env.NEXT_PUBLIC_MASSIVE_API_KEY ||
     ""
   );
+}
+
+function getMemory(): MemoryState {
+  const root = globalThis as typeof globalThis & {
+    [MEMORY_KEY]?: MemoryState;
+  };
+
+  if (!root[MEMORY_KEY]) {
+    root[MEMORY_KEY] = {
+      lastScan: {},
+      newsCache: {},
+    };
+  }
+
+  return root[MEMORY_KEY] as MemoryState;
+}
+
+function resetMemory(): void {
+  const memory = getMemory();
+  memory.lastScan = {};
+  memory.newsCache = {};
 }
 
 function num(value: unknown): number {
@@ -83,6 +137,7 @@ function round(value: number, decimals = 2): number {
 
 function boolParam(value: string | null, fallback: boolean): boolean {
   if (value === null) return fallback;
+
   const v = value.toLowerCase();
 
   if (v === "true" || v === "1" || v === "yes") return true;
@@ -116,22 +171,6 @@ function pickNumber(obj: unknown, paths: string[]): number {
   }
 
   return 0;
-}
-
-function isJunkTicker(symbol: string): boolean {
-  const ticker = cleanTicker(symbol);
-
-  if (!ticker) return true;
-  if (ticker.includes(".") || ticker.includes("-") || ticker.length > 5) return true;
-
-  return (
-    ticker.endsWith("W") ||
-    ticker.endsWith("WS") ||
-    ticker.endsWith("WT") ||
-    ticker.endsWith("U") ||
-    ticker.endsWith("R") ||
-    ticker.endsWith("RT")
-  );
 }
 
 function getEasternMinutes(now = new Date()): number {
@@ -187,10 +226,46 @@ function getQuoteAgeMinutes(lastTradeTimestampMs: number | null): number | null 
   return Math.round(ageMs / 60000);
 }
 
-function getDollarBand(price: number): DollarBand {
-  if (price < 0.99) return "APPROACHING_1";
-  if (price <= 1.01) return "AT_1";
-  return "ABOVE_1";
+function buildBaseRow(row: AnyObj, maxTradeAgeMinutes: number): BaseRow {
+  const ticker = cleanTicker(row.ticker || row.symbol || row.T);
+
+  const price = pickNumber(row, [
+    "lastTrade.p",
+    "lastTrade.price",
+  ]);
+
+  const previousClose = pickNumber(row, [
+    "prevDay.c",
+    "previousClose",
+    "prevClose",
+    "pc",
+  ]);
+
+  const gainPct =
+    price > 0 && previousClose > 0
+      ? ((price - previousClose) / previousClose) * 100
+      : 0;
+
+  const lastTradeTimestampMs = normalizeTimestampMs(
+    getPath(row, "lastTrade.t") ??
+      getPath(row, "lastTrade.timestamp") ??
+      getPath(row, "updated")
+  );
+
+  const quoteAgeMinutes = getQuoteAgeMinutes(lastTradeTimestampMs);
+  const isFreshTrade =
+    quoteAgeMinutes !== null && quoteAgeMinutes >= 0 && quoteAgeMinutes <= maxTradeAgeMinutes;
+
+  return {
+    ticker,
+    symbol: ticker,
+    price: round(price, 4),
+    previousClose: round(previousClose, 4),
+    gainPct: round(gainPct, 2),
+    lastTradeTimestampMs,
+    quoteAgeMinutes,
+    isFreshTrade,
+  };
 }
 
 function classifyNewsCategory(headline: string, publisher: string, url: string): NewsCategory {
@@ -287,31 +362,28 @@ function getNewsAgeData(newsTime: string): {
   };
 }
 
-function scoreCatalystHeadline(headline: string): {
-  score: number;
-  label: string;
-  note: string;
-  isStrongPositive: boolean;
-} {
+function scoreHeadline(headline: string): number {
   const text = headline.toLowerCase();
 
-  const veryStrong = [
+  const veryPositive = [
     "fda",
     "approval",
     "cleared",
     "phase 3",
     "phase iii",
     "topline",
-    "acquired",
     "acquisition",
+    "acquired",
     "merger",
-    "awarded contract",
     "contract award",
+    "awarded contract",
     "uplist",
     "uplisting",
+    "guidance raised",
+    "earnings beat",
   ];
 
-  const strong = [
+  const positive = [
     "partnership",
     "collaboration",
     "agreement",
@@ -321,11 +393,9 @@ function scoreCatalystHeadline(headline: string): {
     "order",
     "expansion",
     "launch",
-    "guidance raised",
-    "earnings beat",
-    "beats earnings",
-    "breakthrough",
     "grant",
+    "breakthrough",
+    "successful",
   ];
 
   const hardNegative = [
@@ -342,100 +412,41 @@ function scoreCatalystHeadline(headline: string): {
 
   const negative = [
     "lawsuit",
-    "miss earnings",
     "guidance cut",
+    "miss earnings",
   ];
 
   let score = 0;
 
-  for (const keyword of veryStrong) {
-    if (text.includes(keyword)) score += 5;
-  }
-
-  for (const keyword of strong) {
+  for (const keyword of veryPositive) {
     if (text.includes(keyword)) score += 3;
   }
 
+  for (const keyword of positive) {
+    if (text.includes(keyword)) score += 2;
+  }
+
   for (const keyword of hardNegative) {
-    if (text.includes(keyword)) score -= 6;
+    if (text.includes(keyword)) score -= 5;
   }
 
   for (const keyword of negative) {
     if (text.includes(keyword)) score -= 3;
   }
 
-  const isStrongPositive = score >= 5;
-
-  if (score >= 8) {
-    return {
-      score,
-      label: "VERY STRONG",
-      note: "Headline reads like a strong positive catalyst.",
-      isStrongPositive,
-    };
-  }
-
-  if (score >= 5) {
-    return {
-      score,
-      label: "STRONG",
-      note: "Headline reads like a positive catalyst.",
-      isStrongPositive,
-    };
-  }
-
-  if (score > 0) {
-    return {
-      score,
-      label: "MEDIUM",
-      note: "Headline has some positive catalyst language.",
-      isStrongPositive: false,
-    };
-  }
-
-  if (score < 0) {
-    return {
-      score,
-      label: "NEGATIVE",
-      note: "Headline contains negative or dilution-style language.",
-      isStrongPositive: false,
-    };
-  }
-
-  return {
-    score,
-    label: "WEAK",
-    note: "Headline did not show a strong positive catalyst.",
-    isStrongPositive: false,
-  };
+  return score;
 }
 
-async function fetchTickerNews(
-  ticker: string,
-  apiKey: string
-): Promise<{
-  newsHeadline: string;
-  newsUrl: string;
-  newsPublisher: string;
-  newsCategory: NewsCategory;
-  newsFreshness: NewsFreshness;
-  newsAgeMinutes: number | null;
-  catalystScore: number;
-  catalystLabel: string;
-  catalystNote: string;
-  isStrongPositiveCatalyst: boolean;
-}> {
-  const fallback = {
+async function fetchTickerNewsFromApi(ticker: string, apiKey: string): Promise<NewsData> {
+  const fallback: NewsData = {
     newsHeadline: "",
     newsUrl: "",
     newsPublisher: "",
-    newsCategory: "NO_NEWS" as NewsCategory,
-    newsFreshness: "UNKNOWN_NEWS_AGE" as NewsFreshness,
+    newsCategory: "NO_NEWS",
+    newsFreshness: "UNKNOWN_NEWS_AGE",
     newsAgeMinutes: null,
-    catalystScore: 0,
-    catalystLabel: "NO CATALYST",
-    catalystNote: "No recent headline found.",
-    isStrongPositiveCatalyst: false,
+    headlineScore: 0,
+    liveCatalystScore: 0,
   };
 
   try {
@@ -468,9 +479,8 @@ async function fetchTickerNews(
 
     const newsCategory = classifyNewsCategory(newsHeadline, newsPublisher, newsUrl);
     const { newsAgeMinutes, newsFreshness } = getNewsAgeData(newsTime);
-    const catalyst = scoreCatalystHeadline(newsHeadline);
-
-    const isFreshEnough =
+    const headlineScore = scoreHeadline(newsHeadline);
+    const isLiveCatalyst =
       newsFreshness === "FRESH_CATALYST" || newsFreshness === "RECENT_CATALYST";
 
     return {
@@ -480,91 +490,58 @@ async function fetchTickerNews(
       newsCategory,
       newsFreshness,
       newsAgeMinutes,
-      catalystScore: catalyst.score,
-      catalystLabel: catalyst.label,
-      catalystNote: isFreshEnough
-        ? catalyst.note
-        : "Headline exists, but it is not fresh enough to trust as a live catalyst.",
-      isStrongPositiveCatalyst: catalyst.isStrongPositive && isFreshEnough,
+      headlineScore,
+      liveCatalystScore: isLiveCatalyst ? headlineScore : 0,
     };
   } catch {
     return fallback;
   }
 }
 
-function buildBaseRow(row: AnyObj, maxTradeAgeMinutes: number) {
-  const ticker = cleanTicker(row.ticker || row.symbol || row.T);
+async function fetchTickerNewsCached(
+  ticker: string,
+  apiKey: string,
+  memory: MemoryState
+): Promise<NewsData> {
+  const cached = memory.newsCache[ticker];
 
-  const price = pickNumber(row, [
-    "lastTrade.p",
-    "lastTrade.price",
-  ]);
+  if (cached && Date.now() - cached.fetchedAt <= NEWS_CACHE_TTL_MS) {
+    return cached.data;
+  }
 
-  const previousClose = pickNumber(row, [
-    "prevDay.c",
-    "previousClose",
-    "prevClose",
-    "pc",
-  ]);
-
-  const gainPct =
-    price > 0 && previousClose > 0
-      ? ((price - previousClose) / previousClose) * 100
-      : 0;
-
-  const volume = pickNumber(row, [
-    "day.v",
-    "volume",
-    "v",
-    "min.av",
-    "min.v",
-  ]);
-
-  const averageVolume = pickNumber(row, [
-    "averageVolume",
-    "avgVolume",
-    "day.av",
-    "averagePremarketVolume",
-    "avgPremarketVolume",
-  ]);
-
-  const relativeVolume = averageVolume > 0 ? volume / averageVolume : 0;
-  const dollarVolume = volume * price;
-
-  const lastTradeTimestampMs = normalizeTimestampMs(
-    getPath(row, "lastTrade.t") ??
-      getPath(row, "lastTrade.timestamp") ??
-      getPath(row, "updated")
-  );
-
-  const quoteAgeMinutes = getQuoteAgeMinutes(lastTradeTimestampMs);
-  const isFreshTrade =
-    quoteAgeMinutes !== null && quoteAgeMinutes >= 0 && quoteAgeMinutes <= maxTradeAgeMinutes;
-
-  const dollarDistance = Math.abs(price - 1);
-  const dollarClosenessScore = Math.max(0, 1 - dollarDistance / 0.05) * 100;
-
-  return {
-    ticker,
-    symbol: ticker,
-    price: round(price, 4),
-    previousClose: round(previousClose, 4),
-    gainPct: round(gainPct, 2),
-    volume: round(volume, 0),
-    averageVolume: round(averageVolume, 0),
-    relativeVolume: round(relativeVolume, 4),
-    dollarVolume: round(dollarVolume, 2),
-    dollarBand: getDollarBand(price),
-    dollarDistance: round(dollarDistance, 4),
-    dollarClosenessScore: round(dollarClosenessScore, 2),
-    lastTradeTimestampMs,
-    quoteAgeMinutes,
-    isFreshTrade,
+  const data = await fetchTickerNewsFromApi(ticker, apiKey);
+  memory.newsCache[ticker] = {
+    fetchedAt: Date.now(),
+    data,
   };
+
+  return data;
+}
+
+function deriveLight(
+  gainPct: number,
+  speedPct: number,
+  momentumPct: number,
+  liveCatalystScore: number
+): LightStatus {
+  if (
+    liveCatalystScore >= 2 &&
+    speedPct > 0.35 &&
+    momentumPct >= -0.05 &&
+    gainPct > 0
+  ) {
+    return "LIGHT_GREEN";
+  }
+
+  if (liveCatalystScore >= 1 && speedPct > 0.05 && gainPct > 0) {
+    return "LIGHT_YELLOW";
+  }
+
+  return "LIGHT_GREY";
 }
 
 function buildEmptyPayload(message: string, startedAt: string) {
-  const candidates: RubiconItem[] = [];
+  const candidates: Candidate[] = [];
 
   return {
     ok: false,
@@ -591,13 +568,11 @@ export async function GET(req: Request) {
   const startedAt = new Date().toISOString();
   const apiKey = getApiKey();
   const { searchParams } = new URL(req.url);
+  const reset = boolParam(searchParams.get("resetMemory"), false);
 
-  const minPrice = num(searchParams.get("minPrice")) || 0.95;
-  const maxPrice = num(searchParams.get("maxPrice")) || 1.05;
-  const minVolume = num(searchParams.get("minVolume")) || 1_000_000;
-  const limit = Math.max(1, Math.min(num(searchParams.get("limit")) || 25, 100));
-  const removeJunk = boolParam(searchParams.get("removeJunk"), true);
-  const requireStrongCatalyst = boolParam(searchParams.get("requireStrongCatalyst"), true);
+  if (reset) {
+    resetMemory();
+  }
 
   if (!apiKey) {
     return NextResponse.json(buildEmptyPayload("Missing POLYGON_API_KEY or MASSIVE_API_KEY.", startedAt), {
@@ -630,74 +605,105 @@ export async function GET(req: Request) {
     }
 
     const json = (await res.json()) as AnyObj;
-
     const rowsRaw = Array.isArray(json.tickers)
       ? json.tickers
       : Array.isArray(json.results)
         ? json.results
         : [];
 
-    const baseUniverse = rowsRaw
+    const memory = getMemory();
+
+    const wholeMarket = rowsRaw
       .filter(isObj)
       .map((row) => buildBaseRow(row, maxTradeAgeMinutes))
       .filter((item) => Boolean(item.ticker))
-      .filter((item) => !removeJunk || !isJunkTicker(item.ticker))
-      .filter((item) => item.price >= minPrice)
-      .filter((item) => item.price <= maxPrice)
-      .filter((item) => item.volume >= minVolume)
-      .filter((item) => item.isFreshTrade);
+      .filter((item) => item.price > 0)
+      .filter((item) => item.previousClose > 0)
+      .filter((item) => item.isFreshTrade)
+      .map((item) => {
+        const previous = memory.lastScan[item.ticker];
+        const priorGainPct = previous ? previous.gainPct : null;
+        const speedPct = priorGainPct === null ? 0 : item.gainPct - priorGainPct;
+        const priorSpeedPct = previous ? previous.speedPct : 0;
+        const momentumPct = speedPct - priorSpeedPct;
+        const climbPercent = item.gainPct + 3 * speedPct + 2 * momentumPct;
 
-    const withNews = await Promise.all(
-      baseUniverse.map(async (item) => {
-        const news = await fetchTickerNews(item.ticker, apiKey);
+        return {
+          ...item,
+          priorGainPct,
+          speedPct,
+          priorSpeedPct,
+          momentumPct,
+          climbPercent,
+        };
+      });
 
-        const rubiconScore =
-          news.catalystScore * 20 +
-          item.dollarClosenessScore +
-          Math.min(item.volume / 1_000_000, 10) * 5 +
-          Math.max(item.gainPct, 0);
+    wholeMarket.sort((a, b) => {
+      if (b.climbPercent !== a.climbPercent) return b.climbPercent - a.climbPercent;
+      if (b.speedPct !== a.speedPct) return b.speedPct - a.speedPct;
+      if (b.momentumPct !== a.momentumPct) return b.momentumPct - a.momentumPct;
+      if (b.gainPct !== a.gainPct) return b.gainPct - a.gainPct;
+      return a.ticker.localeCompare(b.ticker);
+    });
+
+    const preCandidates = wholeMarket.slice(0, PRE_CANDIDATE_COUNT);
+
+    const candidatesWithNews: Candidate[] = await Promise.all(
+      preCandidates.map(async (item) => {
+        const news = await fetchTickerNewsCached(item.ticker, apiKey, memory);
+        const climbPercent =
+          item.gainPct +
+          3 * item.speedPct +
+          2 * item.momentumPct +
+          2 * news.liveCatalystScore;
 
         return {
           ticker: item.ticker,
           symbol: item.symbol,
           price: item.price,
           previousClose: item.previousClose,
-          gainPct: item.gainPct,
-          volume: item.volume,
-          averageVolume: item.averageVolume,
-          relativeVolume: item.relativeVolume,
-          dollarVolume: item.dollarVolume,
-          dollarBand: item.dollarBand,
-          dollarDistance: item.dollarDistance,
-          rubiconScore: round(rubiconScore, 2),
+          gainPct: round(item.gainPct, 2),
+          priorGainPct: item.priorGainPct === null ? null : round(item.priorGainPct, 2),
+          speedPct: round(item.speedPct, 2),
+          priorSpeedPct: round(item.priorSpeedPct, 2),
+          momentumPct: round(item.momentumPct, 2),
+          climbPercent: round(climbPercent, 2),
           lastTradeTimestampMs: item.lastTradeTimestampMs,
           quoteAgeMinutes: item.quoteAgeMinutes,
           isFreshTrade: item.isFreshTrade,
-
           newsHeadline: news.newsHeadline,
           newsUrl: news.newsUrl,
           newsPublisher: news.newsPublisher,
           newsCategory: news.newsCategory,
           newsFreshness: news.newsFreshness,
           newsAgeMinutes: news.newsAgeMinutes,
-          catalystScore: news.catalystScore,
-          catalystLabel: news.catalystLabel,
-          catalystNote: news.catalystNote,
-          isStrongPositiveCatalyst: news.isStrongPositiveCatalyst,
-        } satisfies RubiconItem;
+          headlineScore: news.headlineScore,
+          liveCatalystScore: news.liveCatalystScore,
+          light: deriveLight(item.gainPct, item.speedPct, item.momentumPct, news.liveCatalystScore),
+        };
       })
     );
 
-    const candidates = withNews
-      .filter((item) => !requireStrongCatalyst || item.isStrongPositiveCatalyst)
-      .sort((a, b) => {
-        if (b.rubiconScore !== a.rubiconScore) return b.rubiconScore - a.rubiconScore;
-        if (a.dollarDistance !== b.dollarDistance) return a.dollarDistance - b.dollarDistance;
-        if (b.volume !== a.volume) return b.volume - a.volume;
-        if (b.gainPct !== a.gainPct) return b.gainPct - a.gainPct;
-        return a.ticker.localeCompare(b.ticker);
-      })
-      .slice(0, limit);
+    candidatesWithNews.sort((a, b) => {
+      if (b.climbPercent !== a.climbPercent) return b.climbPercent - a.climbPercent;
+      if (b.speedPct !== a.speedPct) return b.speedPct - a.speedPct;
+      if (b.momentumPct !== a.momentumPct) return b.momentumPct - a.momentumPct;
+      if (b.gainPct !== a.gainPct) return b.gainPct - a.gainPct;
+      return a.ticker.localeCompare(b.ticker);
+    });
+
+    const candidates = candidatesWithNews.slice(0, FINAL_LIMIT);
+
+    const nextLastScan: Record<string, PreviousScanEntry> = {};
+
+    for (const item of wholeMarket) {
+      nextLastScan[item.ticker] = {
+        gainPct: round(item.gainPct, 2),
+        speedPct: round(item.speedPct, 2),
+      };
+    }
+
+    memory.lastScan = nextLastScan;
 
     return NextResponse.json(
       {
@@ -707,24 +713,40 @@ export async function GET(req: Request) {
         marketMode: getMarketMode(),
         startedAt,
         finishedAt: new Date().toISOString(),
-        filters: {
-          minPrice,
-          maxPrice,
-          minVolume,
-          limit,
-          removeJunk,
-          requireStrongCatalyst,
-          maxTradeAgeMinutes,
-        },
         rawCount: rowsRaw.length,
         showing: candidates.length,
         topTicker: candidates[0]?.ticker ?? null,
-        candidates,
-        tickers: candidates,
-        results: candidates,
+        candidates: candidates.map((item) => ({
+          ticker: item.ticker,
+          symbol: item.symbol,
+          light: item.light,
+          newsUrl: item.newsUrl,
+        })),
+        tickers: candidates.map((item) => ({
+          ticker: item.ticker,
+          symbol: item.symbol,
+          light: item.light,
+          newsUrl: item.newsUrl,
+        })),
+        results: candidates.map((item) => ({
+          ticker: item.ticker,
+          symbol: item.symbol,
+          light: item.light,
+          newsUrl: item.newsUrl,
+        })),
         data: {
-          candidates,
-          tickers: candidates,
+          candidates: candidates.map((item) => ({
+            ticker: item.ticker,
+            symbol: item.symbol,
+            light: item.light,
+            newsUrl: item.newsUrl,
+          })),
+          tickers: candidates.map((item) => ({
+            ticker: item.ticker,
+            symbol: item.symbol,
+            light: item.light,
+            newsUrl: item.newsUrl,
+          })),
         },
       },
       {
@@ -741,3 +763,8 @@ export async function GET(req: Request) {
     });
   }
 }
+
+
+
+
+
