@@ -3,41 +3,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-type NewsFreshness =
-  | "FRESH_CATALYST"
-  | "RECENT_CATALYST"
-  | "BACKGROUND_NEWS"
-  | "STALE_NEWS"
-  | "UNKNOWN_NEWS_AGE";
+type LightStatus = "LIGHT_GREEN" | "LIGHT_YELLOW" | "LIGHT_GREY";
 
-type DollarBand = "APPROACHING_1" | "AT_1" | "ABOVE_1";
-
-type RubiconItem = {
+type ScannerItem = {
   ticker?: string;
   symbol?: string;
-  price?: number;
-  previousClose?: number;
-  gainPct?: number;
-  volume?: number;
-  averageVolume?: number;
-  relativeVolume?: number;
-  dollarVolume?: number;
-  dollarBand?: DollarBand;
-  dollarDistance?: number;
-  rubiconScore?: number;
-  quoteAgeMinutes?: number | null;
-
-  newsHeadline?: string;
+  light?: LightStatus;
   newsUrl?: string;
-  newsPublisher?: string;
-  newsCategory?: string;
-  newsFreshness?: NewsFreshness;
-  newsAgeMinutes?: number | null;
-
-  catalystScore?: number;
-  catalystLabel?: string;
-  catalystNote?: string;
-  isStrongPositiveCatalyst?: boolean;
 };
 
 type ApiResponse = {
@@ -49,19 +21,14 @@ type ApiResponse = {
   rawCount?: number;
   showing?: number;
   topTicker?: string | null;
-  candidates?: RubiconItem[];
-  tickers?: RubiconItem[];
-  results?: RubiconItem[];
+  candidates?: ScannerItem[];
+  tickers?: ScannerItem[];
+  results?: ScannerItem[];
   data?: {
-    candidates?: RubiconItem[];
-    tickers?: RubiconItem[];
+    candidates?: ScannerItem[];
+    tickers?: ScannerItem[];
   };
 };
-
-function num(value: unknown): number {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : 0;
-}
 
 function str(value: unknown): string {
   return String(value ?? "").trim();
@@ -71,7 +38,12 @@ function cleanTicker(value: unknown): string {
   return str(value).toUpperCase();
 }
 
-function normalizeList(json: ApiResponse): RubiconItem[] {
+function num(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function normalizeList(json: ApiResponse): ScannerItem[] {
   if (Array.isArray(json.candidates)) return json.candidates;
   if (Array.isArray(json.tickers)) return json.tickers;
   if (Array.isArray(json.results)) return json.results;
@@ -80,103 +52,42 @@ function normalizeList(json: ApiResponse): RubiconItem[] {
   return [];
 }
 
-function formatPrice(value: unknown): string {
-  const n = num(value);
-  if (n <= 0) return "—";
-  if (n < 1) return `$${n.toFixed(4)}`;
-  return `$${n.toFixed(2)}`;
+function lightClass(light?: string): string {
+  const value = str(light).toUpperCase();
+
+  if (value === "LIGHT_GREEN") return "green";
+  if (value === "LIGHT_YELLOW") return "yellow";
+  return "grey";
 }
 
-function formatPct(value: unknown): string {
-  return `${num(value).toFixed(2)}%`;
-}
+function lightLabel(light?: string): string {
+  const value = str(light).toUpperCase();
 
-function formatVolume(value: unknown): string {
-  const n = num(value);
-  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`;
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(Math.round(n));
-}
-
-function formatFreshness(item: RubiconItem): string {
-  const freshness = str(item.newsFreshness || "UNKNOWN_NEWS_AGE");
-  const age = item.newsAgeMinutes;
-
-  if (typeof age === "number" && Number.isFinite(age)) {
-    return `${freshness} • ${age}m`;
-  }
-
-  return freshness;
-}
-
-function formatQuoteAge(value: number | null | undefined): string {
-  if (typeof value !== "number" || !Number.isFinite(value)) return "—";
-  return `${Math.max(0, Math.round(value))}m`;
-}
-
-function pillClass(text?: string): string {
-  const t = str(text).toUpperCase();
-
-  if (
-    t.includes("STRONG") ||
-    t.includes("FRESH") ||
-    t.includes("RECENT") ||
-    t.includes("AT_1")
-  ) {
-    return "good";
-  }
-
-  if (
-    t.includes("STALE") ||
-    t.includes("BACKGROUND") ||
-    t.includes("WEAK")
-  ) {
-    return "bad";
-  }
-
-  if (
-    t.includes("APPROACHING") ||
-    t.includes("ABOVE") ||
-    t.includes("UNKNOWN")
-  ) {
-    return "watch";
-  }
-
-  return "neutral";
+  if (value === "LIGHT_GREEN") return "GREEN";
+  if (value === "LIGHT_YELLOW") return "YELLOW";
+  return "GREY";
 }
 
 export default function HomePage() {
-  const [items, setItems] = useState<RubiconItem[]>([]);
+  const [items, setItems] = useState<ScannerItem[]>([]);
+  const [message, setMessage] = useState("");
+  const [source, setSource] = useState("waiting");
+  const [mode, setMode] = useState("BLUE_RUNNER_HUNTER");
+  const [marketMode, setMarketMode] = useState("waiting");
+  const [lastScan, setLastScan] = useState("Never");
+  const [topTicker, setTopTicker] = useState<string | null>(null);
   const [rawCount, setRawCount] = useState(0);
   const [showing, setShowing] = useState(0);
-  const [topTicker, setTopTicker] = useState<string | null>(null);
-  const [source, setSource] = useState("waiting");
-  const [mode, setMode] = useState("RUBICON_HUNTER");
-  const [marketMode, setMarketMode] = useState("waiting");
-  const [message, setMessage] = useState("");
-  const [lastScan, setLastScan] = useState("Never");
   const [loading, setLoading] = useState(false);
+  const [autoScan, setAutoScan] = useState(true);
 
-  const [minPrice, setMinPrice] = useState("0.95");
-  const [maxPrice, setMaxPrice] = useState("1.05");
-  const [minVolume, setMinVolume] = useState("1000000");
-  const [limit, setLimit] = useState("25");
-  const [removeJunk, setRemoveJunk] = useState(true);
-  const [requireStrongCatalyst, setRequireStrongCatalyst] = useState(true);
-
-  const fetchHunter = useCallback(async () => {
+  const fetchScan = useCallback(async (resetMemory = false) => {
     setLoading(true);
     setMessage("");
 
     try {
       const params = new URLSearchParams({
-        minPrice,
-        maxPrice,
-        minVolume,
-        limit,
-        removeJunk: String(removeJunk),
-        requireStrongCatalyst: String(requireStrongCatalyst),
+        resetMemory: String(resetMemory),
       });
 
       const res = await fetch(`/api/gainers?${params.toString()}`, {
@@ -188,29 +99,39 @@ export default function HomePage() {
       const list = normalizeList(json);
 
       setItems(list);
-      setRawCount(num(json.rawCount));
-      setShowing(num(json.showing) || list.length);
-      setTopTicker(json.topTicker || cleanTicker(list[0]?.ticker || list[0]?.symbol) || null);
       setSource(str(json.source || "unknown"));
-      setMode(str(json.mode || "RUBICON_HUNTER"));
+      setMode(str(json.mode || "BLUE_RUNNER_HUNTER"));
       setMarketMode(str(json.marketMode || "unknown"));
       setMessage(str(json.message || ""));
+      setTopTicker(str(json.topTicker || cleanTicker(list[0]?.ticker || list[0]?.symbol)) || null);
+      setRawCount(num(json.rawCount));
+      setShowing(num(json.showing) || list.length);
       setLastScan(new Date().toLocaleTimeString());
     } catch (error) {
       const text = error instanceof Error ? error.message : "Unknown page error.";
       setMessage(text);
       setItems([]);
+      setTopTicker(null);
       setRawCount(0);
       setShowing(0);
-      setTopTicker(null);
     } finally {
       setLoading(false);
     }
-  }, [minPrice, maxPrice, minVolume, limit, removeJunk, requireStrongCatalyst]);
+  }, []);
 
   useEffect(() => {
-    void fetchHunter();
-  }, [fetchHunter]);
+    void fetchScan();
+  }, [fetchScan]);
+
+  useEffect(() => {
+    if (!autoScan) return;
+
+    const id = window.setInterval(() => {
+      void fetchScan();
+    }, 3000);
+
+    return () => window.clearInterval(id);
+  }, [autoScan, fetchScan]);
 
   return (
     <main className="shell">
@@ -220,23 +141,23 @@ export default function HomePage() {
         body {
           margin: 0;
           background:
-            radial-gradient(circle at top left, rgba(255,199,44,.14), transparent 35%),
-            linear-gradient(135deg, #030303, #111, #050505);
-          color: #f5f5f5;
+            radial-gradient(circle at top left, rgba(69, 139, 255, 0.18), transparent 32%),
+            linear-gradient(135deg, #2f3338, #3a4148, #2b3137);
+          color: #b7d8ff;
           font-family: Arial, Helvetica, sans-serif;
         }
 
         .shell {
           min-height: 100vh;
-          padding: 22px;
+          padding: 24px;
         }
 
         .hero, .panel {
-          border: 1px solid rgba(255,199,44,.22);
-          background: rgba(0,0,0,.72);
+          border: 1px solid rgba(115, 175, 255, 0.22);
+          background: rgba(43, 49, 55, 0.82);
           border-radius: 24px;
           padding: 18px;
-          box-shadow: 0 24px 70px rgba(0,0,0,.45);
+          box-shadow: 0 24px 70px rgba(0,0,0,.3);
         }
 
         .top {
@@ -248,7 +169,7 @@ export default function HomePage() {
         }
 
         .eyebrow {
-          color: #ffc72c;
+          color: #8ec5ff;
           font-size: 12px;
           font-weight: 950;
           letter-spacing: .16em;
@@ -261,18 +182,12 @@ export default function HomePage() {
           line-height: .95;
           letter-spacing: -.06em;
           text-transform: uppercase;
-        }
-
-        h2 {
-          margin: 0 0 12px;
-          font-size: 19px;
-          text-transform: uppercase;
-          letter-spacing: -.03em;
+          color: #dceeff;
         }
 
         .sub {
-          color: #cfcfcf;
-          max-width: 980px;
+          color: #9cc8ff;
+          max-width: 860px;
           line-height: 1.5;
           margin-top: 12px;
           font-size: 14px;
@@ -288,33 +203,33 @@ export default function HomePage() {
           letter-spacing: .04em;
         }
 
-        .gold {
-          background: linear-gradient(135deg, #ffc72c, #c99000);
-          color: #030303;
+        .blue {
+          background: linear-gradient(135deg, #86bfff, #4d8fff);
+          color: #10233b;
         }
 
         .dark {
           background: rgba(255,255,255,.08);
-          color: #fff;
+          color: #d9ecff;
           border: 1px solid rgba(255,255,255,.15);
         }
 
         .stats {
           display: grid;
-          grid-template-columns: repeat(4, minmax(0,1fr));
+          grid-template-columns: repeat(5, minmax(0,1fr));
           gap: 12px;
           margin-top: 16px;
         }
 
         .stat {
-          border: 1px solid rgba(255,255,255,.12);
+          border: 1px solid rgba(255,255,255,.10);
           border-radius: 18px;
           padding: 14px;
-          background: rgba(255,255,255,.055);
+          background: rgba(255,255,255,.04);
         }
 
         .label {
-          color: #9f9f9f;
+          color: #8bb6ea;
           font-size: 11px;
           text-transform: uppercase;
           letter-spacing: .12em;
@@ -322,174 +237,93 @@ export default function HomePage() {
         }
 
         .value {
-          font-size: 26px;
+          font-size: 28px;
           font-weight: 950;
           margin-top: 5px;
-        }
-
-        .filters {
-          display: grid;
-          grid-template-columns: repeat(6, minmax(0,1fr));
-          gap: 10px;
-          margin-top: 16px;
-        }
-
-        .field {
-          display: flex;
-          flex-direction: column;
-          gap: 6px;
-        }
-
-        input {
-          background: rgba(0,0,0,.55);
-          border: 1px solid rgba(255,255,255,.14);
-          color: #fff;
-          border-radius: 13px;
-          padding: 11px;
-          font-weight: 850;
-          outline: none;
-          width: 100%;
-        }
-
-        input:focus {
-          border-color: rgba(255,199,44,.75);
-        }
-
-        .check {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          padding-top: 20px;
-          font-weight: 850;
-          color: #d8d8d8;
-        }
-
-        .check input {
-          width: auto;
+          color: #dceeff;
         }
 
         .meta {
-          color: #aaa;
+          color: #95bee9;
           font-size: 12px;
           line-height: 1.45;
           margin-top: 14px;
         }
 
+        .toolbar {
+          display: flex;
+          gap: 10px;
+          flex-wrap: wrap;
+          margin-top: 16px;
+        }
+
         .layout {
           display: grid;
-          grid-template-columns: 1.35fr .75fr;
+          grid-template-columns: 1fr;
           gap: 16px;
           margin-top: 16px;
         }
 
-        .table-wrap {
-          overflow-x: auto;
-          border: 1px solid rgba(255,255,255,.08);
-          border-radius: 17px;
-        }
-
-        table {
-          width: 100%;
-          min-width: 1220px;
-          border-collapse: collapse;
-        }
-
-        th {
-          text-align: left;
-          color: #aaa;
-          background: rgba(255,255,255,.055);
-          padding: 11px;
-          font-size: 11px;
-          text-transform: uppercase;
-          letter-spacing: .08em;
-          white-space: nowrap;
-        }
-
-        td {
-          padding: 11px;
-          border-top: 1px solid rgba(255,255,255,.08);
-          font-weight: 850;
-          vertical-align: top;
-        }
-
-        .ticker {
-          color: #ffc72c;
-          font-size: 18px;
-          font-weight: 950;
-        }
-
-        .headline {
-          margin-top: 6px;
-          color: #cfcfcf;
-          font-size: 12px;
-          line-height: 1.35;
-          max-width: 360px;
-        }
-
-        .muted {
-          color: #aaa;
-          font-size: 12px;
-          line-height: 1.35;
-        }
-
-        .pill {
-          display: inline-flex;
-          border-radius: 999px;
-          padding: 6px 9px;
-          font-size: 10px;
-          font-weight: 950;
-          text-transform: uppercase;
-          letter-spacing: .05em;
-          border: 1px solid rgba(255,255,255,.12);
-          background: rgba(255,255,255,.08);
-          color: #ddd;
-          white-space: nowrap;
-          text-decoration: none;
-        }
-
-        .pill.good {
-          color: #76ff9f;
-          background: rgba(118,255,159,.09);
-          border-color: rgba(118,255,159,.25);
-        }
-
-        .pill.watch {
-          color: #ffc72c;
-          background: rgba(255,199,44,.09);
-          border-color: rgba(255,199,44,.25);
-        }
-
-        .pill.bad {
-          color: #ff7b7b;
-          background: rgba(255,123,123,.09);
-          border-color: rgba(255,123,123,.25);
-        }
-
-        .pill-row {
-          display: flex;
-          gap: 6px;
-          flex-wrap: wrap;
-        }
-
-        .guide {
+        .list {
           display: grid;
           gap: 10px;
         }
 
-        .guide-item {
-          border-radius: 14px;
-          background: rgba(255,255,255,.055);
+        .row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 14px;
           border: 1px solid rgba(255,255,255,.08);
-          padding: 12px;
-          line-height: 1.45;
-          color: #ddd;
-          font-size: 13px;
+          background: rgba(255,255,255,.04);
+          border-radius: 18px;
+          padding: 14px 16px;
+        }
+
+        .ticker {
+          font-size: 24px;
+          font-weight: 950;
+          letter-spacing: .04em;
+          color: #dceeff;
+          text-decoration: none;
+        }
+
+        .light {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 110px;
+          border-radius: 999px;
+          padding: 9px 12px;
+          font-size: 12px;
+          font-weight: 950;
+          letter-spacing: .08em;
+          text-transform: uppercase;
+          border: 1px solid rgba(255,255,255,.12);
+        }
+
+        .light.green {
+          color: #b8ffd1;
+          background: rgba(41, 165, 92, 0.20);
+          border-color: rgba(41, 165, 92, 0.42);
+        }
+
+        .light.yellow {
+          color: #fff0a6;
+          background: rgba(204, 165, 36, 0.20);
+          border-color: rgba(204, 165, 36, 0.42);
+        }
+
+        .light.grey {
+          color: #d9e6f3;
+          background: rgba(150, 160, 170, 0.20);
+          border-color: rgba(150, 160, 170, 0.42);
         }
 
         .empty, .error {
           border-radius: 18px;
           padding: 18px;
-          color: #aaa;
+          color: #95bee9;
           border: 1px dashed rgba(255,255,255,.18);
           text-align: center;
           line-height: 1.45;
@@ -498,19 +332,24 @@ export default function HomePage() {
         .error {
           margin-top: 12px;
           border-style: solid;
-          color: #ffd1d1;
+          color: #ffdcdc;
           background: rgba(255,90,90,.08);
           border-color: rgba(255,90,90,.25);
           font-weight: 850;
         }
 
-        @media (max-width: 1200px) {
-          .stats, .filters, .layout {
+        @media (max-width: 1000px) {
+          .stats {
             grid-template-columns: 1fr;
           }
 
           button {
             width: 100%;
+          }
+
+          .row {
+            flex-direction: column;
+            align-items: flex-start;
           }
         }
       `}</style>
@@ -518,32 +357,25 @@ export default function HomePage() {
       <section className="hero">
         <div className="top">
           <div>
-            <div className="eyebrow">Rubicon Hunter</div>
-            <h1>Dollar Catalyst List</h1>
+            <div className="eyebrow">Blue Runner Hunter</div>
+            <h1>Live Percent Algo</h1>
             <div className="sub">
-              Whole market search for stocks sitting near $1 with real volume and a strong positive
-              catalyst. This is built to catch the Rubicon move at the dollar line.
+              Whole market, live percent speed, momentum, and catalyst only.
+              Auto scan every 3 seconds, or toggle to manual.
             </div>
           </div>
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <button className="gold" onClick={() => void fetchHunter()} disabled={loading}>
-              {loading ? "Scanning..." : "New Scan"}
+            <button className="blue" onClick={() => void fetchScan()} disabled={loading}>
+              {loading ? "Scanning..." : "Scan Now"}
             </button>
 
-            <button
-              className="dark"
-              onClick={() => {
-                setMinPrice("0.95");
-                setMaxPrice("1.05");
-                setMinVolume("1000000");
-                setLimit("25");
-                setRemoveJunk(true);
-                setRequireStrongCatalyst(true);
-              }}
-              disabled={loading}
-            >
-              Reset
+            <button className="dark" onClick={() => setAutoScan((value) => !value)}>
+              {autoScan ? "Auto: On" : "Auto: Off"}
+            </button>
+
+            <button className="dark" onClick={() => void fetchScan(true)} disabled={loading}>
+              Clear Memory
             </button>
           </div>
         </div>
@@ -568,46 +400,11 @@ export default function HomePage() {
             <div className="label">Showing</div>
             <div className="value">{showing}</div>
           </div>
-        </div>
 
-        <div className="filters">
-          <div className="field">
-            <label className="label">Min Price</label>
-            <input value={minPrice} onChange={(e) => setMinPrice(e.target.value)} />
+          <div className="stat">
+            <div className="label">Scan Mode</div>
+            <div className="value">{autoScan ? "AUTO" : "MANUAL"}</div>
           </div>
-
-          <div className="field">
-            <label className="label">Max Price</label>
-            <input value={maxPrice} onChange={(e) => setMaxPrice(e.target.value)} />
-          </div>
-
-          <div className="field">
-            <label className="label">Min Volume</label>
-            <input value={minVolume} onChange={(e) => setMinVolume(e.target.value)} />
-          </div>
-
-          <div className="field">
-            <label className="label">Limit</label>
-            <input value={limit} onChange={(e) => setLimit(e.target.value)} />
-          </div>
-
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={removeJunk}
-              onChange={(e) => setRemoveJunk(e.target.checked)}
-            />
-            Remove Junk
-          </label>
-
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={requireStrongCatalyst}
-              onChange={(e) => setRequireStrongCatalyst(e.target.checked)}
-            />
-            Strong Catalyst Only
-          </label>
         </div>
 
         <div className="meta">
@@ -623,136 +420,38 @@ export default function HomePage() {
 
       <section className="layout">
         <div className="panel">
-          <h2>Rubicon List</h2>
-
           {items.length === 0 ? (
             <div className="empty">
-              No names matched the current price band, volume, and catalyst rules.
+              No live candidates right now.
             </div>
           ) : (
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Ticker</th>
-                    <th>Price</th>
-                    <th>Band</th>
-                    <th>Gain</th>
-                    <th>Volume</th>
-                    <th>RVOL</th>
-                    <th>Quote Age</th>
-                    <th>Catalyst</th>
-                    <th>Freshness</th>
-                    <th>Headline</th>
-                  </tr>
-                </thead>
+            <div className="list">
+              {items.map((item, index) => {
+                const ticker = cleanTicker(item.ticker || item.symbol);
 
-                <tbody>
-                  {items.map((item, index) => {
-                    const ticker = cleanTicker(item.ticker || item.symbol);
+                return (
+                  <div className="row" key={`${ticker}-${index}`}>
+                    {item.newsUrl ? (
+                      <a
+                        className="ticker"
+                        href={item.newsUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {ticker || "—"}
+                      </a>
+                    ) : (
+                      <div className="ticker">{ticker || "—"}</div>
+                    )}
 
-                    return (
-                      <tr key={`${ticker}-${index}`}>
-                        <td>
-                          <div className="ticker">{ticker || "—"}</div>
-                        </td>
-
-                        <td>{formatPrice(item.price)}</td>
-
-                        <td>
-                          <span className={`pill ${pillClass(item.dollarBand)}`}>
-                            {item.dollarBand || "—"}
-                          </span>
-                        </td>
-
-                        <td>{formatPct(item.gainPct)}</td>
-                        <td>{formatVolume(item.volume)}</td>
-                        <td>{num(item.relativeVolume).toFixed(2)}</td>
-                        <td>{formatQuoteAge(item.quoteAgeMinutes)}</td>
-
-                        <td>
-                          <div className="pill-row">
-                            <span className={`pill ${pillClass(item.catalystLabel)}`}>
-                              {item.catalystLabel || "NO CATALYST"}
-                            </span>
-                            <span className="pill">
-                              SCORE {num(item.catalystScore).toFixed(0)}
-                            </span>
-                          </div>
-
-                          {item.catalystNote ? (
-                            <div className="muted" style={{ marginTop: 6 }}>
-                              {item.catalystNote}
-                            </div>
-                          ) : null}
-                        </td>
-
-                        <td>
-                          <span className={`pill ${pillClass(item.newsFreshness)}`}>
-                            {formatFreshness(item)}
-                          </span>
-                        </td>
-
-                        <td>
-                          {item.newsHeadline ? (
-                            <>
-                              {item.newsUrl ? (
-                                <a
-                                  href={item.newsUrl}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="headline"
-                                  style={{ display: "block", textDecoration: "none" }}
-                                >
-                                  {item.newsHeadline}
-                                </a>
-                              ) : (
-                                <div className="headline">{item.newsHeadline}</div>
-                              )}
-
-                              {item.newsPublisher ? (
-                                <div className="muted" style={{ marginTop: 6 }}>
-                                  {item.newsPublisher}
-                                </div>
-                              ) : null}
-                            </>
-                          ) : (
-                            "—"
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                    <span className={`light ${lightClass(item.light)}`}>
+                      {lightLabel(item.light)}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           )}
-        </div>
-
-        <div className="panel">
-          <h2>How To Read It</h2>
-
-          <div className="guide">
-            <div className="guide-item">
-              <b>APPROACHING_1</b> means the stock is still under $1 and getting close.
-            </div>
-
-            <div className="guide-item">
-              <b>AT_1</b> means it is sitting right on the dollar line.
-            </div>
-
-            <div className="guide-item">
-              <b>ABOVE_1</b> means it already crossed and is still near that level.
-            </div>
-
-            <div className="guide-item">
-              <b>Quote Age</b> tells you how stale the trade is. Lower is better.
-            </div>
-
-            <div className="guide-item">
-              <b>Strong Catalyst</b> means the latest headline scored positive and fresh enough to matter.
-            </div>
-          </div>
         </div>
       </section>
     </main>
