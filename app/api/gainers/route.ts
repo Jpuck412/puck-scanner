@@ -14,9 +14,18 @@ type NewsFreshness =
   | "UNKNOWN_NEWS_AGE";
 
 type NewsCategory = "NO_NEWS" | "NEWS" | "PRESS_RELEASE" | "FILING_LIKE_NEWS";
+
 type RunnerLight = "LIGHT_GREEN" | "LIGHT_YELLOW" | "LIGHT_GREY";
 type DayBias = "POSITIVE_DAY" | "NEGATIVE_DAY" | "NO_DAY_SIGNAL";
 type FinalLight = "SUPER_GREEN" | "SUPER_YELLOW" | "SUPER_RED";
+
+type HunterStatus = "CLIMBING" | "FLAT" | "FADING";
+type HunterPhase = "BELOW_RADAR" | "CLIMBER" | "ESTABLISHED" | "EXTENDED_HOT";
+
+type EstablishedLight =
+  | "ESTABLISHED_GREEN"
+  | "ESTABLISHED_YELLOW"
+  | "NOT_ESTABLISHED";
 
 type PreviousScanEntry = {
   gainPct: number;
@@ -56,6 +65,28 @@ type BaseRow = {
   isFreshTrade: boolean;
 };
 
+type HunterEngineData = {
+  hunterStatus: HunterStatus;
+  hunterPhase: HunterPhase;
+  hunterScore: number;
+  hunterReason: string;
+};
+
+type EstablishedEngineData = {
+  establishedLight: EstablishedLight;
+  establishedScore: number;
+  establishedReason: string;
+};
+
+type RankedMarketRow = BaseRow & {
+  priorGainPct: number | null;
+  speedPct: number;
+  priorSpeedPct: number;
+  momentumPct: number;
+  hunterEngine: HunterEngineData;
+  establishedEngine: EstablishedEngineData;
+};
+
 type LatestNewsData = {
   newsHeadline: string;
   newsUrl: string;
@@ -70,22 +101,48 @@ type LatestNewsData = {
 type SuperCandidate = {
   ticker: string;
   symbol: string;
+
   finalLight: FinalLight;
   runnerLight: RunnerLight;
   dayBias: DayBias;
+
   latestHeadline: string;
   newsUrl: string;
+  newsPublisher: string;
+  newsCategory: NewsCategory;
+  newsFreshness: NewsFreshness;
+  newsAgeMinutes: number | null;
+
+  price: number;
+  previousClose: number;
+  gainPct: number;
+  speedPct: number;
+  momentumPct: number;
+  quoteAgeMinutes: number | null;
+
+  hunterStatus: HunterStatus;
+  hunterPhase: HunterPhase;
+  hunterScore: number;
+  hunterReason: string;
+
+  establishedLight: EstablishedLight;
+  establishedScore: number;
+  establishedReason: string;
+
   superScore: number;
   climbPercent: number;
   dayBiasScore: number;
+  headlineScore: number;
+  liveCatalystScore: number;
 };
 
-const SOURCE = "polygon-super-runner-hunter";
-const MODE = "SUPER_RUNNER_HUNTER";
-const MEMORY_KEY = "__SUPER_RUNNER_HUNTER_MEMORY__";
+const SOURCE = "polygon-super-runner-hunter-established";
+const MODE = "SUPER_RUNNER_HUNTER_ESTABLISHED";
+const MEMORY_KEY = "__SUPER_RUNNER_HUNTER_ESTABLISHED_MEMORY__";
+
 const NEWS_CACHE_TTL_MS = 60_000;
 const LOOKBACK_DAYS = 5;
-const PRE_CANDIDATE_COUNT = 30;
+const PRE_CANDIDATE_COUNT = 40;
 const FINAL_LIMIT = 20;
 
 function getApiKey(): string {
@@ -99,9 +156,7 @@ function getApiKey(): string {
 }
 
 function getMemory(): MemoryState {
-  const root = globalThis as typeof globalThis & {
-    [MEMORY_KEY]?: MemoryState;
-  };
+  const root = globalThis as typeof globalThis & Record<string, unknown>;
 
   if (!root[MEMORY_KEY]) {
     root[MEMORY_KEY] = {
@@ -136,6 +191,11 @@ function round(value: number, decimals = 2): number {
   if (!Number.isFinite(value)) return 0;
   const factor = 10 ** decimals;
   return Math.round(value * factor) / factor;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.max(min, Math.min(max, value));
 }
 
 function boolParam(value: string | null, fallback: boolean): boolean {
@@ -187,6 +247,7 @@ function getEasternMinutes(now = new Date()): number {
   const parts = formatter.formatToParts(now);
   const hour = Number(parts.find((part) => part.type === "hour")?.value ?? "0");
   const minute = Number(parts.find((part) => part.type === "minute")?.value ?? "0");
+
   return hour * 60 + minute;
 }
 
@@ -196,6 +257,7 @@ function getMarketMode(now = new Date()): string {
   if (totalMinutes < 4 * 60) return "OVERNIGHT";
   if (totalMinutes < 9 * 60 + 30) return "PREMARKET";
   if (totalMinutes < 16 * 60) return "REGULAR_HOURS";
+
   return "AFTER_HOURS";
 }
 
@@ -205,11 +267,13 @@ function getMaxTradeAgeMinutes(now = new Date()): number {
   if (totalMinutes >= 4 * 60 && totalMinutes < 8 * 60) return 10;
   if (totalMinutes >= 8 * 60 && totalMinutes < 9 * 60 + 30) return 15;
   if (totalMinutes >= 9 * 60 + 30 && totalMinutes < 16 * 60) return 15;
+
   return 20;
 }
 
 function normalizeTimestampMs(raw: unknown): number | null {
   const n = Number(raw);
+
   if (!Number.isFinite(n) || n <= 0) return null;
 
   if (n > 1e18) return Math.round(n / 1_000_000);
@@ -224,6 +288,7 @@ function getQuoteAgeMinutes(lastTradeTimestampMs: number | null): number | null 
   if (!lastTradeTimestampMs) return null;
 
   const ageMs = Date.now() - lastTradeTimestampMs;
+
   if (!Number.isFinite(ageMs) || ageMs < 0) return null;
 
   return Math.round(ageMs / 60000);
@@ -235,6 +300,9 @@ function buildBaseRow(row: AnyObj, maxTradeAgeMinutes: number): BaseRow {
   const price = pickNumber(row, [
     "lastTrade.p",
     "lastTrade.price",
+    "lastTrade.P",
+    "day.c",
+    "todaysChange",
   ]);
 
   const previousClose = pickNumber(row, [
@@ -256,8 +324,11 @@ function buildBaseRow(row: AnyObj, maxTradeAgeMinutes: number): BaseRow {
   );
 
   const quoteAgeMinutes = getQuoteAgeMinutes(lastTradeTimestampMs);
+
   const isFreshTrade =
-    quoteAgeMinutes !== null && quoteAgeMinutes >= 0 && quoteAgeMinutes <= maxTradeAgeMinutes;
+    quoteAgeMinutes !== null &&
+    quoteAgeMinutes >= 0 &&
+    quoteAgeMinutes <= maxTradeAgeMinutes;
 
   return {
     ticker,
@@ -268,6 +339,102 @@ function buildBaseRow(row: AnyObj, maxTradeAgeMinutes: number): BaseRow {
     lastTradeTimestampMs,
     quoteAgeMinutes,
     isFreshTrade,
+  };
+}
+
+function buildHunterEngine(
+  gainPct: number,
+  speedPct: number,
+  momentumPct: number,
+  quoteAgeMinutes: number | null
+): HunterEngineData {
+  const freshBonus =
+    quoteAgeMinutes !== null && quoteAgeMinutes <= 5
+      ? 10
+      : quoteAgeMinutes !== null && quoteAgeMinutes <= 15
+        ? 5
+        : 0;
+
+  const gainScore = clamp(gainPct * 0.65, 0, 45);
+  const speedScore = clamp(speedPct * 35, -25, 35);
+  const momentumScore = clamp(momentumPct * 30, -25, 25);
+
+  const rawScore = gainScore + speedScore + momentumScore + freshBonus;
+  const hunterScore = round(clamp(rawScore, 0, 100), 2);
+
+  let hunterStatus: HunterStatus = "FADING";
+
+  if (speedPct > 0.05 && momentumPct >= -0.05 && gainPct > 0) {
+    hunterStatus = "CLIMBING";
+  } else if (gainPct > 0 && speedPct >= -0.08) {
+    hunterStatus = "FLAT";
+  }
+
+  let hunterPhase: HunterPhase = "BELOW_RADAR";
+
+  if (gainPct >= 80 && speedPct >= -0.1) {
+    hunterPhase = "EXTENDED_HOT";
+  } else if (gainPct >= 18 && speedPct >= -0.12) {
+    hunterPhase = "ESTABLISHED";
+  } else if (gainPct > 0 && speedPct > 0.05) {
+    hunterPhase = "CLIMBER";
+  }
+
+  const hunterReason =
+    hunterStatus === "CLIMBING"
+      ? "Gain is rising scan-to-scan with positive or controlled momentum."
+      : hunterStatus === "FLAT"
+        ? "Ticker is green but not accelerating enough to call it an active climber."
+        : "Ticker is losing scan-to-scan pressure or momentum is fading.";
+
+  return {
+    hunterStatus,
+    hunterPhase,
+    hunterScore,
+    hunterReason,
+  };
+}
+
+function buildEstablishedEngine(
+  gainPct: number,
+  speedPct: number,
+  momentumPct: number,
+  quoteAgeMinutes: number | null
+): EstablishedEngineData {
+  const fresh =
+    quoteAgeMinutes !== null &&
+    quoteAgeMinutes >= 0 &&
+    quoteAgeMinutes <= 15;
+
+  const gainBase = clamp(gainPct * 0.75, 0, 55);
+  const holdScore = speedPct >= -0.08 ? 20 : speedPct >= -0.2 ? 10 : -10;
+  const momentumHold = momentumPct >= -0.2 ? 15 : momentumPct >= -0.5 ? 5 : -10;
+  const freshScore = fresh ? 10 : 0;
+
+  const establishedScore = round(
+    clamp(gainBase + holdScore + momentumHold + freshScore, 0, 100),
+    2
+  );
+
+  let establishedLight: EstablishedLight = "NOT_ESTABLISHED";
+
+  if (gainPct >= 20 && speedPct >= -0.08 && momentumPct >= -0.25 && fresh) {
+    establishedLight = "ESTABLISHED_GREEN";
+  } else if (gainPct >= 8 && speedPct >= -0.2 && momentumPct >= -0.5 && fresh) {
+    establishedLight = "ESTABLISHED_YELLOW";
+  }
+
+  const establishedReason =
+    establishedLight === "ESTABLISHED_GREEN"
+      ? "Move is already proven and holding without major scan-to-scan failure."
+      : establishedLight === "ESTABLISHED_YELLOW"
+        ? "Move has some proof but still needs stronger continuation."
+        : "Move is not proven enough or is failing its hold test.";
+
+  return {
+    establishedLight,
+    establishedScore,
+    establishedReason,
   };
 }
 
@@ -306,6 +473,7 @@ function classifyNewsCategory(headline: string, publisher: string, url: string):
   ].some((value) => text.includes(value));
 
   if (pressLike) return "PRESS_RELEASE";
+
   return "NEWS";
 }
 
@@ -385,9 +553,13 @@ function scoreLatestHeadline(headline: string): number {
   const veryPositive = [
     "fda",
     "approval",
+    "approved",
     "cleared",
+    "clearance",
     "phase 3",
     "phase iii",
+    "met primary endpoint",
+    "positive topline",
     "topline",
     "acquisition",
     "acquired",
@@ -413,6 +585,8 @@ function scoreLatestHeadline(headline: string): number {
     "grant",
     "breakthrough",
     "successful",
+    "distribution",
+    "commercial",
   ];
 
   const hardNegative = [
@@ -431,6 +605,7 @@ function scoreLatestHeadline(headline: string): number {
     "lawsuit",
     "guidance cut",
     "miss earnings",
+    "downgrade",
   ];
 
   let score = 0;
@@ -460,9 +635,13 @@ function scoreArticle(title: string): number {
   const hardPositive = [
     "fda",
     "approval",
+    "approved",
     "cleared",
+    "clearance",
     "phase 3",
     "phase iii",
+    "met primary endpoint",
+    "positive topline",
     "topline",
     "acquired",
     "acquisition",
@@ -488,6 +667,8 @@ function scoreArticle(title: string): number {
     "successful",
     "guidance raised",
     "earnings beat",
+    "distribution",
+    "commercial",
   ];
 
   const hardNegative = [
@@ -589,8 +770,10 @@ function buildLatestNewsData(items: NewsArticle[]): LatestNewsData {
 
   const age = getNewsAgeData(latest.publishedUtc);
   const headlineScore = scoreLatestHeadline(latest.title);
+
   const liveCatalystScore =
-    age.newsFreshness === "FRESH_CATALYST" || age.newsFreshness === "RECENT_CATALYST"
+    age.newsFreshness === "FRESH_CATALYST" ||
+    age.newsFreshness === "RECENT_CATALYST"
       ? headlineScore
       : 0;
 
@@ -651,7 +834,10 @@ function classifyDayBias(articles: NewsArticle[]): {
   let priorScore = 0;
 
   for (const article of inLookback) {
-    const dayKey = article.publishedMs ? formatEasternDay(new Date(article.publishedMs)) : "";
+    const dayKey = article.publishedMs
+      ? formatEasternDay(new Date(article.publishedMs))
+      : "";
+
     if (dayKey === todayEt) {
       todayScore += article.articleScore;
     } else {
@@ -681,46 +867,103 @@ function classifyDayBias(articles: NewsArticle[]): {
   };
 }
 
-function deriveRunnerLight(
-  gainPct: number,
-  speedPct: number,
-  momentumPct: number,
-  liveCatalystScore: number
-): RunnerLight {
+function deriveRunnerLight(params: {
+  gainPct: number;
+  speedPct: number;
+  momentumPct: number;
+  liveCatalystScore: number;
+  hunterScore: number;
+  hunterStatus: HunterStatus;
+  establishedLight: EstablishedLight;
+}): RunnerLight {
+  const {
+    gainPct,
+    speedPct,
+    momentumPct,
+    liveCatalystScore,
+    hunterScore,
+    hunterStatus,
+    establishedLight,
+  } = params;
+
   if (
+    gainPct > 0 &&
     liveCatalystScore >= 2 &&
-    speedPct > 0.35 &&
-    momentumPct >= -0.05 &&
-    gainPct > 0
+    hunterStatus === "CLIMBING" &&
+    hunterScore >= 55 &&
+    speedPct > 0.05 &&
+    momentumPct >= -0.1
   ) {
     return "LIGHT_GREEN";
   }
 
-  if (liveCatalystScore >= 1 && speedPct > 0.05 && gainPct > 0) {
+  if (
+    gainPct > 0 &&
+    liveCatalystScore >= 1 &&
+    speedPct > 0 &&
+    hunterScore >= 40
+  ) {
+    return "LIGHT_YELLOW";
+  }
+
+  if (
+    gainPct > 0 &&
+    establishedLight === "ESTABLISHED_GREEN" &&
+    liveCatalystScore >= 1
+  ) {
     return "LIGHT_YELLOW";
   }
 
   return "LIGHT_GREY";
 }
 
-function deriveFinalLight(
-  gainPct: number,
-  speedPct: number,
-  momentumPct: number,
-  liveCatalystScore: number,
-  dayBiasScore: number
-): FinalLight {
+function deriveFinalLight(params: {
+  gainPct: number;
+  speedPct: number;
+  momentumPct: number;
+  liveCatalystScore: number;
+  dayBiasScore: number;
+  hunterScore: number;
+  hunterStatus: HunterStatus;
+  establishedLight: EstablishedLight;
+  establishedScore: number;
+}): FinalLight {
+  const {
+    gainPct,
+    speedPct,
+    momentumPct,
+    liveCatalystScore,
+    dayBiasScore,
+    hunterScore,
+    hunterStatus,
+    establishedLight,
+    establishedScore,
+  } = params;
+
+  const hunterConfirmed =
+    hunterStatus === "CLIMBING" &&
+    hunterScore >= 55 &&
+    speedPct > 0.05 &&
+    momentumPct >= -0.15;
+
+  const establishedConfirmed =
+    establishedLight === "ESTABLISHED_GREEN" &&
+    establishedScore >= 55;
+
   if (
+    gainPct > 0 &&
     liveCatalystScore >= 1 &&
-    speedPct > 0.2 &&
-    momentumPct >= -0.05 &&
     dayBiasScore > 0 &&
-    gainPct > 0
+    (hunterConfirmed || establishedConfirmed)
   ) {
     return "SUPER_GREEN";
   }
 
-  if (speedPct > 0.05 && gainPct > 0 && dayBiasScore >= 0) {
+  if (
+    gainPct > 0 &&
+    dayBiasScore >= 0 &&
+    (speedPct > 0 || hunterScore >= 40 || establishedScore >= 45)
+  ) {
     return "SUPER_YELLOW";
   }
 
@@ -747,6 +990,7 @@ function buildEmptyPayload(message: string, startedAt: string) {
     data: {
       candidates,
       tickers: candidates,
+      results: candidates,
     },
   };
 }
@@ -762,10 +1006,13 @@ export async function GET(req: Request) {
   }
 
   if (!apiKey) {
-    return NextResponse.json(buildEmptyPayload("Missing POLYGON_API_KEY or MASSIVE_API_KEY.", startedAt), {
-      status: 200,
-      headers: { "Cache-Control": "no-store, max-age=0" },
-    });
+    return NextResponse.json(
+      buildEmptyPayload("Missing POLYGON_API_KEY or MASSIVE_API_KEY.", startedAt),
+      {
+        status: 200,
+        headers: { "Cache-Control": "no-store, max-age=0" },
+      }
+    );
   }
 
   try {
@@ -793,13 +1040,14 @@ export async function GET(req: Request) {
     }
 
     const json = (await res.json()) as AnyObj;
+
     const rowsRaw = Array.isArray(json.tickers)
       ? json.tickers
       : Array.isArray(json.results)
         ? json.results
         : [];
 
-    const wholeMarket = rowsRaw
+    const wholeMarket: RankedMarketRow[] = rowsRaw
       .filter(isObj)
       .map((row) => buildBaseRow(row, maxTradeAgeMinutes))
       .filter((item) => Boolean(item.ticker))
@@ -808,28 +1056,63 @@ export async function GET(req: Request) {
       .filter((item) => item.isFreshTrade)
       .map((item) => {
         const previous = memory.lastScan[item.ticker];
+
         const priorGainPct = previous ? previous.gainPct : null;
         const speedPct = priorGainPct === null ? 0 : item.gainPct - priorGainPct;
         const priorSpeedPct = previous ? previous.speedPct : 0;
         const momentumPct = speedPct - priorSpeedPct;
 
+        const hunterEngine = buildHunterEngine(
+          item.gainPct,
+          speedPct,
+          momentumPct,
+          item.quoteAgeMinutes
+        );
+
+        const establishedEngine = buildEstablishedEngine(
+          item.gainPct,
+          speedPct,
+          momentumPct,
+          item.quoteAgeMinutes
+        );
+
         return {
           ...item,
           priorGainPct,
-          speedPct,
-          priorSpeedPct,
-          momentumPct,
+          speedPct: round(speedPct, 4),
+          priorSpeedPct: round(priorSpeedPct, 4),
+          momentumPct: round(momentumPct, 4),
+          hunterEngine,
+          establishedEngine,
         };
       });
 
     wholeMarket.sort((a, b) => {
-      const aSeed = a.gainPct + 3 * a.speedPct + 2 * a.momentumPct;
-      const bSeed = b.gainPct + 3 * b.speedPct + 2 * b.momentumPct;
+      const aSeed =
+        a.gainPct +
+        4 * a.speedPct +
+        2.5 * a.momentumPct +
+        a.hunterEngine.hunterScore * 0.35 +
+        a.establishedEngine.establishedScore * 0.2;
+
+      const bSeed =
+        b.gainPct +
+        4 * b.speedPct +
+        2.5 * b.momentumPct +
+        b.hunterEngine.hunterScore * 0.35 +
+        b.establishedEngine.establishedScore * 0.2;
 
       if (bSeed !== aSeed) return bSeed - aSeed;
+      if (b.hunterEngine.hunterScore !== a.hunterEngine.hunterScore) {
+        return b.hunterEngine.hunterScore - a.hunterEngine.hunterScore;
+      }
+      if (b.establishedEngine.establishedScore !== a.establishedEngine.establishedScore) {
+        return b.establishedEngine.establishedScore - a.establishedEngine.establishedScore;
+      }
       if (b.speedPct !== a.speedPct) return b.speedPct - a.speedPct;
       if (b.momentumPct !== a.momentumPct) return b.momentumPct - a.momentumPct;
       if (b.gainPct !== a.gainPct) return b.gainPct - a.gainPct;
+
       return a.ticker.localeCompare(b.ticker);
     });
 
@@ -841,47 +1124,94 @@ export async function GET(req: Request) {
         const latest = news.latest;
         const bias = classifyDayBias(news.items5d);
 
+        const hunter = item.hunterEngine;
+        const established = item.establishedEngine;
+
         const climbPercent =
           item.gainPct +
-          3 * item.speedPct +
-          2 * item.momentumPct +
-          2 * latest.liveCatalystScore;
+          4 * item.speedPct +
+          2.5 * item.momentumPct +
+          2 * latest.liveCatalystScore +
+          hunter.hunterScore * 0.28 +
+          established.establishedScore * 0.18;
 
-        const superScore = climbPercent + 2 * bias.dayBiasScore;
-        const runnerLight = deriveRunnerLight(
-          item.gainPct,
-          item.speedPct,
-          item.momentumPct,
-          latest.liveCatalystScore
-        );
+        const superScore =
+          climbPercent +
+          2 * bias.dayBiasScore +
+          latest.headlineScore +
+          latest.liveCatalystScore;
 
-        const finalLight = deriveFinalLight(
-          item.gainPct,
-          item.speedPct,
-          item.momentumPct,
-          latest.liveCatalystScore,
-          bias.dayBiasScore
-        );
+        const runnerLight = deriveRunnerLight({
+          gainPct: item.gainPct,
+          speedPct: item.speedPct,
+          momentumPct: item.momentumPct,
+          liveCatalystScore: latest.liveCatalystScore,
+          hunterScore: hunter.hunterScore,
+          hunterStatus: hunter.hunterStatus,
+          establishedLight: established.establishedLight,
+        });
+
+        const finalLight = deriveFinalLight({
+          gainPct: item.gainPct,
+          speedPct: item.speedPct,
+          momentumPct: item.momentumPct,
+          liveCatalystScore: latest.liveCatalystScore,
+          dayBiasScore: bias.dayBiasScore,
+          hunterScore: hunter.hunterScore,
+          hunterStatus: hunter.hunterStatus,
+          establishedLight: established.establishedLight,
+          establishedScore: established.establishedScore,
+        });
 
         return {
           ticker: item.ticker,
           symbol: item.symbol,
+
           finalLight,
           runnerLight,
           dayBias: bias.dayBias,
+
           latestHeadline: latest.newsHeadline,
           newsUrl: latest.newsUrl,
+          newsPublisher: latest.newsPublisher,
+          newsCategory: latest.newsCategory,
+          newsFreshness: latest.newsFreshness,
+          newsAgeMinutes: latest.newsAgeMinutes,
+
+          price: item.price,
+          previousClose: item.previousClose,
+          gainPct: item.gainPct,
+          speedPct: round(item.speedPct, 4),
+          momentumPct: round(item.momentumPct, 4),
+          quoteAgeMinutes: item.quoteAgeMinutes,
+
+          hunterStatus: hunter.hunterStatus,
+          hunterPhase: hunter.hunterPhase,
+          hunterScore: hunter.hunterScore,
+          hunterReason: hunter.hunterReason,
+
+          establishedLight: established.establishedLight,
+          establishedScore: established.establishedScore,
+          establishedReason: established.establishedReason,
+
           superScore: round(superScore, 2),
           climbPercent: round(climbPercent, 2),
           dayBiasScore: bias.dayBiasScore,
+          headlineScore: latest.headlineScore,
+          liveCatalystScore: latest.liveCatalystScore,
         } satisfies SuperCandidate;
       })
     );
 
     candidatesWithNews.sort((a, b) => {
       if (b.superScore !== a.superScore) return b.superScore - a.superScore;
+      if (b.hunterScore !== a.hunterScore) return b.hunterScore - a.hunterScore;
+      if (b.establishedScore !== a.establishedScore) {
+        return b.establishedScore - a.establishedScore;
+      }
       if (b.climbPercent !== a.climbPercent) return b.climbPercent - a.climbPercent;
       if (b.dayBiasScore !== a.dayBiasScore) return b.dayBiasScore - a.dayBiasScore;
+
       return a.ticker.localeCompare(b.ticker);
     });
 
@@ -892,7 +1222,10 @@ export async function GET(req: Request) {
     for (const item of wholeMarket) {
       nextLastScan[item.ticker] = {
         gainPct: round(item.gainPct, 2),
-        speedPct: round(item.priorGainPct === null ? 0 : item.gainPct - item.priorGainPct, 2),
+        speedPct: round(
+          item.priorGainPct === null ? 0 : item.gainPct - item.priorGainPct,
+          4
+        ),
       };
     }
 
@@ -901,11 +1234,39 @@ export async function GET(req: Request) {
     const payloadItems = finalCandidates.map((item) => ({
       ticker: item.ticker,
       symbol: item.symbol,
+
       finalLight: item.finalLight,
       runnerLight: item.runnerLight,
       dayBias: item.dayBias,
+
       latestHeadline: item.latestHeadline,
       newsUrl: item.newsUrl,
+      newsPublisher: item.newsPublisher,
+      newsCategory: item.newsCategory,
+      newsFreshness: item.newsFreshness,
+      newsAgeMinutes: item.newsAgeMinutes,
+
+      price: item.price,
+      previousClose: item.previousClose,
+      gainPct: item.gainPct,
+      speedPct: item.speedPct,
+      momentumPct: item.momentumPct,
+      quoteAgeMinutes: item.quoteAgeMinutes,
+
+      hunterStatus: item.hunterStatus,
+      hunterPhase: item.hunterPhase,
+      hunterScore: item.hunterScore,
+      hunterReason: item.hunterReason,
+
+      establishedLight: item.establishedLight,
+      establishedScore: item.establishedScore,
+      establishedReason: item.establishedReason,
+
+      superScore: item.superScore,
+      climbPercent: item.climbPercent,
+      dayBiasScore: item.dayBiasScore,
+      headlineScore: item.headlineScore,
+      liveCatalystScore: item.liveCatalystScore,
     }));
 
     return NextResponse.json(
@@ -925,6 +1286,7 @@ export async function GET(req: Request) {
         data: {
           candidates: payloadItems,
           tickers: payloadItems,
+          results: payloadItems,
         },
       },
       {
