@@ -1,16 +1,65 @@
 // app/page.tsx
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
-type DayLight = "POSITIVE_DAY" | "NEGATIVE_DAY";
+type FinalLight = "SUPER_GREEN" | "SUPER_YELLOW" | "SUPER_RED";
+type RunnerLight = "LIGHT_GREEN" | "LIGHT_YELLOW" | "LIGHT_GREY";
+type DayBias = "POSITIVE_DAY" | "NEGATIVE_DAY" | "NO_DAY_SIGNAL";
 
-type NewsHunterItem = {
+type HunterStatus = "CLIMBING" | "FLAT" | "FADING";
+type HunterPhase = "BELOW_RADAR" | "CLIMBER" | "ESTABLISHED" | "EXTENDED_HOT";
+
+type EstablishedLight =
+  | "ESTABLISHED_GREEN"
+  | "ESTABLISHED_YELLOW"
+  | "NOT_ESTABLISHED";
+
+type NewsFreshness =
+  | "FRESH_CATALYST"
+  | "RECENT_CATALYST"
+  | "BACKGROUND_NEWS"
+  | "STALE_NEWS"
+  | "UNKNOWN_NEWS_AGE";
+
+type NewsCategory = "NO_NEWS" | "NEWS" | "PRESS_RELEASE" | "FILING_LIKE_NEWS";
+
+type SuperScannerItem = {
   ticker?: string;
   symbol?: string;
-  light?: DayLight;
-  newsUrl?: string;
+
+  finalLight?: FinalLight | string;
+  runnerLight?: RunnerLight | string;
+  dayBias?: DayBias | string;
+
   latestHeadline?: string;
+  newsUrl?: string;
+  newsPublisher?: string;
+  newsCategory?: NewsCategory | string;
+  newsFreshness?: NewsFreshness | string;
+  newsAgeMinutes?: number | string | null;
+
+  price?: number | string;
+  previousClose?: number | string;
+  gainPct?: number | string;
+  speedPct?: number | string;
+  momentumPct?: number | string;
+  quoteAgeMinutes?: number | string | null;
+
+  hunterStatus?: HunterStatus | string;
+  hunterPhase?: HunterPhase | string;
+  hunterScore?: number | string;
+  hunterReason?: string;
+
+  establishedLight?: EstablishedLight | string;
+  establishedScore?: number | string;
+  establishedReason?: string;
+
+  superScore?: number | string;
+  climbPercent?: number | string;
+  dayBiasScore?: number | string;
+  headlineScore?: number | string;
+  liveCatalystScore?: number | string;
 };
 
 type ApiResponse = {
@@ -22,11 +71,15 @@ type ApiResponse = {
   rawCount?: number;
   showing?: number;
   topTicker?: string | null;
-  positiveDay?: NewsHunterItem[];
-  negativeDay?: NewsHunterItem[];
+
+  candidates?: SuperScannerItem[];
+  tickers?: SuperScannerItem[];
+  results?: SuperScannerItem[];
+
   data?: {
-    positiveDay?: NewsHunterItem[];
-    negativeDay?: NewsHunterItem[];
+    candidates?: SuperScannerItem[];
+    tickers?: SuperScannerItem[];
+    results?: SuperScannerItem[];
   };
 };
 
@@ -43,56 +96,150 @@ function num(value: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-function normalizePositive(json: ApiResponse): NewsHunterItem[] {
-  if (Array.isArray(json.positiveDay)) return json.positiveDay;
-  if (Array.isArray(json.data?.positiveDay)) return json.data.positiveDay ?? [];
+function normalizeList(json: ApiResponse): SuperScannerItem[] {
+  if (Array.isArray(json.candidates)) return json.candidates;
+  if (Array.isArray(json.tickers)) return json.tickers;
+  if (Array.isArray(json.results)) return json.results;
+
+  if (Array.isArray(json.data?.candidates)) return json.data.candidates;
+  if (Array.isArray(json.data?.tickers)) return json.data.tickers;
+  if (Array.isArray(json.data?.results)) return json.data.results;
+
   return [];
 }
 
-function normalizeNegative(json: ApiResponse): NewsHunterItem[] {
-  if (Array.isArray(json.negativeDay)) return json.negativeDay;
-  if (Array.isArray(json.data?.negativeDay)) return json.data.negativeDay ?? [];
-  return [];
+function label(value: unknown): string {
+  const text = str(value || "—");
+  return text.replaceAll("_", " ");
 }
 
-function lightClass(light?: string): string {
+function money(value: unknown): string {
+  const n = num(value);
+
+  if (!n) return "—";
+  if (n < 1) return `$${n.toFixed(4)}`;
+  if (n < 10) return `$${n.toFixed(3)}`;
+
+  return `$${n.toFixed(2)}`;
+}
+
+function pct(value: unknown): string {
+  const n = num(value);
+
+  if (!n) return "—";
+
+  return `${n.toFixed(2)}%`;
+}
+
+function signedPct(value: unknown): string {
+  const n = num(value);
+
+  if (!n) return "0.00%";
+
+  return `${n > 0 ? "+" : ""}${n.toFixed(2)}%`;
+}
+
+function score(value: unknown): string {
+  const n = num(value);
+
+  if (!n) return "0";
+
+  return n.toFixed(0);
+}
+
+function minutes(value: unknown): string {
+  const n = num(value);
+
+  if (!n) return "—";
+
+  return `${n}m`;
+}
+
+function compactNumber(value: unknown): string {
+  const n = num(value);
+
+  if (!n) return "—";
+
+  return new Intl.NumberFormat("en-US", {
+    notation: "compact",
+    maximumFractionDigits: 2,
+  }).format(n);
+}
+
+function finalLightClass(light?: string): string {
   const value = str(light).toUpperCase();
-  if (value === "POSITIVE_DAY") return "blue";
+
+  if (value === "SUPER_GREEN") return "green";
+  if (value === "SUPER_YELLOW") return "yellow";
+
   return "red";
 }
 
-function lightLabel(light?: string): string {
+function runnerLightClass(light?: string): string {
   const value = str(light).toUpperCase();
-  if (value === "POSITIVE_DAY") return "POSITIVE";
-  return "NEGATIVE";
+
+  if (value === "LIGHT_GREEN") return "green";
+  if (value === "LIGHT_YELLOW") return "yellow";
+
+  return "grey";
 }
 
-function TickerLink({ item }: { item: NewsHunterItem }) {
-  const ticker = cleanTicker(item.ticker || item.symbol);
+function dayBiasClass(value?: string): string {
+  const text = str(value).toUpperCase();
 
-  if (item.newsUrl) {
-    return (
-      <a
-        className="ticker"
-        href={item.newsUrl}
-        target="_blank"
-        rel="noreferrer"
-        title={item.latestHeadline || ticker}
-      >
-        {ticker || "—"}
-      </a>
-    );
-  }
+  if (text === "POSITIVE_DAY") return "green";
+  if (text === "NEGATIVE_DAY") return "red";
 
-  return <div className="ticker">{ticker || "—"}</div>;
+  return "grey";
+}
+
+function hunterStatusClass(value?: string): string {
+  const text = str(value).toUpperCase();
+
+  if (text === "CLIMBING") return "green";
+  if (text === "FLAT") return "yellow";
+
+  return "red";
+}
+
+function hunterPhaseClass(value?: string): string {
+  const text = str(value).toUpperCase();
+
+  if (text === "EXTENDED_HOT") return "red";
+  if (text === "ESTABLISHED") return "green";
+  if (text === "CLIMBER") return "yellow";
+
+  return "grey";
+}
+
+function establishedClass(value?: string): string {
+  const text = str(value).toUpperCase();
+
+  if (text === "ESTABLISHED_GREEN") return "green";
+  if (text === "ESTABLISHED_YELLOW") return "yellow";
+
+  return "grey";
+}
+
+function newsFreshnessClass(value?: string): string {
+  const text = str(value).toUpperCase();
+
+  if (text === "FRESH_CATALYST") return "green";
+  if (text === "RECENT_CATALYST") return "yellow";
+  if (text === "STALE_NEWS") return "red";
+
+  return "grey";
+}
+
+function getTicker(item: SuperScannerItem): string {
+  return cleanTicker(item.ticker || item.symbol);
 }
 
 export default function HomePage() {
-  const [positiveDay, setPositiveDay] = useState<NewsHunterItem[]>([]);
-  const [negativeDay, setNegativeDay] = useState<NewsHunterItem[]>([]);
+  const [items, setItems] = useState<SuperScannerItem[]>([]);
   const [message, setMessage] = useState("");
   const [source, setSource] = useState("waiting");
-  const [mode, setMode] = useState("SUPER_NEWS_HUNTER");
+  const [mode, setMode] = useState("SUPER_RUNNER_HUNTER_ESTABLISHED");
   const [marketMode, setMarketMode] = useState("waiting");
   const [lastScan, setLastScan] = useState("Never");
   const [topTicker, setTopTicker] = useState<string | null>(null);
@@ -101,55 +248,67 @@ export default function HomePage() {
   const [loading, setLoading] = useState(false);
   const [autoScan, setAutoScan] = useState(true);
 
-  const fetchScan = useCallback(async () => {
+  const visibleItems = useMemo(() => {
+    return items.slice(0, 10);
+  }, [items]);
+
+  const fetchScan = useCallback(async (resetMemory = false) => {
     setLoading(true);
     setMessage("");
 
     try {
-      const res = await fetch("/api/gainers", {
+      const params = new URLSearchParams({
+        resetMemory: String(resetMemory),
+      });
+
+      const res = await fetch(`/api/gainers?${params.toString()}`, {
         method: "GET",
         cache: "no-store",
       });
 
       const json = (await res.json()) as ApiResponse;
-      const nextPositive = normalizePositive(json);
-      const nextNegative = normalizeNegative(json);
 
-      setPositiveDay(nextPositive);
-      setNegativeDay(nextNegative);
+      if (!res.ok) {
+        throw new Error(str(json.message) || `Scanner request failed: ${res.status}`);
+      }
+
+      const list = normalizeList(json);
+      const firstTicker = cleanTicker(list[0]?.ticker || list[0]?.symbol);
+      const apiTopTicker = cleanTicker(json.topTicker);
+
+      setItems(list);
       setSource(str(json.source || "unknown"));
-      setMode(str(json.mode || "SUPER_NEWS_HUNTER"));
+      setMode(str(json.mode || "SUPER_RUNNER_HUNTER_ESTABLISHED"));
       setMarketMode(str(json.marketMode || "unknown"));
       setMessage(str(json.message || ""));
-      setTopTicker(
-        str(json.topTicker || cleanTicker(nextPositive[0]?.ticker || nextNegative[0]?.ticker)) ||
-          null
-      );
+      setTopTicker(apiTopTicker || firstTicker || null);
       setRawCount(num(json.rawCount));
-      setShowing(num(json.showing) || nextPositive.length + nextNegative.length);
+      setShowing(num(json.showing) || list.length);
       setLastScan(new Date().toLocaleTimeString());
     } catch (error) {
       const text = error instanceof Error ? error.message : "Unknown page error.";
+
       setMessage(text);
-      setPositiveDay([]);
-      setNegativeDay([]);
+      setItems([]);
       setTopTicker(null);
       setRawCount(0);
       setShowing(0);
+      setSource("error");
+      setMarketMode("error");
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    void fetchScan();
+    void fetchScan(false);
   }, [fetchScan]);
 
   useEffect(() => {
     if (!autoScan) return;
 
     const id = window.setInterval(() => {
-      void fetchScan();
+      void fetchScan(false);
     }, 3000);
 
     return () => window.clearInterval(id);
@@ -158,15 +317,24 @@ export default function HomePage() {
   return (
     <main className="shell">
       <style>{`
-        * { box-sizing: border-box; }
+        * {
+          box-sizing: border-box;
+        }
 
+        html,
         body {
           margin: 0;
+          min-height: 100%;
           background:
-            radial-gradient(circle at top left, rgba(69, 139, 255, 0.18), transparent 32%),
-            linear-gradient(135deg, #2f3338, #3a4148, #2b3137);
-          color: #b7d8ff;
+            radial-gradient(circle at top left, rgba(255, 205, 85, 0.18), transparent 32%),
+            radial-gradient(circle at top right, rgba(74, 144, 255, 0.16), transparent 30%),
+            linear-gradient(135deg, #090b0f, #161b22 45%, #0d1117);
+          color: #f2f7ff;
           font-family: Arial, Helvetica, sans-serif;
+        }
+
+        body {
+          overflow-x: hidden;
         }
 
         .shell {
@@ -174,12 +342,16 @@ export default function HomePage() {
           padding: 24px;
         }
 
-        .hero, .panel {
-          border: 1px solid rgba(115, 175, 255, 0.22);
-          background: rgba(43, 49, 55, 0.82);
-          border-radius: 24px;
+        .hero,
+        .panel {
+          border: 1px solid rgba(255, 211, 106, 0.22);
+          background:
+            linear-gradient(145deg, rgba(22, 27, 34, 0.94), rgba(9, 11, 15, 0.96));
+          border-radius: 28px;
           padding: 18px;
-          box-shadow: 0 24px 70px rgba(0,0,0,.3);
+          box-shadow:
+            0 24px 70px rgba(0, 0, 0, 0.42),
+            inset 0 1px 0 rgba(255, 255, 255, 0.06);
         }
 
         .top {
@@ -191,36 +363,37 @@ export default function HomePage() {
         }
 
         .eyebrow {
-          color: #8ec5ff;
+          color: #ffd36a;
           font-size: 12px;
           font-weight: 950;
-          letter-spacing: .16em;
+          letter-spacing: 0.16em;
           text-transform: uppercase;
         }
 
         h1 {
           margin: 6px 0 0;
-          font-size: clamp(34px, 6vw, 60px);
-          line-height: .95;
-          letter-spacing: -.06em;
+          font-size: clamp(34px, 6vw, 66px);
+          line-height: 0.94;
+          letter-spacing: -0.06em;
           text-transform: uppercase;
-          color: #dceeff;
+          color: #f7fbff;
+          text-shadow: 0 10px 34px rgba(255, 211, 106, 0.14);
+        }
+
+        .sub {
+          color: #9fc6f5;
+          max-width: 950px;
+          line-height: 1.5;
+          margin-top: 12px;
+          font-size: 14px;
         }
 
         h2 {
           margin: 0 0 12px;
           font-size: 19px;
           text-transform: uppercase;
-          letter-spacing: -.03em;
-          color: #dceeff;
-        }
-
-        .sub {
-          color: #9cc8ff;
-          max-width: 860px;
-          line-height: 1.5;
-          margin-top: 12px;
-          font-size: 14px;
+          letter-spacing: -0.03em;
+          color: #f7fbff;
         }
 
         button {
@@ -230,51 +403,75 @@ export default function HomePage() {
           font-weight: 950;
           cursor: pointer;
           text-transform: uppercase;
-          letter-spacing: .04em;
+          letter-spacing: 0.04em;
+          transition:
+            transform 160ms ease,
+            opacity 160ms ease,
+            box-shadow 160ms ease;
         }
 
-        .blue-button {
-          background: linear-gradient(135deg, #86bfff, #4d8fff);
-          color: #10233b;
+        button:hover {
+          transform: translateY(-1px);
+        }
+
+        button:disabled {
+          cursor: not-allowed;
+          opacity: 0.55;
+          transform: none;
+        }
+
+        .button-row {
+          display: flex;
+          gap: 10px;
+          flex-wrap: wrap;
+        }
+
+        .gold-button {
+          background: linear-gradient(135deg, #ffe08a, #c4912b);
+          color: #111820;
+          box-shadow: 0 12px 28px rgba(255, 211, 106, 0.18);
         }
 
         .dark-button {
-          background: rgba(255,255,255,.08);
-          color: #d9ecff;
-          border: 1px solid rgba(255,255,255,.15);
+          background: rgba(255, 255, 255, 0.08);
+          color: #e7f2ff;
+          border: 1px solid rgba(255, 255, 255, 0.15);
         }
 
         .stats {
           display: grid;
-          grid-template-columns: repeat(5, minmax(0,1fr));
+          grid-template-columns: repeat(5, minmax(0, 1fr));
           gap: 12px;
           margin-top: 16px;
         }
 
         .stat {
-          border: 1px solid rgba(255,255,255,.10);
+          border: 1px solid rgba(255, 255, 255, 0.10);
           border-radius: 18px;
           padding: 14px;
-          background: rgba(255,255,255,.04);
+          background:
+            linear-gradient(145deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.025));
+          min-width: 0;
         }
 
         .label {
-          color: #8bb6ea;
+          color: #94b5dd;
           font-size: 11px;
           text-transform: uppercase;
-          letter-spacing: .12em;
+          letter-spacing: 0.12em;
           font-weight: 950;
         }
 
         .value {
-          font-size: 28px;
+          font-size: 26px;
           font-weight: 950;
           margin-top: 5px;
-          color: #dceeff;
+          color: #f7fbff;
+          overflow-wrap: anywhere;
         }
 
         .meta {
-          color: #95bee9;
+          color: #9fbce0;
           font-size: 12px;
           line-height: 1.45;
           margin-top: 14px;
@@ -282,78 +479,186 @@ export default function HomePage() {
 
         .layout {
           display: grid;
-          grid-template-columns: 1fr 1fr;
+          grid-template-columns: 1fr;
           gap: 16px;
           margin-top: 16px;
         }
 
         .list {
           display: grid;
-          gap: 10px;
+          gap: 12px;
         }
 
-        .row {
+        .card {
+          border: 1px solid rgba(255, 255, 255, 0.09);
+          background:
+            linear-gradient(145deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.022));
+          border-radius: 22px;
+          padding: 15px;
+        }
+
+        .card-top {
+          display: grid;
+          grid-template-columns: 1.15fr auto auto auto;
+          gap: 12px;
+          align-items: start;
+        }
+
+        .ticker-line {
           display: flex;
           align-items: center;
-          justify-content: space-between;
-          gap: 14px;
-          border: 1px solid rgba(255,255,255,.08);
-          background: rgba(255,255,255,.04);
-          border-radius: 18px;
-          padding: 14px 16px;
+          gap: 10px;
+          flex-wrap: wrap;
         }
 
-        .left {
-          display: grid;
-          gap: 6px;
-        }
-
-        .ticker {
-          font-size: 24px;
-          font-weight: 950;
-          letter-spacing: .04em;
-          color: #dceeff;
-          text-decoration: none;
-        }
-
-        .headline {
-          color: #9cc8ff;
-          font-size: 12px;
-          line-height: 1.35;
-          max-width: 420px;
-        }
-
-        .light {
+        .rank {
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          min-width: 110px;
+          min-width: 36px;
+          height: 36px;
           border-radius: 999px;
-          padding: 9px 12px;
-          font-size: 12px;
+          color: #111820;
+          background: linear-gradient(135deg, #ffe08a, #b88724);
+          font-size: 13px;
           font-weight: 950;
-          letter-spacing: .08em;
+        }
+
+        .ticker {
+          font-size: 28px;
+          font-weight: 950;
+          letter-spacing: 0.04em;
+          color: #f7fbff;
+          text-decoration: none;
+        }
+
+        .ticker:hover {
+          text-decoration: underline;
+        }
+
+        .headline {
+          color: #9fc6f5;
+          font-size: 12px;
+          line-height: 1.4;
+          margin-top: 8px;
+          max-width: 760px;
+        }
+
+        .metric-grid {
+          display: grid;
+          grid-template-columns: repeat(6, minmax(0, 1fr));
+          gap: 8px;
+          margin-top: 12px;
+        }
+
+        .metric {
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 14px;
+          padding: 9px;
+          background: rgba(0, 0, 0, 0.18);
+          min-width: 0;
+        }
+
+        .metric-name {
+          color: #8daed4;
+          font-size: 9px;
+          font-weight: 950;
+          letter-spacing: 0.1em;
           text-transform: uppercase;
-          border: 1px solid rgba(255,255,255,.12);
         }
 
-        .light.blue {
-          color: #dceeff;
-          background: rgba(77, 143, 255, 0.25);
-          border-color: rgba(77, 143, 255, 0.42);
+        .metric-value {
+          color: #f7fbff;
+          font-size: 14px;
+          font-weight: 950;
+          margin-top: 4px;
+          overflow-wrap: anywhere;
         }
 
-        .light.red {
+        .engine-grid {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 10px;
+          margin-top: 12px;
+        }
+
+        .engine {
+          border: 1px solid rgba(255, 255, 255, 0.09);
+          border-radius: 18px;
+          padding: 12px;
+          background: rgba(0, 0, 0, 0.18);
+        }
+
+        .engine-title {
+          color: #ffd36a;
+          font-size: 11px;
+          font-weight: 950;
+          letter-spacing: 0.12em;
+          text-transform: uppercase;
+          margin-bottom: 8px;
+        }
+
+        .engine-text {
+          color: #9fbce0;
+          font-size: 11px;
+          line-height: 1.35;
+          margin-top: 8px;
+        }
+
+        .pill-row {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 7px;
+        }
+
+        .pill {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 118px;
+          border-radius: 999px;
+          padding: 8px 10px;
+          font-size: 11px;
+          font-weight: 950;
+          letter-spacing: 0.06em;
+          text-transform: uppercase;
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          text-align: center;
+          white-space: nowrap;
+        }
+
+        .pill.green {
+          color: #dcffeb;
+          background: rgba(41, 165, 92, 0.22);
+          border-color: rgba(41, 165, 92, 0.48);
+          box-shadow: 0 0 24px rgba(41, 165, 92, 0.10);
+        }
+
+        .pill.yellow {
+          color: #fff0a6;
+          background: rgba(204, 165, 36, 0.20);
+          border-color: rgba(204, 165, 36, 0.44);
+          box-shadow: 0 0 24px rgba(204, 165, 36, 0.08);
+        }
+
+        .pill.red {
           color: #ffdcdc;
           background: rgba(255, 90, 90, 0.18);
           border-color: rgba(255, 90, 90, 0.34);
         }
 
-        .empty, .error {
+        .pill.grey {
+          color: #d9e6f3;
+          background: rgba(150, 160, 170, 0.18);
+          border-color: rgba(150, 160, 170, 0.38);
+        }
+
+        .empty,
+        .error {
           border-radius: 18px;
           padding: 18px;
-          color: #95bee9;
-          border: 1px dashed rgba(255,255,255,.18);
+          color: #9fbce0;
+          border: 1px dashed rgba(255, 255, 255, 0.18);
           text-align: center;
           line-height: 1.45;
         }
@@ -362,23 +667,62 @@ export default function HomePage() {
           margin-top: 12px;
           border-style: solid;
           color: #ffdcdc;
-          background: rgba(255,90,90,.08);
-          border-color: rgba(255,90,90,.25);
+          background: rgba(255, 90, 90, 0.08);
+          border-color: rgba(255, 90, 90, 0.25);
           font-weight: 850;
         }
 
-        @media (max-width: 1100px) {
-          .stats, .layout {
+        .footer-note {
+          margin-top: 14px;
+          color: #8daed4;
+          font-size: 11px;
+          line-height: 1.45;
+        }
+
+        @media (max-width: 1250px) {
+          .stats {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+
+          .card-top {
             grid-template-columns: 1fr;
           }
 
+          .metric-grid {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+          }
+
+          .engine-grid {
+            grid-template-columns: 1fr;
+          }
+        }
+
+        @media (max-width: 720px) {
+          .shell {
+            padding: 14px;
+          }
+
+          .hero,
+          .panel {
+            border-radius: 22px;
+            padding: 14px;
+          }
+
+          .stats {
+            grid-template-columns: 1fr;
+          }
+
+          .button-row,
           button {
             width: 100%;
           }
 
-          .row {
-            flex-direction: column;
-            align-items: flex-start;
+          .metric-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+
+          .pill {
+            width: 100%;
           }
         }
       `}</style>
@@ -386,21 +730,26 @@ export default function HomePage() {
       <section className="hero">
         <div className="top">
           <div>
-            <div className="eyebrow">Super News Hunter</div>
-            <h1>Daily News Bias</h1>
+            <div className="eyebrow">Catalyst + Hunter + Established Engine</div>
+            <h1>Mission Control</h1>
             <div className="sub">
-              Live gainers list plus 5-day news read-through. The algo tags each ticker as
-              positive or negative for the day.
+              Catalyst scanner upgraded with Hunter Engine and Established Engine. This finds
+              active climbers, proven movers, fresh catalyst pressure, and final traffic-light
+              alignment. Scanner only. Evidence must prove the trade.
             </div>
           </div>
 
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <button className="blue-button" onClick={() => void fetchScan()} disabled={loading}>
+          <div className="button-row">
+            <button className="gold-button" onClick={() => void fetchScan(false)} disabled={loading}>
               {loading ? "Scanning..." : "Scan Now"}
             </button>
 
             <button className="dark-button" onClick={() => setAutoScan((value) => !value)}>
               {autoScan ? "Auto: On" : "Auto: Off"}
+            </button>
+
+            <button className="dark-button" onClick={() => void fetchScan(true)} disabled={loading}>
+              Clear Memory
             </button>
           </div>
         </div>
@@ -413,12 +762,12 @@ export default function HomePage() {
 
           <div className="stat">
             <div className="label">Market Mode</div>
-            <div className="value">{marketMode}</div>
+            <div className="value">{marketMode || "—"}</div>
           </div>
 
           <div className="stat">
             <div className="label">Raw Count</div>
-            <div className="value">{rawCount}</div>
+            <div className="value">{compactNumber(rawCount)}</div>
           </div>
 
           <div className="stat">
@@ -445,49 +794,162 @@ export default function HomePage() {
 
       <section className="layout">
         <div className="panel">
-          <h2>Positive Day</h2>
+          <h2>Top 10 Scanner Candidates</h2>
 
-          {positiveDay.length === 0 ? (
-            <div className="empty">No positive day signals right now.</div>
+          {visibleItems.length === 0 ? (
+            <div className="empty">No live candidates right now.</div>
           ) : (
             <div className="list">
-              {positiveDay.map((item, index) => (
-                <div className="row" key={`${cleanTicker(item.ticker || item.symbol)}-pos-${index}`}>
-                  <div className="left">
-                    <TickerLink item={item} />
-                    {item.latestHeadline ? <div className="headline">{item.latestHeadline}</div> : null}
-                  </div>
+              {visibleItems.map((item, index) => {
+                const ticker = getTicker(item);
 
-                  <span className={`light ${lightClass(item.light)}`}>
-                    {lightLabel(item.light)}
-                  </span>
-                </div>
-              ))}
+                return (
+                  <div className="card" key={`${ticker || "UNKNOWN"}-${index}`}>
+                    <div className="card-top">
+                      <div>
+                        <div className="ticker-line">
+                          <span className="rank">#{index + 1}</span>
+
+                          {item.newsUrl ? (
+                            <a
+                              className="ticker"
+                              href={item.newsUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              {ticker || "—"}
+                            </a>
+                          ) : (
+                            <div className="ticker">{ticker || "—"}</div>
+                          )}
+                        </div>
+
+                        {item.latestHeadline ? (
+                          <div className="headline">{item.latestHeadline}</div>
+                        ) : (
+                          <div className="headline">No fresh headline attached.</div>
+                        )}
+                      </div>
+
+                      <span className={`pill ${finalLightClass(item.finalLight)}`}>
+                        {label(item.finalLight || "SUPER_RED")}
+                      </span>
+
+                      <span className={`pill ${runnerLightClass(item.runnerLight)}`}>
+                        {label(item.runnerLight || "LIGHT_GREY")}
+                      </span>
+
+                      <span className={`pill ${dayBiasClass(item.dayBias)}`}>
+                        {label(item.dayBias || "NO_DAY_SIGNAL")}
+                      </span>
+                    </div>
+
+                    <div className="metric-grid">
+                      <div className="metric">
+                        <div className="metric-name">Price</div>
+                        <div className="metric-value">{money(item.price)}</div>
+                      </div>
+
+                      <div className="metric">
+                        <div className="metric-name">Gain</div>
+                        <div className="metric-value">{pct(item.gainPct)}</div>
+                      </div>
+
+                      <div className="metric">
+                        <div className="metric-name">Speed</div>
+                        <div className="metric-value">{signedPct(item.speedPct)}</div>
+                      </div>
+
+                      <div className="metric">
+                        <div className="metric-name">Momentum</div>
+                        <div className="metric-value">{signedPct(item.momentumPct)}</div>
+                      </div>
+
+                      <div className="metric">
+                        <div className="metric-name">Super Score</div>
+                        <div className="metric-value">{score(item.superScore)}</div>
+                      </div>
+
+                      <div className="metric">
+                        <div className="metric-name">Trade Age</div>
+                        <div className="metric-value">{minutes(item.quoteAgeMinutes)}</div>
+                      </div>
+                    </div>
+
+                    <div className="engine-grid">
+                      <div className="engine">
+                        <div className="engine-title">Hunter Engine</div>
+                        <div className="pill-row">
+                          <span className={`pill ${hunterStatusClass(item.hunterStatus)}`}>
+                            {label(item.hunterStatus || "FADING")}
+                          </span>
+
+                          <span className={`pill ${hunterPhaseClass(item.hunterPhase)}`}>
+                            {label(item.hunterPhase || "BELOW_RADAR")}
+                          </span>
+
+                          <span className="pill grey">
+                            Score {score(item.hunterScore)}
+                          </span>
+                        </div>
+
+                        <div className="engine-text">
+                          {item.hunterReason || "Hunter read unavailable."}
+                        </div>
+                      </div>
+
+                      <div className="engine">
+                        <div className="engine-title">Established Engine</div>
+                        <div className="pill-row">
+                          <span className={`pill ${establishedClass(item.establishedLight)}`}>
+                            {label(item.establishedLight || "NOT_ESTABLISHED")}
+                          </span>
+
+                          <span className="pill grey">
+                            Score {score(item.establishedScore)}
+                          </span>
+                        </div>
+
+                        <div className="engine-text">
+                          {item.establishedReason || "Established read unavailable."}
+                        </div>
+                      </div>
+
+                      <div className="engine">
+                        <div className="engine-title">Catalyst Engine</div>
+                        <div className="pill-row">
+                          <span className={`pill ${newsFreshnessClass(item.newsFreshness)}`}>
+                            {label(item.newsFreshness || "UNKNOWN_NEWS_AGE")}
+                          </span>
+
+                          <span className="pill grey">
+                            News {score(item.headlineScore)}
+                          </span>
+
+                          <span className="pill grey">
+                            Live {score(item.liveCatalystScore)}
+                          </span>
+                        </div>
+
+                        <div className="engine-text">
+                          Category: <b>{label(item.newsCategory || "NO_NEWS")}</b>
+                          {" | "}
+                          Publisher: <b>{item.newsPublisher || "—"}</b>
+                          {" | "}
+                          Age: <b>{minutes(item.newsAgeMinutes)}</b>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
-        </div>
 
-        <div className="panel">
-          <h2>Negative Day</h2>
-
-          {negativeDay.length === 0 ? (
-            <div className="empty">No negative day signals right now.</div>
-          ) : (
-            <div className="list">
-              {negativeDay.map((item, index) => (
-                <div className="row" key={`${cleanTicker(item.ticker || item.symbol)}-neg-${index}`}>
-                  <div className="left">
-                    <TickerLink item={item} />
-                    {item.latestHeadline ? <div className="headline">{item.latestHeadline}</div> : null}
-                  </div>
-
-                  <span className={`light ${lightClass(item.light)}`}>
-                    {lightLabel(item.light)}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
+          <div className="footer-note">
+            Final test: speed up, volume up, spread stable or tighter, buyers control tape, support
+            identified, risk defined. What proves I am right? No proof = no trade.
+          </div>
         </div>
       </section>
     </main>
