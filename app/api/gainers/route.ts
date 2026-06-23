@@ -13,84 +13,53 @@ type NewsFreshness =
   | "STALE_NEWS"
   | "UNKNOWN_NEWS_AGE";
 
-type RankStatus =
-  | "NEW"
-  | "RANK_CLIMBER"
-  | "RANK_FADE"
-  | "HOLDING"
-  | "CONSISTENT_TOP_5";
-
-type ActionLabel =
-  | "NEW"
-  | "CLIMBING"
-  | "RUNNING"
-  | "SPRINTING"
-  | "HOLDING"
-  | "FADING"
-  | "WATCHING";
-
 type NewsCategory = "NO_NEWS" | "NEWS" | "PRESS_RELEASE" | "FILING_LIKE_NEWS";
+type DayLight = "POSITIVE_DAY" | "NEGATIVE_DAY";
+type DayBias = "POSITIVE_DAY" | "NEGATIVE_DAY" | "NO_DAY_SIGNAL";
 
-type PreviousScanEntry = {
-  rank: number;
-  gainPct: number;
-};
-
-type TrackerEntry = {
-  bestRank: number;
-  topFiveHits: number;
-  seenCount: number;
+type NewsCacheEntry = {
+  fetchedAt: number;
+  items: NewsArticle[];
 };
 
 type MemoryState = {
-  lastScan: Record<string, PreviousScanEntry>;
-  tracker: Record<string, TrackerEntry>;
+  newsCache: Record<string, NewsCacheEntry>;
 };
 
-type BaseRow = {
+type GainerItem = {
   ticker: string;
   symbol: string;
-  price: number;
-  previousClose: number;
   gainPct: number;
-  volume: number;
-  averageVolume: number;
-  relativeVolume: number;
-  dollarVolume: number;
 };
 
-type AlgoItem = BaseRow & {
-  rank: number;
-  currentRank: number;
-  previousRank: number | null;
-  rankChange: number | null;
-  bestRank: number;
-  topFiveHits: number;
-  seenCount: number;
-  rankStatus: RankStatus;
+type NewsArticle = {
+  title: string;
+  url: string;
+  publisher: string;
+  publishedUtc: string;
+  publishedMs: number | null;
+  freshness: NewsFreshness;
+  category: NewsCategory;
+  articleScore: number;
+};
 
-  priorGainPct: number | null;
-  gainChange: number;
-  algoPercent: number;
-
-  action: ActionLabel;
-  status: string;
-  observations: string[];
-
-  newsCategory: NewsCategory;
-  newsHeadline: string;
-  newsAgeMinutes: number | null;
-  newsFreshness: NewsFreshness;
-  isFreshCatalyst: boolean;
-  newsObservation: string;
+type NewsHunterItem = {
+  ticker: string;
+  symbol: string;
+  light: DayLight;
   newsUrl: string;
-  newsPublisher: string;
-  newsTime: string;
+  latestHeadline: string;
+  gainPct: number;
+  dayBiasScore: number;
+  todayArticleCount: number;
 };
 
-const SOURCE = "polygon-algo-runner-hunter";
-const MODE = "ALGO_RUNNER_HUNTER";
-const MEMORY_KEY = "__ALGO_RUNNER_HUNTER_MEMORY__";
+const SOURCE = "polygon-super-news-hunter";
+const MODE = "SUPER_NEWS_HUNTER";
+const MEMORY_KEY = "__SUPER_NEWS_HUNTER_MEMORY__";
+const NEWS_CACHE_TTL_MS = 60_000;
+const NEWS_LIMIT = 50;
+const LOOKBACK_DAYS = 5;
 
 function getApiKey(): string {
   return (
@@ -109,18 +78,11 @@ function getMemory(): MemoryState {
 
   if (!root[MEMORY_KEY]) {
     root[MEMORY_KEY] = {
-      lastScan: {},
-      tracker: {},
+      newsCache: {},
     };
   }
 
   return root[MEMORY_KEY] as MemoryState;
-}
-
-function resetMemory(): void {
-  const memory = getMemory();
-  memory.lastScan = {};
-  memory.tracker = {};
 }
 
 function num(value: unknown): number {
@@ -134,22 +96,6 @@ function str(value: unknown): string {
 
 function cleanTicker(value: unknown): string {
   return str(value).toUpperCase();
-}
-
-function round(value: number, decimals = 2): number {
-  if (!Number.isFinite(value)) return 0;
-  const factor = 10 ** decimals;
-  return Math.round(value * factor) / factor;
-}
-
-function boolParam(value: string | null, fallback: boolean): boolean {
-  if (value === null) return fallback;
-  const v = value.toLowerCase();
-
-  if (v === "true" || v === "1" || v === "yes") return true;
-  if (v === "false" || v === "0" || v === "no") return false;
-
-  return fallback;
 }
 
 function isObj(value: unknown): value is AnyObj {
@@ -179,23 +125,7 @@ function pickNumber(obj: unknown, paths: string[]): number {
   return 0;
 }
 
-function isJunkTicker(symbol: string): boolean {
-  const ticker = cleanTicker(symbol);
-
-  if (!ticker) return true;
-  if (ticker.includes(".") || ticker.includes("-") || ticker.length > 5) return true;
-
-  return (
-    ticker.endsWith("W") ||
-    ticker.endsWith("WS") ||
-    ticker.endsWith("WT") ||
-    ticker.endsWith("U") ||
-    ticker.endsWith("R") ||
-    ticker.endsWith("RT")
-  );
-}
-
-function getMarketMode(now = new Date()): string {
+function getEasternMinutes(now = new Date()): number {
   const formatter = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/New_York",
     hour: "2-digit",
@@ -206,143 +136,16 @@ function getMarketMode(now = new Date()): string {
   const parts = formatter.formatToParts(now);
   const hour = Number(parts.find((part) => part.type === "hour")?.value ?? "0");
   const minute = Number(parts.find((part) => part.type === "minute")?.value ?? "0");
-  const totalMinutes = hour * 60 + minute;
+  return hour * 60 + minute;
+}
+
+function getMarketMode(now = new Date()): string {
+  const totalMinutes = getEasternMinutes(now);
 
   if (totalMinutes < 4 * 60) return "OVERNIGHT";
   if (totalMinutes < 9 * 60 + 30) return "PREMARKET";
   if (totalMinutes < 16 * 60) return "REGULAR_HOURS";
   return "AFTER_HOURS";
-}
-
-function buildBaseRow(row: AnyObj): BaseRow {
-  const ticker = cleanTicker(row.ticker || row.symbol || row.T);
-
-  const price = pickNumber(row, [
-    "lastTrade.p",
-    "lastTrade.price",
-    "min.c",
-    "day.c",
-    "price",
-    "close",
-    "c",
-  ]);
-
-  const previousClose = pickNumber(row, [
-    "prevDay.c",
-    "previousClose",
-    "prevClose",
-    "pc",
-  ]);
-
-  const gainPct =
-    price > 0 && previousClose > 0
-      ? ((price - previousClose) / previousClose) * 100
-      : 0;
-
-  const volume = pickNumber(row, ["day.v", "volume", "v", "min.av", "min.v"]);
-
-  const averageVolume = pickNumber(row, [
-    "averagePremarketVolume",
-    "avgPremarketVolume",
-    "pmAvgVolume",
-    "averageVolume",
-    "avgVolume",
-    "day.av",
-  ]);
-
-  const relativeVolume = averageVolume > 0 ? volume / averageVolume : 0;
-  const dollarVolume = volume * price;
-
-  return {
-    ticker,
-    symbol: ticker,
-    price: round(price, 4),
-    previousClose: round(previousClose, 4),
-    gainPct: round(gainPct, 2),
-    volume: round(volume, 0),
-    averageVolume: round(averageVolume, 0),
-    relativeVolume: round(relativeVolume, 4),
-    dollarVolume: round(dollarVolume, 2),
-  };
-}
-
-function deriveRankStatus(
-  previousRank: number | null,
-  currentRank: number,
-  topFiveHits: number
-): RankStatus {
-  if (previousRank === null) return "NEW";
-  if (currentRank <= 5 && topFiveHits >= 3) return "CONSISTENT_TOP_5";
-  if (currentRank < previousRank) return "RANK_CLIMBER";
-  if (currentRank > previousRank) return "RANK_FADE";
-  return "HOLDING";
-}
-
-function deriveAction(
-  previousRank: number | null,
-  currentRank: number,
-  gainChange: number
-): ActionLabel {
-  if (previousRank === null) return "NEW";
-
-  const rankChange = previousRank - currentRank;
-
-  if (rankChange >= 5 && gainChange > 1.5) return "SPRINTING";
-  if (rankChange >= 3 && gainChange > 0.75) return "RUNNING";
-  if (currentRank < previousRank && gainChange > 0.25) return "CLIMBING";
-  if (currentRank === previousRank && gainChange >= -0.25 && gainChange <= 0.25) return "HOLDING";
-  if (currentRank > previousRank && gainChange < -0.25) return "FADING";
-  return "WATCHING";
-}
-
-function deriveStatus(
-  previousRank: number | null,
-  currentRank: number,
-  topFiveHits: number,
-  priorGainPct: number | null,
-  gainChange: number
-): string {
-  const gainFlat = priorGainPct !== null && gainChange >= -0.25 && gainChange <= 0.25;
-  const rankWorsened = previousRank !== null && currentRank > previousRank;
-  const rankImproved = previousRank !== null && currentRank < previousRank;
-
-  if (currentRank <= 5 && topFiveHits >= 3) return "CONSISTENT TOP 5";
-  if (previousRank === null) return "NEW";
-  if (rankImproved) return "RANK CLIMBER";
-  if (rankWorsened && gainChange < -0.25) return "PUMP LOSING CONTROL";
-  if (rankWorsened && gainFlat) return "RANK FADE";
-  if (rankWorsened) return "RANK FADE";
-  return "HOLDING";
-}
-
-function buildObservations(
-  previousRank: number | null,
-  currentRank: number,
-  topFiveHits: number,
-  priorGainPct: number | null,
-  gainChange: number
-): string[] {
-  const notes: string[] = [];
-
-  if (topFiveHits >= 3 && currentRank <= 5) {
-    notes.push("Holding top 5 across scans.");
-  }
-
-  if (previousRank === null) {
-    notes.push("New to this scan.");
-  } else if (currentRank < previousRank) {
-    notes.push(`Rank improved from #${previousRank} to #${currentRank}.`);
-  } else if (currentRank > previousRank) {
-    notes.push(`Rank faded from #${previousRank} to #${currentRank}.`);
-  } else {
-    notes.push("Holding rank across scans.");
-  }
-
-  if (priorGainPct !== null && gainChange >= -0.25 && gainChange <= 0.25) {
-    notes.push("Gain is flat since last scan.");
-  }
-
-  return notes;
 }
 
 function classifyNewsCategory(headline: string, publisher: string, url: string): NewsCategory {
@@ -383,148 +186,299 @@ function classifyNewsCategory(headline: string, publisher: string, url: string):
   return "NEWS";
 }
 
-function getNewsAgeData(newsTime: string): {
-  newsAgeMinutes: number | null;
-  newsFreshness: NewsFreshness;
+function getNewsFreshness(publishedMs: number | null): NewsFreshness {
+  if (!publishedMs) return "UNKNOWN_NEWS_AGE";
+
+  const ageMinutes = Math.round((Date.now() - publishedMs) / 60000);
+
+  if (!Number.isFinite(ageMinutes) || ageMinutes < 0) return "UNKNOWN_NEWS_AGE";
+  if (ageMinutes <= 90) return "FRESH_CATALYST";
+  if (ageMinutes <= 12 * 60) return "RECENT_CATALYST";
+  if (ageMinutes <= 24 * 60) return "BACKGROUND_NEWS";
+  return "STALE_NEWS";
+}
+
+function formatEasternDay(date: Date): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+function parsePublishedMs(value: string): number | null {
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function scoreArticle(title: string): number {
+  const text = title.toLowerCase();
+
+  const hardPositive = [
+    "fda",
+    "approval",
+    "cleared",
+    "phase 3",
+    "phase iii",
+    "topline",
+    "acquired",
+    "acquisition",
+    "merger",
+    "contract award",
+    "awarded contract",
+    "uplist",
+    "uplisting",
+  ];
+
+  const positive = [
+    "partnership",
+    "collaboration",
+    "agreement",
+    "strategic",
+    "patent",
+    "licensing",
+    "order",
+    "expansion",
+    "launch",
+    "grant",
+    "breakthrough",
+    "successful",
+    "guidance raised",
+    "earnings beat",
+  ];
+
+  const hardNegative = [
+    "offering",
+    "registered direct",
+    "shelf",
+    "atm",
+    "dilution",
+    "reverse split",
+    "delisting",
+    "bankruptcy",
+    "going concern",
+  ];
+
+  const negative = [
+    "lawsuit",
+    "guidance cut",
+    "miss earnings",
+    "downgrade",
+  ];
+
+  let score = 0;
+
+  for (const keyword of hardPositive) {
+    if (text.includes(keyword)) score += 2;
+  }
+
+  for (const keyword of positive) {
+    if (text.includes(keyword)) score += 1;
+  }
+
+  for (const keyword of hardNegative) {
+    if (text.includes(keyword)) score -= 2;
+  }
+
+  for (const keyword of negative) {
+    if (text.includes(keyword)) score -= 1;
+  }
+
+  return score;
+}
+
+async function fetchGainers(apiKey: string): Promise<GainerItem[]> {
+  const url =
+    `https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/gainers` +
+    `?apiKey=${encodeURIComponent(apiKey)}`;
+
+  const res = await fetch(url, {
+    method: "GET",
+    cache: "no-store",
+    headers: { Accept: "application/json" },
+  });
+
+  if (!res.ok) {
+    throw new Error(`Polygon movers request failed with status ${res.status}.`);
+  }
+
+  const json = (await res.json()) as AnyObj;
+  const rows = Array.isArray(json.tickers)
+    ? json.tickers
+    : Array.isArray(json.results)
+      ? json.results
+      : [];
+
+  return rows
+    .filter(isObj)
+    .map((row) => {
+      const ticker = cleanTicker(row.ticker || row.symbol || row.T);
+      const suppliedGain = pickNumber(row, [
+        "todaysChangePerc",
+        "changePercent",
+        "percentChange",
+        "gainPct",
+      ]);
+
+      const price = pickNumber(row, [
+        "lastTrade.p",
+        "lastTrade.price",
+        "day.c",
+        "min.c",
+        "price",
+        "close",
+        "c",
+      ]);
+
+      const previousClose = pickNumber(row, [
+        "prevDay.c",
+        "previousClose",
+        "prevClose",
+        "pc",
+      ]);
+
+      const gainPct =
+        suppliedGain !== 0
+          ? suppliedGain
+          : price > 0 && previousClose > 0
+            ? ((price - previousClose) / previousClose) * 100
+            : 0;
+
+      return {
+        ticker,
+        symbol: ticker,
+        gainPct,
+      };
+    })
+    .filter((item) => Boolean(item.ticker));
+}
+
+async function fetchTickerNewsRaw(ticker: string, apiKey: string): Promise<NewsArticle[]> {
+  const url =
+    `https://api.polygon.io/v2/reference/news?ticker=${encodeURIComponent(ticker)}` +
+    `&order=desc&sort=published_utc&limit=${NEWS_LIMIT}` +
+    `&apiKey=${encodeURIComponent(apiKey)}`;
+
+  const res = await fetch(url, {
+    method: "GET",
+    cache: "no-store",
+    headers: { Accept: "application/json" },
+  });
+
+  if (!res.ok) return [];
+
+  const json = (await res.json()) as { results?: unknown[] };
+  const results = Array.isArray(json.results) ? json.results : [];
+
+  return results
+    .filter(isObj)
+    .map((row) => {
+      const title = str(row.title);
+      const url = str(row.article_url || row.url);
+      const publishedUtc = str(row.published_utc);
+      const publisherObj = isObj(row.publisher) ? row.publisher : {};
+      const publisher = str(publisherObj.name || row.publisher || row.source);
+      const publishedMs = parsePublishedMs(publishedUtc);
+
+      return {
+        title,
+        url,
+        publisher,
+        publishedUtc,
+        publishedMs,
+        freshness: getNewsFreshness(publishedMs),
+        category: classifyNewsCategory(title, publisher, url),
+        articleScore: scoreArticle(title),
+      };
+    })
+    .filter((item) => Boolean(item.title || item.url));
+}
+
+async function fetchTickerNewsCached(
+  ticker: string,
+  apiKey: string,
+  memory: MemoryState
+): Promise<NewsArticle[]> {
+  const cached = memory.newsCache[ticker];
+
+  if (cached && Date.now() - cached.fetchedAt <= NEWS_CACHE_TTL_MS) {
+    return cached.items;
+  }
+
+  const items = await fetchTickerNewsRaw(ticker, apiKey);
+  memory.newsCache[ticker] = {
+    fetchedAt: Date.now(),
+    items,
+  };
+
+  return items;
+}
+
+function classifyDayBias(articles: NewsArticle[]): {
+  bias: DayBias;
+  dayBiasScore: number;
+  todayArticleCount: number;
+  latestHeadline: string;
+  latestUrl: string;
 } {
-  if (!newsTime) {
+  const now = new Date();
+  const todayEt = formatEasternDay(now);
+  const cutoffMs = now.getTime() - LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
+
+  const inLookback = articles
+    .filter((article) => article.publishedMs !== null && article.publishedMs >= cutoffMs)
+    .sort((a, b) => (b.publishedMs ?? 0) - (a.publishedMs ?? 0));
+
+  let todayScore = 0;
+  let priorScore = 0;
+  let todayArticleCount = 0;
+
+  for (const article of inLookback) {
+    const dayKey = article.publishedMs ? formatEasternDay(new Date(article.publishedMs)) : "";
+    if (dayKey === todayEt) {
+      todayScore += article.articleScore;
+      todayArticleCount += 1;
+    } else {
+      priorScore += article.articleScore;
+    }
+  }
+
+  const dayBiasScore = todayScore * 2 + priorScore;
+  const latest = inLookback[0];
+
+  if (dayBiasScore > 0) {
     return {
-      newsAgeMinutes: null,
-      newsFreshness: "UNKNOWN_NEWS_AGE",
+      bias: "POSITIVE_DAY",
+      dayBiasScore,
+      todayArticleCount,
+      latestHeadline: latest?.title || "",
+      latestUrl: latest?.url || "",
     };
   }
 
-  const publishedAt = new Date(newsTime).getTime();
-
-  if (!Number.isFinite(publishedAt)) {
+  if (dayBiasScore < 0) {
     return {
-      newsAgeMinutes: null,
-      newsFreshness: "UNKNOWN_NEWS_AGE",
-    };
-  }
-
-  const ageMinutes = Math.round((Date.now() - publishedAt) / 60000);
-
-  if (!Number.isFinite(ageMinutes) || ageMinutes < 0) {
-    return {
-      newsAgeMinutes: null,
-      newsFreshness: "UNKNOWN_NEWS_AGE",
-    };
-  }
-
-  if (ageMinutes <= 90) {
-    return {
-      newsAgeMinutes: ageMinutes,
-      newsFreshness: "FRESH_CATALYST",
-    };
-  }
-
-  if (ageMinutes <= 12 * 60) {
-    return {
-      newsAgeMinutes: ageMinutes,
-      newsFreshness: "RECENT_CATALYST",
-    };
-  }
-
-  if (ageMinutes <= 24 * 60) {
-    return {
-      newsAgeMinutes: ageMinutes,
-      newsFreshness: "BACKGROUND_NEWS",
+      bias: "NEGATIVE_DAY",
+      dayBiasScore,
+      todayArticleCount,
+      latestHeadline: latest?.title || "",
+      latestUrl: latest?.url || "",
     };
   }
 
   return {
-    newsAgeMinutes: null,
-    newsFreshness: "STALE_NEWS",
+    bias: "NO_DAY_SIGNAL",
+    dayBiasScore,
+    todayArticleCount,
+    latestHeadline: latest?.title || "",
+    latestUrl: latest?.url || "",
   };
-}
-
-function buildNewsObservation(newsFreshness: NewsFreshness): string {
-  if (newsFreshness === "FRESH_CATALYST" || newsFreshness === "RECENT_CATALYST") {
-    return "Possible live catalyst.";
-  }
-
-  return "Background news only — not confirmed as current move catalyst.";
-}
-
-async function fetchTickerNews(
-  ticker: string,
-  apiKey: string
-): Promise<{
-  newsCategory: NewsCategory;
-  newsHeadline: string;
-  newsAgeMinutes: number | null;
-  newsFreshness: NewsFreshness;
-  isFreshCatalyst: boolean;
-  newsObservation: string;
-  newsUrl: string;
-  newsPublisher: string;
-  newsTime: string;
-}> {
-  const fallback = {
-    newsCategory: "NO_NEWS" as NewsCategory,
-    newsHeadline: "",
-    newsAgeMinutes: null,
-    newsFreshness: "UNKNOWN_NEWS_AGE" as NewsFreshness,
-    isFreshCatalyst: false,
-    newsObservation: "",
-    newsUrl: "",
-    newsPublisher: "",
-    newsTime: "",
-  };
-
-  try {
-    if (!ticker || !apiKey) return fallback;
-
-    const url =
-      `https://api.polygon.io/v2/reference/news?ticker=${encodeURIComponent(ticker)}` +
-      `&order=desc&sort=published_utc&limit=1&apiKey=${encodeURIComponent(apiKey)}`;
-
-    const res = await fetch(url, {
-      method: "GET",
-      cache: "no-store",
-      headers: { Accept: "application/json" },
-    });
-
-    if (!res.ok) return fallback;
-
-    const json = (await res.json()) as { results?: unknown[] };
-    const first = Array.isArray(json.results) ? json.results.find(isObj) : undefined;
-
-    if (!first) return fallback;
-
-    const newsHeadline = str(first.title);
-    const newsUrl = str(first.article_url || first.url);
-    const newsTime = str(first.published_utc);
-    const publisherObj = isObj(first.publisher) ? first.publisher : {};
-    const newsPublisher = str(publisherObj.name || first.publisher || first.source);
-
-    if (!newsHeadline && !newsUrl) return fallback;
-
-    const newsCategory = classifyNewsCategory(newsHeadline, newsPublisher, newsUrl);
-    const { newsAgeMinutes, newsFreshness } = getNewsAgeData(newsTime);
-    const isFreshCatalyst =
-      newsFreshness === "FRESH_CATALYST" || newsFreshness === "RECENT_CATALYST";
-
-    return {
-      newsCategory,
-      newsHeadline,
-      newsAgeMinutes,
-      newsFreshness,
-      isFreshCatalyst,
-      newsObservation: buildNewsObservation(newsFreshness),
-      newsUrl,
-      newsPublisher,
-      newsTime,
-    };
-  } catch {
-    return fallback;
-  }
 }
 
 function buildEmptyPayload(message: string, startedAt: string) {
-  const runnerHunter: AlgoItem[] = [];
-  const leaderHunter: AlgoItem[] = [];
+  const positiveDay: NewsHunterItem[] = [];
+  const negativeDay: NewsHunterItem[] = [];
 
   return {
     ok: false,
@@ -537,34 +491,18 @@ function buildEmptyPayload(message: string, startedAt: string) {
     rawCount: 0,
     showing: 0,
     topTicker: null,
-    topAlgoPercent: 0,
-    runnerHunter,
-    leaderHunter,
+    positiveDay,
+    negativeDay,
     data: {
-      runnerHunter,
-      leaderHunter,
+      positiveDay,
+      negativeDay,
     },
   };
 }
 
-export async function GET(req: Request) {
+export async function GET() {
   const startedAt = new Date().toISOString();
   const apiKey = getApiKey();
-  const { searchParams } = new URL(req.url);
-
-  const minPrice = num(searchParams.get("minPrice")) || 0.1;
-  const maxPrice = num(searchParams.get("maxPrice")) || 10;
-  const minGain = num(searchParams.get("minGain")) || 0;
-  const maxGain = num(searchParams.get("maxGain")) || 120;
-  const minVolume = num(searchParams.get("minVolume")) || 0;
-  const runnerMaxRank = Math.max(6, Math.min(num(searchParams.get("runnerMaxRank")) || 30, 100));
-  const runnerLimit = Math.max(1, Math.min(num(searchParams.get("runnerLimit")) || 15, 50));
-  const removeJunk = boolParam(searchParams.get("removeJunk"), true);
-  const reset = boolParam(searchParams.get("resetMemory"), false);
-
-  if (reset) {
-    resetMemory();
-  }
 
   if (!apiKey) {
     return NextResponse.json(buildEmptyPayload("Missing POLYGON_API_KEY or MASSIVE_API_KEY.", startedAt), {
@@ -574,197 +512,62 @@ export async function GET(req: Request) {
   }
 
   try {
-    const url =
-      `https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers` +
-      `?apiKey=${encodeURIComponent(apiKey)}`;
-
-    const res = await fetch(url, {
-      method: "GET",
-      cache: "no-store",
-      headers: { Accept: "application/json" },
-    });
-
-    if (!res.ok) {
-      return NextResponse.json(
-        buildEmptyPayload(`Polygon request failed with status ${res.status}.`, startedAt),
-        {
-          status: 200,
-          headers: { "Cache-Control": "no-store, max-age=0" },
-        }
-      );
-    }
-
-    const json = (await res.json()) as AnyObj;
-
-    const rowsRaw = Array.isArray(json.tickers)
-      ? json.tickers
-      : Array.isArray(json.results)
-        ? json.results
-        : [];
-
     const memory = getMemory();
+    const gainers = await fetchGainers(apiKey);
 
-    const filteredUniverse = rowsRaw
-      .filter(isObj)
-      .map((row) => buildBaseRow(row))
-      .filter((item) => Boolean(item.ticker))
-      .filter((item) => !removeJunk || !isJunkTicker(item.ticker))
-      .filter((item) => item.price >= minPrice)
-      .filter((item) => item.price <= maxPrice)
-      .filter((item) => item.gainPct >= minGain)
-      .filter((item) => item.gainPct <= maxGain)
-      .filter((item) => item.volume >= minVolume)
-      .map((item) => {
-        const previous = memory.lastScan[item.ticker];
-        const priorGainPct = previous ? previous.gainPct : null;
-        const gainChange = priorGainPct === null ? 0 : item.gainPct - priorGainPct;
-        const algoPercent = item.gainPct + 2 * gainChange + 1.5 * item.relativeVolume;
+    const analyzed = await Promise.all(
+      gainers.map(async (gainer) => {
+        const articles = await fetchTickerNewsCached(gainer.ticker, apiKey, memory);
+        const bias = classifyDayBias(articles);
+
+        if (bias.bias === "NO_DAY_SIGNAL") {
+          return null;
+        }
 
         return {
-          ...item,
-          previousRank: previous ? previous.rank : null,
-          priorGainPct,
-          gainChange,
-          algoPercent,
-        };
+          ticker: gainer.ticker,
+          symbol: gainer.symbol,
+          light: bias.bias,
+          newsUrl: bias.latestUrl,
+          latestHeadline: bias.latestHeadline,
+          gainPct: gainer.gainPct,
+          dayBiasScore: bias.dayBiasScore,
+          todayArticleCount: bias.todayArticleCount,
+        } satisfies NewsHunterItem;
+      })
+    );
+
+    const filtered = analyzed.filter((item): item is NewsHunterItem => item !== null);
+
+    const positiveDay = filtered
+      .filter((item) => item.light === "POSITIVE_DAY")
+      .sort((a, b) => {
+        if (Math.abs(b.dayBiasScore) !== Math.abs(a.dayBiasScore)) {
+          return Math.abs(b.dayBiasScore) - Math.abs(a.dayBiasScore);
+        }
+        if (b.todayArticleCount !== a.todayArticleCount) {
+          return b.todayArticleCount - a.todayArticleCount;
+        }
+        if (b.gainPct !== a.gainPct) {
+          return b.gainPct - a.gainPct;
+        }
+        return a.ticker.localeCompare(b.ticker);
       });
 
-    filteredUniverse.sort((a, b) => {
-      if (b.gainPct !== a.gainPct) return b.gainPct - a.gainPct;
-      if (b.gainChange !== a.gainChange) return b.gainChange - a.gainChange;
-      if (b.volume !== a.volume) return b.volume - a.volume;
-      return a.ticker.localeCompare(b.ticker);
-    });
-
-    const nextLastScan: Record<string, PreviousScanEntry> = {};
-
-    const rankedUniverse: AlgoItem[] = filteredUniverse.map((item, index) => {
-      const currentRank = index + 1;
-      const tracker = memory.tracker[item.ticker];
-      const seenCount = (tracker?.seenCount ?? 0) + 1;
-      const topFiveHits = (tracker?.topFiveHits ?? 0) + (currentRank <= 5 ? 1 : 0);
-      const bestRank = tracker ? Math.min(tracker.bestRank, currentRank) : currentRank;
-      const rankChange = item.previousRank === null ? null : item.previousRank - currentRank;
-      const rankStatus = deriveRankStatus(item.previousRank, currentRank, topFiveHits);
-      const action = deriveAction(item.previousRank, currentRank, item.gainChange);
-      const status = deriveStatus(
-        item.previousRank,
-        currentRank,
-        topFiveHits,
-        item.priorGainPct,
-        item.gainChange
-      );
-      const observations = buildObservations(
-        item.previousRank,
-        currentRank,
-        topFiveHits,
-        item.priorGainPct,
-        item.gainChange
-      );
-
-      memory.tracker[item.ticker] = {
-        bestRank,
-        topFiveHits,
-        seenCount,
-      };
-
-      nextLastScan[item.ticker] = {
-        rank: currentRank,
-        gainPct: item.gainPct,
-      };
-
-      return {
-        rank: currentRank,
-        currentRank,
-        previousRank: item.previousRank,
-        rankChange,
-        bestRank,
-        topFiveHits,
-        seenCount,
-        rankStatus,
-
-        ticker: item.ticker,
-        symbol: item.symbol,
-        price: item.price,
-        previousClose: item.previousClose,
-
-        gainPct: round(item.gainPct, 2),
-        priorGainPct: item.priorGainPct === null ? null : round(item.priorGainPct, 2),
-        gainChange: round(item.gainChange, 2),
-
-        volume: round(item.volume, 0),
-        averageVolume: round(item.averageVolume, 0),
-        relativeVolume: round(item.relativeVolume, 4),
-        dollarVolume: round(item.dollarVolume, 2),
-
-        algoPercent: round(item.algoPercent, 2),
-
-        action,
-        status,
-        observations,
-
-        newsCategory: "NO_NEWS",
-        newsHeadline: "",
-        newsAgeMinutes: null,
-        newsFreshness: "UNKNOWN_NEWS_AGE",
-        isFreshCatalyst: false,
-        newsObservation: "",
-        newsUrl: "",
-        newsPublisher: "",
-        newsTime: "",
-      };
-    });
-
-    memory.lastScan = nextLastScan;
-
-    const leadersBase = rankedUniverse
-      .filter((item) => item.currentRank <= 5)
-      .sort((a, b) => a.currentRank - b.currentRank);
-
-    const runnersBase = rankedUniverse
-      .filter((item) => item.currentRank > 5 && item.currentRank <= runnerMaxRank)
+    const negativeDay = filtered
+      .filter((item) => item.light === "NEGATIVE_DAY")
       .sort((a, b) => {
-        if (b.algoPercent !== a.algoPercent) return b.algoPercent - a.algoPercent;
-        if (b.gainChange !== a.gainChange) return b.gainChange - a.gainChange;
-        if ((b.rankChange ?? -999) !== (a.rankChange ?? -999)) {
-          return (b.rankChange ?? -999) - (a.rankChange ?? -999);
+        if (Math.abs(b.dayBiasScore) !== Math.abs(a.dayBiasScore)) {
+          return Math.abs(b.dayBiasScore) - Math.abs(a.dayBiasScore);
         }
-        if (b.volume !== a.volume) return b.volume - a.volume;
+        if (b.todayArticleCount !== a.todayArticleCount) {
+          return b.todayArticleCount - a.todayArticleCount;
+        }
+        if (b.gainPct !== a.gainPct) {
+          return b.gainPct - a.gainPct;
+        }
         return a.ticker.localeCompare(b.ticker);
-      })
-      .slice(0, runnerLimit);
-
-    const uniqueTickers = Array.from(
-      new Set([...leadersBase, ...runnersBase].map((item) => item.ticker).filter(Boolean))
-    );
-
-    const newsMap = new Map<string, Awaited<ReturnType<typeof fetchTickerNews>>>();
-
-    await Promise.all(
-      uniqueTickers.map(async (ticker) => {
-        newsMap.set(ticker, await fetchTickerNews(ticker, apiKey));
-      })
-    );
-
-    const attachNews = (item: AlgoItem): AlgoItem => {
-      const news = newsMap.get(item.ticker);
-
-      if (!news) return item;
-
-      const observations = [...item.observations];
-      if (news.newsObservation) {
-        observations.push(news.newsObservation);
-      }
-
-      return {
-        ...item,
-        ...news,
-        observations,
-      };
-    };
-
-    const leaderHunter = leadersBase.map(attachNews);
-    const runnerHunter = runnersBase.map(attachNews);
+      });
 
     return NextResponse.json(
       {
@@ -774,25 +577,38 @@ export async function GET(req: Request) {
         marketMode: getMarketMode(),
         startedAt,
         finishedAt: new Date().toISOString(),
-        filters: {
-          minPrice,
-          maxPrice,
-          minGain,
-          maxGain,
-          minVolume,
-          runnerMaxRank,
-          runnerLimit,
-          removeJunk,
-        },
-        rawCount: rowsRaw.length,
-        showing: runnerHunter.length + leaderHunter.length,
-        topTicker: runnerHunter[0]?.ticker || leaderHunter[0]?.ticker || null,
-        topAlgoPercent: runnerHunter[0]?.algoPercent || leaderHunter[0]?.algoPercent || 0,
-        runnerHunter,
-        leaderHunter,
+        rawCount: gainers.length,
+        showing: positiveDay.length + negativeDay.length,
+        topTicker: positiveDay[0]?.ticker || negativeDay[0]?.ticker || null,
+        positiveDay: positiveDay.map((item) => ({
+          ticker: item.ticker,
+          symbol: item.symbol,
+          light: item.light,
+          newsUrl: item.newsUrl,
+          latestHeadline: item.latestHeadline,
+        })),
+        negativeDay: negativeDay.map((item) => ({
+          ticker: item.ticker,
+          symbol: item.symbol,
+          light: item.light,
+          newsUrl: item.newsUrl,
+          latestHeadline: item.latestHeadline,
+        })),
         data: {
-          runnerHunter,
-          leaderHunter,
+          positiveDay: positiveDay.map((item) => ({
+            ticker: item.ticker,
+            symbol: item.symbol,
+            light: item.light,
+            newsUrl: item.newsUrl,
+            latestHeadline: item.latestHeadline,
+          })),
+          negativeDay: negativeDay.map((item) => ({
+            ticker: item.ticker,
+            symbol: item.symbol,
+            light: item.light,
+            newsUrl: item.newsUrl,
+            latestHeadline: item.latestHeadline,
+          })),
         },
       },
       {
