@@ -1,555 +1,743 @@
+// app/api/gainers/route.ts
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-const SOURCE = "crypto-structure-elite6";
+type AnyObj = Record<string, unknown>;
 
-const COINS = [
-  "bitcoin",
-  "ethereum",
-  "solana",
-  "ripple",
-  "dogecoin",
-  "avalanche-2",
-  "chainlink",
-  "cardano",
-  "polkadot",
-  "polygon-ecosystem-token",
-  "near",
-  "litecoin",
-  "bitcoin-cash",
-  "stellar",
-  "render-token"
-];
+type NewsFreshness =
+  | "FRESH_CATALYST"
+  | "RECENT_CATALYST"
+  | "BACKGROUND_NEWS"
+  | "STALE_NEWS"
+  | "UNKNOWN_NEWS_AGE";
 
-const SYMBOL_MAP: Record<string, string> = {
-  bitcoin: "BTC",
-  ethereum: "ETH",
-  solana: "SOL",
-  ripple: "XRP",
-  dogecoin: "DOGE",
-  "avalanche-2": "AVAX",
-  chainlink: "LINK",
-  cardano: "ADA",
-  polkadot: "DOT",
-  "polygon-ecosystem-token": "POL",
-  near: "NEAR",
-  litecoin: "LTC",
-  "bitcoin-cash": "BCH",
-  stellar: "XLM",
-  "render-token": "RENDER"
+type NewsCategory = "NO_NEWS" | "NEWS" | "PRESS_RELEASE" | "FILING_LIKE_NEWS";
+
+type DollarBand = "APPROACHING_1" | "AT_1" | "ABOVE_1";
+
+type RubiconItem = {
+  ticker: string;
+  symbol: string;
+  price: number;
+  previousClose: number;
+  gainPct: number;
+  volume: number;
+  averageVolume: number;
+  relativeVolume: number;
+  dollarVolume: number;
+
+  dollarBand: DollarBand;
+  dollarDistance: number;
+  rubiconScore: number;
+
+  lastTradeTimestampMs: number | null;
+  quoteAgeMinutes: number | null;
+  isFreshTrade: boolean;
+
+  newsHeadline: string;
+  newsUrl: string;
+  newsPublisher: string;
+  newsCategory: NewsCategory;
+  newsFreshness: NewsFreshness;
+  newsAgeMinutes: number | null;
+
+  catalystScore: number;
+  catalystLabel: string;
+  catalystNote: string;
+  isStrongPositiveCatalyst: boolean;
 };
 
-function num(v: any) {
-  const n = Number(v);
+const SOURCE = "polygon-rubicon-hunter";
+const MODE = "RUBICON_HUNTER";
+
+function getApiKey(): string {
+  return (
+    process.env.POLYGON_API_KEY ||
+    process.env.MASSIVE_API_KEY ||
+    process.env.NEXT_PUBLIC_POLYGON_API_KEY ||
+    process.env.NEXT_PUBLIC_MASSIVE_API_KEY ||
+    ""
+  );
+}
+
+function num(value: unknown): number {
+  const n = Number(value);
   return Number.isFinite(n) ? n : 0;
 }
 
-function clamp(v: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, v));
+function str(value: unknown): string {
+  return String(value ?? "").trim();
 }
 
-function round(v: number, places = 4) {
-  const p = Math.pow(10, places);
-  return Math.round(num(v) * p) / p;
+function cleanTicker(value: unknown): string {
+  return str(value).toUpperCase();
 }
 
-function gainBand(gain: number) {
-  if (gain >= 18) return "CRYPTO HEATED";
-  if (gain >= 10) return "CRYPTO LATE CAUTION";
-  if (gain >= 5) return "CRYPTO STRUCTURED GAINER";
-  if (gain >= 2) return "CRYPTO EARLY WATCH";
-  if (gain >= 0.5) return "CRYPTO FRESH IGNITION";
-  return "CRYPTO FLAT / BASE";
+function round(value: number, decimals = 2): number {
+  if (!Number.isFinite(value)) return 0;
+  const factor = 10 ** decimals;
+  return Math.round(value * factor) / factor;
 }
 
-function buildStructureLocation(price: number, support: number, resistance: number) {
-  const range = resistance - support;
+function boolParam(value: string | null, fallback: boolean): boolean {
+  if (value === null) return fallback;
+  const v = value.toLowerCase();
 
-  if (!price || !support || !resistance || range <= 0) {
+  if (v === "true" || v === "1" || v === "yes") return true;
+  if (v === "false" || v === "0" || v === "no") return false;
+
+  return fallback;
+}
+
+function isObj(value: unknown): value is AnyObj {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function getPath(obj: unknown, path: string): unknown {
+  if (!isObj(obj)) return undefined;
+
+  let current: unknown = obj;
+
+  for (const part of path.split(".")) {
+    if (!isObj(current)) return undefined;
+    current = current[part];
+  }
+
+  return current;
+}
+
+function pickNumber(obj: unknown, paths: string[]): number {
+  for (const path of paths) {
+    const value = getPath(obj, path);
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+
+  return 0;
+}
+
+function isJunkTicker(symbol: string): boolean {
+  const ticker = cleanTicker(symbol);
+
+  if (!ticker) return true;
+  if (ticker.includes(".") || ticker.includes("-") || ticker.length > 5) return true;
+
+  return (
+    ticker.endsWith("W") ||
+    ticker.endsWith("WS") ||
+    ticker.endsWith("WT") ||
+    ticker.endsWith("U") ||
+    ticker.endsWith("R") ||
+    ticker.endsWith("RT")
+  );
+}
+
+function getEasternMinutes(now = new Date()): number {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+
+  const parts = formatter.formatToParts(now);
+  const hour = Number(parts.find((part) => part.type === "hour")?.value ?? "0");
+  const minute = Number(parts.find((part) => part.type === "minute")?.value ?? "0");
+  return hour * 60 + minute;
+}
+
+function getMarketMode(now = new Date()): string {
+  const totalMinutes = getEasternMinutes(now);
+
+  if (totalMinutes < 4 * 60) return "OVERNIGHT";
+  if (totalMinutes < 9 * 60 + 30) return "PREMARKET";
+  if (totalMinutes < 16 * 60) return "REGULAR_HOURS";
+  return "AFTER_HOURS";
+}
+
+function getMaxTradeAgeMinutes(now = new Date()): number {
+  const totalMinutes = getEasternMinutes(now);
+
+  if (totalMinutes >= 4 * 60 && totalMinutes < 8 * 60) return 10;
+  if (totalMinutes >= 8 * 60 && totalMinutes < 9 * 60 + 30) return 15;
+  if (totalMinutes >= 9 * 60 + 30 && totalMinutes < 16 * 60) return 15;
+  return 20;
+}
+
+function normalizeTimestampMs(raw: unknown): number | null {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return null;
+
+  if (n > 1e18) return Math.round(n / 1_000_000);
+  if (n > 1e15) return Math.round(n / 1_000);
+  if (n > 1e12) return Math.round(n);
+  if (n > 1e9) return Math.round(n * 1000);
+
+  return null;
+}
+
+function getQuoteAgeMinutes(lastTradeTimestampMs: number | null): number | null {
+  if (!lastTradeTimestampMs) return null;
+
+  const ageMs = Date.now() - lastTradeTimestampMs;
+  if (!Number.isFinite(ageMs) || ageMs < 0) return null;
+
+  return Math.round(ageMs / 60000);
+}
+
+function getDollarBand(price: number): DollarBand {
+  if (price < 0.99) return "APPROACHING_1";
+  if (price <= 1.01) return "AT_1";
+  return "ABOVE_1";
+}
+
+function classifyNewsCategory(headline: string, publisher: string, url: string): NewsCategory {
+  const text = `${headline} ${publisher} ${url}`.toLowerCase();
+
+  const filingLike = [
+    "8-k",
+    "10-q",
+    "10-k",
+    "s-1",
+    "s-3",
+    "424b",
+    "prospectus",
+    "offering",
+    "shelf",
+    "registration",
+    "reverse split",
+    "atm",
+    "edgar",
+  ].some((value) => text.includes(value));
+
+  if (filingLike) return "FILING_LIKE_NEWS";
+
+  const pressLike = [
+    "globenewswire",
+    "pr newswire",
+    "business wire",
+    "accesswire",
+    "press release",
+    "announces",
+    "reports",
+    "launches",
+    "receives",
+    "agreement",
+  ].some((value) => text.includes(value));
+
+  if (pressLike) return "PRESS_RELEASE";
+  return "NEWS";
+}
+
+function getNewsAgeData(newsTime: string): {
+  newsAgeMinutes: number | null;
+  newsFreshness: NewsFreshness;
+} {
+  if (!newsTime) {
     return {
-      structurePosition: 0,
-      structureLocation: "UNKNOWN",
-      structureLocationScore: 0,
-      riskLocation: "NO CLEAN RANGE"
+      newsAgeMinutes: null,
+      newsFreshness: "UNKNOWN_NEWS_AGE",
     };
   }
 
-  const position = (price - support) / range;
+  const publishedAt = new Date(newsTime).getTime();
 
-  let structureLocation = "UNKNOWN";
-  let structureLocationScore = 0;
-  let riskLocation = "WAIT";
+  if (!Number.isFinite(publishedAt)) {
+    return {
+      newsAgeMinutes: null,
+      newsFreshness: "UNKNOWN_NEWS_AGE",
+    };
+  }
 
-  if (position < 0) {
-    structureLocation = "BELOW SUPPORT";
-    structureLocationScore = -40;
-    riskLocation = "SUPPORT BROKEN";
-  } else if (position <= 0.25) {
-    structureLocation = "NEAR SUPPORT";
-    structureLocationScore = 24;
-    riskLocation = "BEST RISK LOCATION";
-  } else if (position <= 0.6) {
-    structureLocation = "HEALTHY MIDDLE";
-    structureLocationScore = 17;
-    riskLocation = "CONTROLLED RISK";
-  } else if (position <= 0.9) {
-    structureLocation = "NEAR RESISTANCE";
-    structureLocationScore = -6;
-    riskLocation = "WAIT FOR CONFIRMATION";
-  } else if (position <= 1.1) {
-    structureLocation = "BREAKOUT ZONE";
-    structureLocationScore = -12;
-    riskLocation = "PROOF REQUIRED";
-  } else if (position <= 1.3) {
-    structureLocation = "EXTENDED ABOVE RESISTANCE";
-    structureLocationScore = -28;
-    riskLocation = "CHASE RISK";
-  } else {
-    structureLocation = "OVEREXTENDED";
-    structureLocationScore = -42;
-    riskLocation = "DO NOT CHASE";
+  const ageMinutes = Math.round((Date.now() - publishedAt) / 60000);
+
+  if (!Number.isFinite(ageMinutes) || ageMinutes < 0) {
+    return {
+      newsAgeMinutes: null,
+      newsFreshness: "UNKNOWN_NEWS_AGE",
+    };
+  }
+
+  if (ageMinutes <= 90) {
+    return {
+      newsAgeMinutes: ageMinutes,
+      newsFreshness: "FRESH_CATALYST",
+    };
+  }
+
+  if (ageMinutes <= 12 * 60) {
+    return {
+      newsAgeMinutes: ageMinutes,
+      newsFreshness: "RECENT_CATALYST",
+    };
+  }
+
+  if (ageMinutes <= 24 * 60) {
+    return {
+      newsAgeMinutes: ageMinutes,
+      newsFreshness: "BACKGROUND_NEWS",
+    };
   }
 
   return {
-    structurePosition: round(position, 3),
-    structureLocation,
-    structureLocationScore,
-    riskLocation
+    newsAgeMinutes: null,
+    newsFreshness: "STALE_NEWS",
   };
 }
 
-function buildEntries(support: number, resistance: number, price: number, structureLocation: string) {
-  const range = Math.max(0, resistance - support);
+function scoreCatalystHeadline(headline: string): {
+  score: number;
+  label: string;
+  note: string;
+  isStrongPositive: boolean;
+} {
+  const text = headline.toLowerCase();
 
-  const supportEntry = support > 0 ? support * 1.01 : price;
-  const middleEntry = range > 0 ? support + range * 0.5 : price;
-  const breakoutProofEntry = resistance > 0 ? resistance * 1.015 : price * 1.015;
-
-  let bestEntry = price;
-  let entryType = "WAIT";
-  let waitFor = "WAIT FOR CLEAN STRUCTURE";
-
-  if (structureLocation === "NEAR SUPPORT") {
-    bestEntry = supportEntry;
-    entryType = "SUPPORT ENTRY";
-    waitFor = "WAIT FOR SUPPORT HOLD + SPEED / VOLUME / SPREAD";
-  } else if (structureLocation === "HEALTHY MIDDLE") {
-    bestEntry = middleEntry;
-    entryType = "HEALTHY MIDDLE ENTRY";
-    waitFor = "WAIT FOR BUYERS HOLDING MIDDLE";
-  } else if (structureLocation === "NEAR RESISTANCE" || structureLocation === "BREAKOUT ZONE") {
-    bestEntry = breakoutProofEntry;
-    entryType = "BREAKOUT PROOF ENTRY";
-    waitFor = "WAIT ABOVE RESISTANCE FOR PROOF";
-  } else if (
-    structureLocation === "BELOW SUPPORT" ||
-    structureLocation === "EXTENDED ABOVE RESISTANCE" ||
-    structureLocation === "OVEREXTENDED"
-  ) {
-    bestEntry = breakoutProofEntry;
-    entryType = "NO TOUCH";
-    waitFor = "NO CLEAN ENTRY";
-  }
-
-  return {
-    supportEntry: round(supportEntry),
-    middleEntry: round(middleEntry),
-    breakoutProofEntry: round(breakoutProofEntry),
-    bestEntry: round(bestEntry),
-    entryType,
-    waitFor
-  };
-}
-
-function buildMath(args: {
-  price: number;
-  gain24h: number;
-  gain1h: number;
-  volume: number;
-  volumeRank: number;
-  structureLocation: string;
-}) {
-  const speed = clamp(
-    Math.round(Math.abs(args.gain1h) * 14 + Math.abs(args.gain24h) * 3.2 + args.volumeRank * 8),
-    0,
-    100
-  );
-
-  const speedLabel =
-    speed >= 85 ? "VIOLENT" :
-    speed >= 65 ? "FAST" :
-    speed >= 40 ? "ACTIVE" :
-    "SLOW";
-
-  const volumeOk = args.volume >= 100000000;
-  const speedOk = speed >= 40;
-  const spreadOk = true;
-  const signalAlignment = (speedOk ? 1 : 0) + (volumeOk ? 1 : 0) + 1;
-
-  const supportEntryZone =
-    args.structureLocation === "NEAR SUPPORT" ||
-    args.structureLocation === "HEALTHY MIDDLE";
-
-  const resistanceProofZone =
-    args.structureLocation === "NEAR RESISTANCE" ||
-    args.structureLocation === "BREAKOUT ZONE";
-
-  const brokenOrExtended =
-    args.structureLocation === "BELOW SUPPORT" ||
-    args.structureLocation === "EXTENDED ABOVE RESISTANCE" ||
-    args.structureLocation === "OVEREXTENDED";
-
-  let locationScore = 0;
-
-  if (args.structureLocation === "NEAR SUPPORT") locationScore = 30;
-  else if (args.structureLocation === "HEALTHY MIDDLE") locationScore = 22;
-  else if (args.structureLocation === "NEAR RESISTANCE") locationScore = -16;
-  else if (args.structureLocation === "BREAKOUT ZONE") locationScore = -24;
-  else if (args.structureLocation === "EXTENDED ABOVE RESISTANCE") locationScore = -38;
-  else if (args.structureLocation === "OVEREXTENDED") locationScore = -52;
-  else if (args.structureLocation === "BELOW SUPPORT") locationScore = -55;
-
-  const speedScore = clamp(speed * 0.32, 0, 32);
-  const volumeScore = clamp(Math.log10(args.volume + 1) * 2.8, 0, 28);
-  const gainScore = clamp(args.gain24h * 2.2, -20, 28);
-  const oneHourScore = clamp(args.gain1h * 6, -18, 24);
-
-  let bottomIgnitionScore = clamp(
-    Math.round(8 + speedScore + volumeScore + oneHourScore + gainScore + locationScore),
-    0,
-    100
-  );
-
-  if (!supportEntryZone) {
-    bottomIgnitionScore = Math.min(bottomIgnitionScore, resistanceProofZone ? 58 : 42);
-  }
-
-  if (brokenOrExtended || args.gain24h >= 18) {
-    bottomIgnitionScore = Math.min(bottomIgnitionScore, 39);
-  }
-
-  let gainerStructureScore = clamp(
-    Math.round(
-      8 +
-        speedScore * 0.85 +
-        volumeScore +
-        gainScore * 1.15 +
-        oneHourScore * 0.75 +
-        (resistanceProofZone ? 8 : 0) +
-        (supportEntryZone ? 10 : 0)
-    ),
-    0,
-    100
-  );
-
-  if (brokenOrExtended || args.gain24h >= 18) {
-    gainerStructureScore = Math.min(gainerStructureScore, 49);
-  }
-
-  const runnerScore = clamp(Math.max(bottomIgnitionScore, gainerStructureScore), 0, 100);
-
-  let proofScore = clamp(
-    Math.round(runnerScore * 0.62 + signalAlignment * 6 + (supportEntryZone ? 8 : 0)),
-    0,
-    100
-  );
-
-  if (resistanceProofZone) proofScore = Math.min(proofScore, 79);
-  if (brokenOrExtended || args.gain24h >= 18) proofScore = Math.min(proofScore, 49);
-
-  const runnerLane =
-    bottomIgnitionScore >= gainerStructureScore + 8
-      ? "CRYPTO BOTTOM / MIDDLE IGNITION"
-      : gainerStructureScore >= bottomIgnitionScore + 8
-      ? "CRYPTO ALREADY-UP STRUCTURE"
-      : "CRYPTO BALANCED STRUCTURE";
-
-  return {
-    speed,
-    speedLabel,
-    speedOk,
-    volumeOk,
-    spreadOk,
-    signalAlignment,
-    supportEntryZone,
-    resistanceProofZone,
-    brokenOrExtended,
-    bottomIgnitionScore,
-    gainerStructureScore,
-    runnerScore,
-    proofScore,
-    runnerLane
-  };
-}
-
-function backupCoins() {
-  const base = [
-    ["bitcoin", "BTC", 65000, 1.2, 0.2, 31000000000],
-    ["ethereum", "ETH", 3400, 1.8, 0.4, 18000000000],
-    ["solana", "SOL", 145, 3.2, 0.7, 4200000000],
-    ["ripple", "XRP", 0.58, 2.1, 0.3, 2100000000],
-    ["dogecoin", "DOGE", 0.125, 2.8, 0.5, 1900000000],
-    ["avalanche-2", "AVAX", 28, 2.4, 0.4, 900000000],
-    ["chainlink", "LINK", 15.5, 1.9, 0.2, 800000000],
-    ["cardano", "ADA", 0.44, 1.5, 0.1, 700000000],
-    ["polkadot", "DOT", 6.2, 1.1, 0.1, 450000000],
-    ["near", "NEAR", 5.1, 2.2, 0.3, 500000000]
+  const veryStrong = [
+    "fda",
+    "approval",
+    "cleared",
+    "phase 3",
+    "phase iii",
+    "topline",
+    "acquired",
+    "acquisition",
+    "merger",
+    "awarded contract",
+    "contract award",
+    "uplist",
+    "uplisting",
   ];
 
-  return base.map(([id, symbol, price, gain24h, gain1h, volume]) => {
-    const p = Number(price);
+  const strong = [
+    "partnership",
+    "collaboration",
+    "agreement",
+    "strategic",
+    "patent",
+    "licensing",
+    "order",
+    "expansion",
+    "launch",
+    "guidance raised",
+    "earnings beat",
+    "beats earnings",
+    "breakthrough",
+    "grant",
+  ];
+
+  const hardNegative = [
+    "offering",
+    "registered direct",
+    "shelf",
+    "atm",
+    "dilution",
+    "reverse split",
+    "delisting",
+    "bankruptcy",
+    "going concern",
+  ];
+
+  const negative = [
+    "lawsuit",
+    "miss earnings",
+    "guidance cut",
+  ];
+
+  let score = 0;
+
+  for (const keyword of veryStrong) {
+    if (text.includes(keyword)) score += 5;
+  }
+
+  for (const keyword of strong) {
+    if (text.includes(keyword)) score += 3;
+  }
+
+  for (const keyword of hardNegative) {
+    if (text.includes(keyword)) score -= 6;
+  }
+
+  for (const keyword of negative) {
+    if (text.includes(keyword)) score -= 3;
+  }
+
+  const isStrongPositive = score >= 5;
+
+  if (score >= 8) {
     return {
-      id,
-      symbol,
-      name: String(id),
-      current_price: p,
-      price_change_percentage_24h: Number(gain24h),
-      price_change_percentage_1h_in_currency: Number(gain1h),
-      total_volume: Number(volume),
-      high_24h: p * 1.035,
-      low_24h: p * 0.965,
-      last_updated: new Date().toISOString()
+      score,
+      label: "VERY STRONG",
+      note: "Headline reads like a strong positive catalyst.",
+      isStrongPositive,
     };
-  });
-}
-
-async function fetchCryptoMarkets() {
-  const url =
-    "https://api.coingecko.com/api/v3/coins/markets" +
-    `?vs_currency=usd` +
-    `&ids=${COINS.join(",")}` +
-    `&order=volume_desc` +
-    `&per_page=20` +
-    `&page=1` +
-    `&sparkline=false` +
-    `&price_change_percentage=1h,24h,7d` +
-    `&precision=full`;
-
-  const res = await fetch(url, {
-    cache: "no-store",
-    headers: {
-      accept: "application/json",
-      "user-agent": "proof-of-structure-elite6"
-    }
-  });
-
-  if (!res.ok) throw new Error(`CoinGecko failed ${res.status}`);
-
-  const json = await res.json();
-  return Array.isArray(json) ? json : [];
-}
-
-function enrichCoin(raw: any, index: number) {
-  const id = String(raw?.id || "");
-  const symbol = String(raw?.symbol || "").toUpperCase();
-  const ticker = SYMBOL_MAP[id] || symbol || id.toUpperCase();
-
-  const price = num(raw?.current_price);
-  const gain24h = num(raw?.price_change_percentage_24h_in_currency ?? raw?.price_change_percentage_24h);
-  const gain1h = num(raw?.price_change_percentage_1h_in_currency);
-  const change = num(raw?.price_change_24h);
-  const volume = num(raw?.total_volume);
-
-  let high = num(raw?.high_24h);
-  let low = num(raw?.low_24h);
-
-  if (!high || !low || high <= low) {
-    high = price * 1.025;
-    low = price * 0.975;
   }
 
-  const support = round(low);
-  const resistance = round(high);
-  const structure = buildStructureLocation(price, support, resistance);
-  const entries = buildEntries(support, resistance, price, structure.structureLocation);
-
-  const volumeRank = clamp((20 - index) / 20, 0, 1);
-
-  const math = buildMath({
-    price,
-    gain24h,
-    gain1h,
-    volume,
-    volumeRank,
-    structureLocation: structure.structureLocation
-  });
-
-  const stop = support;
-  const target1 = resistance * 1.05;
-  const target2 = resistance * 1.1;
-  const target3 = resistance * 1.18;
-
-  const risk = Math.max(0, entries.breakoutProofEntry - stop);
-  const reward = Math.max(0, target1 - entries.breakoutProofEntry);
-  const rr = risk > 0 ? reward / risk : 0;
-
-  let verdict = "NO";
-  let rejection = "";
-
-  if (math.brokenOrExtended) {
-    verdict = "NO";
-    rejection = structure.riskLocation;
-  } else if (gain24h >= 18) {
-    verdict = "NO";
-    rejection = "CRYPTO OVERHEATED";
-  } else if (volume < 50000000) {
-    verdict = "NO";
-    rejection = "LOW CRYPTO VOLUME";
-  } else if (math.supportEntryZone && math.proofScore >= 75 && math.signalAlignment >= 2) {
-    verdict = "YES";
-  } else if (math.resistanceProofZone && math.proofScore >= 55) {
-    verdict = "WAIT";
-    rejection = "WAIT ABOVE RESISTANCE";
-  } else if (math.proofScore >= 55) {
-    verdict = "WAIT";
-  } else {
-    verdict = "NO";
-    rejection = "NO CRYPTO PROOF";
+  if (score >= 5) {
+    return {
+      score,
+      label: "STRONG",
+      note: "Headline reads like a positive catalyst.",
+      isStrongPositive,
+    };
   }
 
-  const permissionText =
-    verdict === "YES"
-      ? "YES — CRYPTO SUPPORT/MIDDLE ENTRY WITH CONFIRMATION"
-      : verdict === "WAIT"
-      ? entries.waitFor
-      : rejection || "NO CLEAN CRYPTO PERMISSION";
+  if (score > 0) {
+    return {
+      score,
+      label: "MEDIUM",
+      note: "Headline has some positive catalyst language.",
+      isStrongPositive: false,
+    };
+  }
 
-  const actionRank =
-    verdict === "YES" ? 3 :
-    verdict === "WAIT" ? 2 :
-    1;
+  if (score < 0) {
+    return {
+      score,
+      label: "NEGATIVE",
+      note: "Headline contains negative or dilution-style language.",
+      isStrongPositive: false,
+    };
+  }
+
+  return {
+    score,
+    label: "WEAK",
+    note: "Headline did not show a strong positive catalyst.",
+    isStrongPositive: false,
+  };
+}
+
+async function fetchTickerNews(
+  ticker: string,
+  apiKey: string
+): Promise<{
+  newsHeadline: string;
+  newsUrl: string;
+  newsPublisher: string;
+  newsCategory: NewsCategory;
+  newsFreshness: NewsFreshness;
+  newsAgeMinutes: number | null;
+  catalystScore: number;
+  catalystLabel: string;
+  catalystNote: string;
+  isStrongPositiveCatalyst: boolean;
+}> {
+  const fallback = {
+    newsHeadline: "",
+    newsUrl: "",
+    newsPublisher: "",
+    newsCategory: "NO_NEWS" as NewsCategory,
+    newsFreshness: "UNKNOWN_NEWS_AGE" as NewsFreshness,
+    newsAgeMinutes: null,
+    catalystScore: 0,
+    catalystLabel: "NO CATALYST",
+    catalystNote: "No recent headline found.",
+    isStrongPositiveCatalyst: false,
+  };
+
+  try {
+    if (!ticker || !apiKey) return fallback;
+
+    const url =
+      `https://api.polygon.io/v2/reference/news?ticker=${encodeURIComponent(ticker)}` +
+      `&order=desc&sort=published_utc&limit=1&apiKey=${encodeURIComponent(apiKey)}`;
+
+    const res = await fetch(url, {
+      method: "GET",
+      cache: "no-store",
+      headers: { Accept: "application/json" },
+    });
+
+    if (!res.ok) return fallback;
+
+    const json = (await res.json()) as { results?: unknown[] };
+    const first = Array.isArray(json.results) ? json.results.find(isObj) : undefined;
+
+    if (!first) return fallback;
+
+    const newsHeadline = str(first.title);
+    const newsUrl = str(first.article_url || first.url);
+    const newsTime = str(first.published_utc);
+    const publisherObj = isObj(first.publisher) ? first.publisher : {};
+    const newsPublisher = str(publisherObj.name || first.publisher || first.source);
+
+    if (!newsHeadline && !newsUrl) return fallback;
+
+    const newsCategory = classifyNewsCategory(newsHeadline, newsPublisher, newsUrl);
+    const { newsAgeMinutes, newsFreshness } = getNewsAgeData(newsTime);
+    const catalyst = scoreCatalystHeadline(newsHeadline);
+
+    const isFreshEnough =
+      newsFreshness === "FRESH_CATALYST" || newsFreshness === "RECENT_CATALYST";
+
+    return {
+      newsHeadline,
+      newsUrl,
+      newsPublisher,
+      newsCategory,
+      newsFreshness,
+      newsAgeMinutes,
+      catalystScore: catalyst.score,
+      catalystLabel: catalyst.label,
+      catalystNote: isFreshEnough
+        ? catalyst.note
+        : "Headline exists, but it is not fresh enough to trust as a live catalyst.",
+      isStrongPositiveCatalyst: catalyst.isStrongPositive && isFreshEnough,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function buildBaseRow(row: AnyObj, maxTradeAgeMinutes: number) {
+  const ticker = cleanTicker(row.ticker || row.symbol || row.T);
+
+  const price = pickNumber(row, [
+    "lastTrade.p",
+    "lastTrade.price",
+  ]);
+
+  const previousClose = pickNumber(row, [
+    "prevDay.c",
+    "previousClose",
+    "prevClose",
+    "pc",
+  ]);
+
+  const gainPct =
+    price > 0 && previousClose > 0
+      ? ((price - previousClose) / previousClose) * 100
+      : 0;
+
+  const volume = pickNumber(row, [
+    "day.v",
+    "volume",
+    "v",
+    "min.av",
+    "min.v",
+  ]);
+
+  const averageVolume = pickNumber(row, [
+    "averageVolume",
+    "avgVolume",
+    "day.av",
+    "averagePremarketVolume",
+    "avgPremarketVolume",
+  ]);
+
+  const relativeVolume = averageVolume > 0 ? volume / averageVolume : 0;
+  const dollarVolume = volume * price;
+
+  const lastTradeTimestampMs = normalizeTimestampMs(
+    getPath(row, "lastTrade.t") ??
+      getPath(row, "lastTrade.timestamp") ??
+      getPath(row, "updated")
+  );
+
+  const quoteAgeMinutes = getQuoteAgeMinutes(lastTradeTimestampMs);
+  const isFreshTrade =
+    quoteAgeMinutes !== null && quoteAgeMinutes >= 0 && quoteAgeMinutes <= maxTradeAgeMinutes;
+
+  const dollarDistance = Math.abs(price - 1);
+  const dollarClosenessScore = Math.max(0, 1 - dollarDistance / 0.05) * 100;
 
   return {
     ticker,
-    cryptoId: id,
-    name: raw?.name || ticker,
-
-    price: round(price),
-    gain: round(gain24h, 2),
-    change: round(change),
-    volume: Math.round(volume),
-    open: round(price - change),
-    high: round(high),
-    low: round(low),
-
-    support,
-    resistance,
-
-    entryAggressive: entries.supportEntry,
-    entryConfirmation: entries.middleEntry,
-    entryProof: entries.breakoutProofEntry,
-
-    supportEntry: entries.supportEntry,
-    middleEntry: entries.middleEntry,
-    breakoutProofEntry: entries.breakoutProofEntry,
-    bestEntry: entries.bestEntry,
-    entryType: entries.entryType,
-    waitFor: entries.waitFor,
-
-    stop: round(stop),
-    target1: round(target1),
-    target2: round(target2),
-    target3: round(target3),
-    risk: round(risk),
-    reward: round(reward),
-    rr: round(rr, 2),
-
-    speed: math.speed,
-    speedLabel: math.speedLabel,
-    volumeSurge: round(volume / 1000000000, 2),
-
-    spreadStatus: "CRYPTO TIGHT",
-    spreadPct: 0,
-    bid: 0,
-    ask: 0,
-
-    floatShares: 0,
-    sharesOutstanding: 0,
-    floatProxy: 0,
-    floatStatus: "CRYPTO / NO FLOAT",
-    floatScore: 0,
-
-    marketMode: "CRYPTO_TEST_24_7",
-
-    gainBand: gainBand(gain24h),
-    runnerLane: math.runnerLane,
-    bottomIgnitionScore: math.bottomIgnitionScore,
-    gainerStructureScore: math.gainerStructureScore,
-    runnerScore: math.runnerScore,
-    proofScore: math.proofScore,
-    ignitionScore: math.bottomIgnitionScore,
-    overExtensionPenalty: gain24h >= 18 ? -70 : gain24h >= 10 ? -24 : 0,
-
-    structurePosition: structure.structurePosition,
-    structureLocation: structure.structureLocation,
-    structureLocationScore: structure.structureLocationScore,
-    riskLocation: structure.riskLocation,
-
-    speedOk: math.speedOk,
-    volumeOk: math.volumeOk,
-    spreadOk: math.spreadOk,
-    signalAlignment: math.signalAlignment,
-    actionRank,
-    actionRankScore: actionRank * 1000 + math.proofScore + math.runnerScore * 0.01,
-
-    catalyst: "CRYPTO TEST MODE — NO EDGAR / NO FLOAT",
-    catalystGrade: "CRYPTO",
-    newsScore: 0,
-    news: [],
-
-    verdict,
-    rejection,
-    permissionText,
-    candles: index + 1,
-    lastUpdated: raw?.last_updated || new Date().toISOString()
+    symbol: ticker,
+    price: round(price, 4),
+    previousClose: round(previousClose, 4),
+    gainPct: round(gainPct, 2),
+    volume: round(volume, 0),
+    averageVolume: round(averageVolume, 0),
+    relativeVolume: round(relativeVolume, 4),
+    dollarVolume: round(dollarVolume, 2),
+    dollarBand: getDollarBand(price),
+    dollarDistance: round(dollarDistance, 4),
+    dollarClosenessScore: round(dollarClosenessScore, 2),
+    lastTradeTimestampMs,
+    quoteAgeMinutes,
+    isFreshTrade,
   };
 }
 
-export async function GET() {
-  let marketMode = "CRYPTO_TEST_24_7";
-  let rawList: any[] = [];
+function buildEmptyPayload(message: string, startedAt: string) {
+  const candidates: RubiconItem[] = [];
 
-  try {
-    rawList = await fetchCryptoMarkets();
-  } catch {
-    marketMode = "CRYPTO_BACKUP";
-    rawList = backupCoins();
+  return {
+    ok: false,
+    source: SOURCE,
+    mode: MODE,
+    marketMode: getMarketMode(),
+    message,
+    startedAt,
+    finishedAt: new Date().toISOString(),
+    rawCount: 0,
+    showing: 0,
+    topTicker: null,
+    candidates,
+    tickers: candidates,
+    results: candidates,
+    data: {
+      candidates,
+      tickers: candidates,
+    },
+  };
+}
+
+export async function GET(req: Request) {
+  const startedAt = new Date().toISOString();
+  const apiKey = getApiKey();
+  const { searchParams } = new URL(req.url);
+
+  const minPrice = num(searchParams.get("minPrice")) || 0.95;
+  const maxPrice = num(searchParams.get("maxPrice")) || 1.05;
+  const minVolume = num(searchParams.get("minVolume")) || 1_000_000;
+  const limit = Math.max(1, Math.min(num(searchParams.get("limit")) || 25, 100));
+  const removeJunk = boolParam(searchParams.get("removeJunk"), true);
+  const requireStrongCatalyst = boolParam(searchParams.get("requireStrongCatalyst"), true);
+
+  if (!apiKey) {
+    return NextResponse.json(buildEmptyPayload("Missing POLYGON_API_KEY or MASSIVE_API_KEY.", startedAt), {
+      status: 200,
+      headers: { "Cache-Control": "no-store, max-age=0" },
+    });
   }
 
-  const enriched = rawList
-    .filter((x) => num(x?.current_price) > 0)
-    .map(enrichCoin)
-    .sort((a, b) => {
-      if (b.actionRank !== a.actionRank) return b.actionRank - a.actionRank;
-      if (b.proofScore !== a.proofScore) return b.proofScore - a.proofScore;
-      return b.runnerScore - a.runnerScore;
+  try {
+    const maxTradeAgeMinutes = getMaxTradeAgeMinutes();
+
+    const url =
+      `https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers` +
+      `?apiKey=${encodeURIComponent(apiKey)}`;
+
+    const res = await fetch(url, {
+      method: "GET",
+      cache: "no-store",
+      headers: { Accept: "application/json" },
     });
 
-  return NextResponse.json(
-    {
-      ok: true,
-      source: SOURCE,
-      marketMode,
-      count: enriched.length,
-      timestamp: new Date().toISOString(),
-      rules: {
-        crypto: "24/7 test mode",
-        noFloat: "crypto has no stock float",
-        noEdgar: "crypto has no SEC EDGAR catalyst",
-        yes: "support or healthy middle only with proof and alignment",
-        resistance: "WAIT for proof above resistance"
-      },
-      data: {
-        tickers: enriched
-      },
-      tickers: enriched
-    },
-    {
-      headers: {
-        "Cache-Control": "no-store, max-age=0"
-      }
+    if (!res.ok) {
+      return NextResponse.json(
+        buildEmptyPayload(`Polygon request failed with status ${res.status}.`, startedAt),
+        {
+          status: 200,
+          headers: { "Cache-Control": "no-store, max-age=0" },
+        }
+      );
     }
-  );
+
+    const json = (await res.json()) as AnyObj;
+
+    const rowsRaw = Array.isArray(json.tickers)
+      ? json.tickers
+      : Array.isArray(json.results)
+        ? json.results
+        : [];
+
+    const baseUniverse = rowsRaw
+      .filter(isObj)
+      .map((row) => buildBaseRow(row, maxTradeAgeMinutes))
+      .filter((item) => Boolean(item.ticker))
+      .filter((item) => !removeJunk || !isJunkTicker(item.ticker))
+      .filter((item) => item.price >= minPrice)
+      .filter((item) => item.price <= maxPrice)
+      .filter((item) => item.volume >= minVolume)
+      .filter((item) => item.isFreshTrade);
+
+    const withNews = await Promise.all(
+      baseUniverse.map(async (item) => {
+        const news = await fetchTickerNews(item.ticker, apiKey);
+
+        const rubiconScore =
+          news.catalystScore * 20 +
+          item.dollarClosenessScore +
+          Math.min(item.volume / 1_000_000, 10) * 5 +
+          Math.max(item.gainPct, 0);
+
+        return {
+          ticker: item.ticker,
+          symbol: item.symbol,
+          price: item.price,
+          previousClose: item.previousClose,
+          gainPct: item.gainPct,
+          volume: item.volume,
+          averageVolume: item.averageVolume,
+          relativeVolume: item.relativeVolume,
+          dollarVolume: item.dollarVolume,
+          dollarBand: item.dollarBand,
+          dollarDistance: item.dollarDistance,
+          rubiconScore: round(rubiconScore, 2),
+          lastTradeTimestampMs: item.lastTradeTimestampMs,
+          quoteAgeMinutes: item.quoteAgeMinutes,
+          isFreshTrade: item.isFreshTrade,
+
+          newsHeadline: news.newsHeadline,
+          newsUrl: news.newsUrl,
+          newsPublisher: news.newsPublisher,
+          newsCategory: news.newsCategory,
+          newsFreshness: news.newsFreshness,
+          newsAgeMinutes: news.newsAgeMinutes,
+          catalystScore: news.catalystScore,
+          catalystLabel: news.catalystLabel,
+          catalystNote: news.catalystNote,
+          isStrongPositiveCatalyst: news.isStrongPositiveCatalyst,
+        } satisfies RubiconItem;
+      })
+    );
+
+    const candidates = withNews
+      .filter((item) => !requireStrongCatalyst || item.isStrongPositiveCatalyst)
+      .sort((a, b) => {
+        if (b.rubiconScore !== a.rubiconScore) return b.rubiconScore - a.rubiconScore;
+        if (a.dollarDistance !== b.dollarDistance) return a.dollarDistance - b.dollarDistance;
+        if (b.volume !== a.volume) return b.volume - a.volume;
+        if (b.gainPct !== a.gainPct) return b.gainPct - a.gainPct;
+        return a.ticker.localeCompare(b.ticker);
+      })
+      .slice(0, limit);
+
+    return NextResponse.json(
+      {
+        ok: true,
+        source: SOURCE,
+        mode: MODE,
+        marketMode: getMarketMode(),
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        filters: {
+          minPrice,
+          maxPrice,
+          minVolume,
+          limit,
+          removeJunk,
+          requireStrongCatalyst,
+          maxTradeAgeMinutes,
+        },
+        rawCount: rowsRaw.length,
+        showing: candidates.length,
+        topTicker: candidates[0]?.ticker ?? null,
+        candidates,
+        tickers: candidates,
+        results: candidates,
+        data: {
+          candidates,
+          tickers: candidates,
+        },
+      },
+      {
+        status: 200,
+        headers: { "Cache-Control": "no-store, max-age=0" },
+      }
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown route error.";
+
+    return NextResponse.json(buildEmptyPayload(message, startedAt), {
+      status: 200,
+      headers: { "Cache-Control": "no-store, max-age=0" },
+    });
+  }
 }
