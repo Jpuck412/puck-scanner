@@ -192,7 +192,6 @@ export default function Home() {
   const [manualTicker, setManualTicker] = useState("CAST");
   const [manualSupport, setManualSupport] = useState(28);
   const [manualResistance, setManualResistance] = useState(34);
-  const [selectedTicker, setSelectedTicker] = useState("");
   const [watchlist, setWatchlist] = useState<string[]>([]);
 
   const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([
@@ -287,12 +286,12 @@ export default function Home() {
     setWatchlist((prev) => prev.filter((t) => t !== ticker));
   }
 
-  function addJournalEntry() {
+  function addJournalEntry(ticker?: string) {
     setJournalEntries((prev) => [
       {
         id: Date.now(),
         date: new Date().toLocaleDateString(),
-        ticker: "",
+        ticker: ticker || "",
         setup: "Bottom Ignition",
         entryExitTarget: "",
         stopRiskShares: "",
@@ -436,47 +435,32 @@ export default function Home() {
                     <span>{money(s.confirmationEntry)}</span>
                     <span>{money(s.proofEntry)}</span>
                     <span>{s.proofScore}</span>
-                    <span className={s.verdict === "YES
-                    <span
-  className={`verdictBadge ${
-    s.verdict === "YES"
-      ? "verdictYes"
-      : s.verdict === "WAIT"
-      ? "verdictWait"
-      : "verdictDenied"
-  }`}
->
-  {s.verdict}
-</span>
+                    <span className={s.verdict === "YES" ? "good" : s.verdict === "NO" ? "bad" : "warn"}>
+                      {s.verdict}
+                    </span>
+                    <span className="actionsCell">
+                      <button
+                        onClick={() =>
+                          watchlist.includes(s.ticker) ? removeWatchlist(s.ticker) : addWatchlist(s.ticker)
+                        }
+                      >
+                        {watchlist.includes(s.ticker) ? "REMOVE" : "ADD"}
+                      </button>
 
-<button
-  type="button"
-  className={`watchBtn ${watchlist.includes(s.ticker) ? "watchBtnActive" : ""}`}
-  onClick={() => toggleWatchlist(s.ticker)}
->
-  {watchlist.includes(s.ticker) ? "WATCHING" : "WATCH"}
-</button>
-        ? removeWatchlist(s.ticker)
-        : addWatchlist(s.ticker)
-    }
-  >
-    {watchlist.includes(s.ticker) ? "REMOVE" : "ADD"}
-  </button>
+                      <button
+                        onClick={() => {
+                          setManualTicker(s.ticker);
+                          setManualSupport(s.support);
+                          setManualResistance(s.resistance);
+                          setPage("structure");
+                        }}
+                      >
+                        STRUCTURE
+                      </button>
 
-  <button
-    onClick={() => {
-      setManualTicker(s.ticker);
-      setPage("structure");
-    }}
-  >
-    STRUCTURE
-  </button>
-
-  <button onClick={() => addJournalEntry(s.ticker)}>
-    JOURNAL
-  </button>
-</span>
-                      </div>
+                      <button onClick={() => addJournalEntry(s.ticker)}>JOURNAL</button>
+                    </span>
+                  </div>
                 ))}
               </div>
             </div>
@@ -563,7 +547,7 @@ export default function Home() {
               {watchlist.map((ticker) => (
                 <article className="watchCard" key={ticker}>
                   <h3>{ticker}</h3>
-                  <button onClick={() => setManualTicker(ticker)}>OPEN STRUCTURE</button>
+                  <button onClick={() => { setManualTicker(ticker); setPage("structure"); }}>OPEN STRUCTURE</button>
                   <button onClick={() => removeWatchlist(ticker)}>REMOVE</button>
                 </article>
               ))}
@@ -573,7 +557,7 @@ export default function Home() {
 
         {page === "journal" && (
           <Panel title="GUIDED TRADE JOURNAL">
-            <button onClick={addJournalEntry}>+ NEW TRADE NOTE</button>
+            <button onClick={() => addJournalEntry()}>+ NEW TRADE NOTE</button>
 
             <div className="journalStack">
               {journalEntries.map((j) => (
@@ -618,58 +602,184 @@ export default function Home() {
         {page === "settings" && <Info title="SETTINGS" items={[["Theme", "Rusty light gray steel."], ["Safe Mode", "Protective scanner defaults."], ["Broker", "Preview only."], ["IBKR", "Later."], ["Auto Buy", "Off by default."]]} />}
 
         <footer>
-          This software is educational only. Not financial advice. All trading decisions are the user's responsibility.
+          This software is educational only. Not financial advice. All trading decisions are the user&apos;s responsibility.
         </footer>
       </section>
 
       <style>{`
         *{box-sizing:border-box}
-        html,body{margin:0;min-height:100%;background:#2b2b28;color:#252525;font-family:Arial,sans-serif;overflow:auto}
-        .app{min-height:100vh;display:grid;grid-template-columns:240px minmax(0,1fr);background:radial-gradient(circle at top,#5c5b54,#2b2b28 60%);overflow:visible}
-        .sidebar{padding:18px;height:100vh;position:sticky;top:0;overflow-y:auto;overflow-x:hidden}
+        html,body{margin:0;min-height:100%;background:#1b1c1e;color:#252525;font-family:Arial,sans-serif;overflow:auto}
+
+        .app{
+          min-height:100vh;
+          display:grid;
+          grid-template-columns:240px minmax(0,1fr);
+          background:
+            radial-gradient(circle at 20% -10%, rgba(120,170,255,.08), transparent 45%),
+            radial-gradient(circle at 100% 0%, rgba(255,180,90,.05), transparent 50%),
+            linear-gradient(160deg,#3a3b3d 0%, #1b1c1e 55%, #101112 100%);
+          overflow:visible;
+        }
+
+        .sidebar{
+          padding:18px;
+          height:100vh;
+          position:sticky;
+          top:0;
+          overflow-y:auto;
+          overflow-x:hidden;
+          background:linear-gradient(180deg,#3d4044,#23262a);
+          box-shadow: inset -1px 0 0 rgba(255,255,255,.04), 8px 0 30px rgba(0,0,0,.55);
+          border-right:1px solid #111;
+          z-index:2;
+        }
+
         .main{padding:22px;min-width:0;overflow-x:auto;overflow-y:visible}
-        .brand{padding:18px;border:1px solid #222;background:#c5c0b4;border-radius:12px;margin-bottom:14px;box-shadow:inset 0 0 18px rgba(0,0,0,.35)}
-        .brand small,.tag{color:#1f6da8;letter-spacing:4px;font-weight:900;font-size:12px}
-        .brand h2{font-size:48px;margin:4px 0;color:#333;letter-spacing:2px}
-        .nav,button{width:100%;padding:13px;margin:7px 0;border-radius:10px;border:1px solid #1f2529;background:#303336;color:#d9d3c4;font-weight:900;letter-spacing:1px}
-        .active,button:hover{background:#1f7eea!important;color:white!important}
-        .metal,.panel{border:1px solid #2a2a2a;border-radius:16px;box-shadow:0 18px 35px rgba(0,0,0,.45),inset 0 0 24px rgba(0,0,0,.18);position:relative;overflow:hidden}
-        .dark{background:#3f423f;color:#e0ddd2}
-        .light,.panel{background:#bdb7aa;color:#222}
-        .hero{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:18px;padding:24px;margin-bottom:18px}
-        h1{font-size:64px;line-height:.95;margin:8px 0;color:#343434;text-shadow:1px 1px #eee;letter-spacing:2px}
-        .clock strong{font-size:34px;color:#1f6da8}
+
+        .brand{
+          padding:20px 18px;
+          border-radius:14px;
+          margin-bottom:16px;
+          background:linear-gradient(155deg,#e4ded0,#b9b2a2 60%,#8d8676);
+          box-shadow:
+            0 1px 0 rgba(255,255,255,.6) inset,
+            0 -8px 18px rgba(0,0,0,.25) inset,
+            0 14px 28px rgba(0,0,0,.5);
+          border:1px solid rgba(0,0,0,.35);
+        }
+        .brand small,.tag{color:#1f6da8;letter-spacing:4px;font-weight:900;font-size:12px;text-shadow:0 1px 0 rgba(255,255,255,.4)}
+        .brand h2{font-size:46px;margin:4px 0;color:#272727;letter-spacing:2px;text-shadow:0 2px 1px rgba(255,255,255,.5), 0 -1px 1px rgba(0,0,0,.2)}
+        .brand span{color:#4a4a44;font-size:11px;font-weight:700;letter-spacing:1px}
+
+        .nav,button{
+          width:100%;
+          padding:13px;
+          margin:7px 0;
+          border-radius:10px;
+          border:1px solid #0c0d0e;
+          background:linear-gradient(180deg,#3a3d40,#262829);
+          color:#d9d3c4;
+          font-weight:900;
+          letter-spacing:1px;
+          box-shadow:
+            0 1px 0 rgba(255,255,255,.06) inset,
+            0 3px 6px rgba(0,0,0,.45),
+            0 1px 0 rgba(0,0,0,.6);
+          transition: transform .08s ease, box-shadow .08s ease;
+        }
+        .nav:active, button:active{ transform: translateY(1px); }
+        .active,button:hover{
+          background:linear-gradient(180deg,#3da0f0,#1f7eea)!important;
+          color:white!important;
+          box-shadow:
+            0 1px 0 rgba(255,255,255,.4) inset,
+            0 0 16px rgba(45,140,255,.55),
+            0 4px 10px rgba(0,0,0,.5)!important;
+        }
+
+        .metal,.panel{
+          border-radius:16px;
+          position:relative;
+          overflow:hidden;
+        }
+        .dark{
+          background:linear-gradient(155deg,#4a4d49,#34362f 70%);
+          color:#e0ddd2;
+          box-shadow:
+            0 1px 0 rgba(255,255,255,.06) inset,
+            0 -10px 24px rgba(0,0,0,.35) inset,
+            0 18px 40px rgba(0,0,0,.55);
+          border:1px solid rgba(0,0,0,.4);
+        }
+        .light,.panel{
+          background:linear-gradient(150deg,#d6d0c2,#aba48f 75%);
+          color:#222;
+          box-shadow:
+            0 1px 0 rgba(255,255,255,.7) inset,
+            0 -10px 22px rgba(0,0,0,.18) inset,
+            0 16px 32px rgba(0,0,0,.45);
+          border:1px solid rgba(0,0,0,.3);
+        }
+
+        .hero{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:18px;padding:26px;margin-bottom:18px}
+        h1{font-size:60px;line-height:.95;margin:8px 0;color:#2e2e2e;text-shadow:0 2px 0 rgba(255,255,255,.6), 0 -1px 1px rgba(0,0,0,.15);letter-spacing:2px}
+        .clock{
+          background:linear-gradient(160deg,#23262a,#101214);
+          border-radius:12px;
+          padding:14px;
+          box-shadow: 0 -6px 14px rgba(0,0,0,.4) inset, 0 8px 18px rgba(0,0,0,.4);
+          border:1px solid rgba(0,0,0,.5);
+        }
+        .clock small{color:#7fa8c9;letter-spacing:2px;font-weight:800}
+        .clock strong{display:block;font-size:32px;color:#5fc4ff;text-shadow:0 0 14px rgba(95,196,255,.65);margin:4px 0}
+
         .modes{display:grid;grid-template-columns:repeat(7,minmax(130px,1fr));gap:10px;margin-bottom:18px;overflow-x:auto}
+
         .grid3{display:grid;grid-template-columns:320px minmax(0,1fr) 330px;gap:18px}
-        .panel{padding:18px;margin-bottom:18px}
-        .panel h3.big{font-size:70px;margin:0}
-        .yesText,.good{color:#1e8f44!important}.noText,.bad{color:#b6212f!important}.waitText,.warn{color:#b67900!important}
-        .row{display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid rgba(0,0,0,.25);padding:9px 0}
-        .row span{color:#4c4c4c}.row b{color:#1f1f1f}
+        .panel{padding:20px;margin-bottom:18px}
+        .panel h3.big{font-size:64px;margin:0 0 8px;text-shadow:0 2px 0 rgba(255,255,255,.4)}
+        .yesText,.good{color:#1e8f44!important;text-shadow:0 0 8px rgba(30,143,68,.3)}
+        .noText,.bad{color:#b6212f!important;text-shadow:0 0 8px rgba(182,33,47,.3)}
+        .waitText,.warn{color:#b67900!important;text-shadow:0 0 8px rgba(182,121,0,.3)}
+
+        .row{display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid rgba(0,0,0,.2);padding:10px 2px}
+        .row span{color:#4c4c4c;font-weight:700}
+        .row b{color:#161616}
+
         .filters{display:grid;grid-template-columns:repeat(3,minmax(160px,1fr));gap:14px}
-        label{font-weight:900;color:#333}
-        input,select,textarea{width:100%;padding:12px;margin-top:6px;border-radius:8px;border:1px solid #222;background:#252525;color:#6bbcff;font-weight:900}
-        .tableWrap{max-width:100%;overflow:auto}
-        .table{display:grid;grid-template-columns:repeat(14,minmax(115px,1fr));min-width:1600px;border:1px solid #333;border-radius:12px;overflow:hidden}
-        .table>b,.rowGrid span{padding:10px;border-bottom:1px solid rgba(0,0,0,.25)}
+        label{font-weight:900;color:#2c2c2c;font-size:12px}
+        input,select,textarea{
+          width:100%;
+          padding:11px;
+          margin-top:6px;
+          border-radius:8px;
+          border:1px solid #050505;
+          background:linear-gradient(180deg,#1d1f21,#101112);
+          color:#6bbcff;
+          font-weight:800;
+          box-shadow: 0 2px 6px rgba(0,0,0,.5) inset, 0 1px 0 rgba(255,255,255,.04);
+        }
+
+        .tableWrap{max-width:100%;overflow:auto;border-radius:12px;box-shadow:0 14px 30px rgba(0,0,0,.5)}
+        .table{display:grid;grid-template-columns:90px 90px 80px 80px 70px 90px 90px 90px 90px 95px 90px 70px 80px 230px;min-width:1500px;border:1px solid #0d0d0d;border-radius:12px;overflow:hidden}
+        .table>b,.rowGrid span{padding:11px 8px;border-bottom:1px solid rgba(0,0,0,.2);font-size:12px}
         .rowGrid{display:contents}
-        .table>b{background:#333;color:#d9d3c4}
+        .rowGrid:hover span{background:rgba(31,126,234,.08)}
+        .table>b{background:linear-gradient(180deg,#3a3a3a,#262626);color:#d9d3c4;letter-spacing:.5px;font-size:11px}
+        .actionsCell{display:flex;gap:5px;align-items:center}
+        .actionsCell button{width:auto;padding:7px 9px;margin:0;font-size:10px;border-radius:6px}
+
         .newsGrid,.watchGrid{display:grid;grid-template-columns:repeat(3,minmax(220px,1fr));gap:14px}
-        .newsCard,.watchCard,.journalCard{background:#d0cabd;border:1px solid #3a3a3a;border-radius:12px;padding:14px}
-        .journalStack{display:grid;gap:18px}
+        .newsCard,.watchCard,.journalCard{
+          background:linear-gradient(155deg,#e1dbcd,#beb8a6);
+          border-radius:12px;
+          padding:16px;
+          box-shadow:0 1px 0 rgba(255,255,255,.6) inset, 0 10px 22px rgba(0,0,0,.35);
+          border:1px solid rgba(0,0,0,.25);
+        }
+        .journalStack{display:grid;gap:18px;margin-top:14px}
         .journalTop,.journalNumbers{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:12px}
-        .journalCard textarea{min-height:90px;resize:vertical}
-        ul{display:grid;grid-template-columns:repeat(3,minmax(220px,1fr));gap:12px;padding:0}
-        li{list-style:none;background:#d0cabd;border:1px solid #3a3a3a;border-radius:12px;padding:14px}
+        .journalCard textarea{min-height:90px;resize:vertical;margin-bottom:10px}
+
+        ul{display:grid;grid-template-columns:repeat(3,minmax(220px,1fr));gap:12px;padding:0;list-style:none}
+        li{
+          background:linear-gradient(155deg,#e1dbcd,#beb8a6);
+          border-radius:12px;
+          padding:14px;
+          cursor:pointer;
+          box-shadow:0 1px 0 rgba(255,255,255,.6) inset, 0 8px 18px rgba(0,0,0,.3);
+          border:1px solid rgba(0,0,0,.25);
+        }
         li b{display:block;color:#1f6da8;margin-bottom:6px}
-        footer{color:#d9d3c4;padding:20px}
+
+        footer{color:#9a9a9a;padding:24px 4px;font-size:11px}
+
         @media(max-width:1050px){
           .app{grid-template-columns:1fr}
           .sidebar{position:relative;height:auto}
           .hero,.grid3,.filters,.newsGrid,.watchGrid,.journalTop,.journalNumbers,ul{grid-template-columns:1fr}
           .modes{grid-template-columns:repeat(7,180px)}
-          .table{grid-template-columns:repeat(14,150px)}
-          h1{font-size:46px}
+          h1{font-size:42px}
         }
       `}</style>
     </main>
