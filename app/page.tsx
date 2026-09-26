@@ -837,27 +837,66 @@ function Info({ title, items }: { title: string; items: [string, string][] }) {
 
 function RunnerFingerprint() {
   const [ticker,setTicker]=useState("ONCO");
+  const [universe,setUniverse]=useState("ONCO,CPHI,CELU,BRTX,SPWR");
   const [loading,setLoading]=useState(false);
   const [data,setData]=useState<any>(null);
   const [error,setError]=useState("");
-  async function scan() {
+
+  async function scanOne() {
     setLoading(true); setError(""); setData(null);
     try {
       const res=await fetch(`/api/fingerprint?symbol=${encodeURIComponent(ticker)}`,{cache:"no-store"});
       const json=await res.json();
       if(!json.ok) throw new Error(json.error || "Fingerprint scan failed");
-      setData(json);
+      setData({mode:"single",...json});
     } catch(e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setLoading(false); }
   }
-  return <Panel title="🧬 HISTORICAL RUNNER FINGERPRINT ENGINE">
+
+  async function scanUniverse() {
+    setLoading(true); setError(""); setData(null);
+    try {
+      const symbols=universe.split(",").map(s=>s.trim().toUpperCase()).filter(Boolean).slice(0,10).join(",");
+      const res=await fetch(`/api/fingerprint/scan?symbols=${encodeURIComponent(symbols)}`,{cache:"no-store"});
+      const json=await res.json();
+      if(!json.ok) throw new Error(json.error || "Universe scan failed");
+      setData({mode:"universe",...json});
+    } catch(e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setLoading(false); }
+  }
+
+  return <Panel title="🧬 HISTORICAL RUNNER FINGERPRINT ENGINE — V2">
     <div className="filters">
-      <label>Ticker<input value={ticker} onChange={e=>setTicker(e.target.value.toUpperCase())} /></label>
-      <button onClick={scan}>{loading ? "SCANNING HISTORY..." : "SCAN ALPHA VANTAGE HISTORY"}</button>
+      <label>Single Ticker<input value={ticker} onChange={e=>setTicker(e.target.value.toUpperCase())} /></label>
+      <button onClick={scanOne}>{loading ? "SCANNING..." : "DEEP SCAN"}</button>
     </div>
-    <p>Historical 5-minute OHLCV pattern mining. Compares the current structure against prior expansion and failure events.</p>
+    <div className="filters">
+      <label>Historical Universe<input value={universe} onChange={e=>setUniverse(e.target.value.toUpperCase())} /></label>
+      <button onClick={scanUniverse}>{loading ? "MINING PATTERNS..." : "SCAN UNIVERSE"}</button>
+    </div>
+    <p><b>What changed:</b> the engine now mines expansion + failure events, separates timing regimes, compares a larger historical sample, and ranks the current setup against the historical pattern library. Alpha Vantage supplies OHLCV — not historical Level 2/tape. urlAlpha Vantage API documentationhttps://www.alphavantage.co/documentation/</p>
     {error && <div className="newsCard"><strong className="bad">{error}</strong></div>}
-    {data && <div className="grid3">
+
+    {data?.mode==="universe" && <div className="grid3">
+      <Panel title="🧠 PATTERN RANKING">
+        {(data.ranking||[]).map((r:any,i:number)=><Row key={r.symbol} a={`#${i+1} ${r.symbol}`} b={`${r.similarity}% match · ${r.expansionRate}% expansion · ${r.samples} samples`} />)}
+      </Panel>
+      <Panel title="⏱ TIMING REGIMES">
+        {((data.ranking||[]).flatMap((r:any)=>r.timingBuckets||[]).slice(0,12)).map((r:any,i:number)=>
+          <Row key={i} a={r.bucket} b={`${r.expansionRate}% expansion · ${r.count} matches`} />
+        )}
+      </Panel>
+      <Panel title="DATA COVERAGE">
+        <Row a="Symbols Requested" b={data.symbolsRequested} />
+        <Row a="Symbols Scanned" b={data.symbolsScanned} />
+        <Row a="Failures" b={data.errors?.length||0} />
+        <Row a="Source" b="Alpha Vantage OHLCV" />
+        <Row a="Interval" b="5-minute" />
+        <Row a="Extended Hours" b="YES" />
+      </Panel>
+    </div>}
+
+    {data?.mode==="single" && <div className="grid3">
       <Panel title="CURRENT FINGERPRINT">
         <Row a="Bars Analyzed" b={data.barsAnalyzed} />
         <Row a="Events Found" b={data.eventsFound} />
@@ -866,7 +905,9 @@ function RunnerFingerprint() {
         <Row a="Volume Ratio" b={data.current ? data.current.volumeRatio.toFixed(2)+"x" : "N/A"} />
         <Row a="Volume Acceleration" b={data.current ? pct(data.current.volumeAcceleration) : "N/A"} />
         <Row a="Compression" b={data.current ? data.current.compression.toFixed(0)+"%" : "N/A"} />
+        <Row a="Pressure" b={data.current ? data.current.pressure.toFixed(1)+"%" : "N/A"} />
         <Row a="VWAP Distance" b={data.current ? pct(data.current.vwapDistancePct) : "N/A"} />
+        <Row a="Time Regime" b={data.current?.timeBucket || "N/A"} />
       </Panel>
       <Panel title="HISTORICAL SAMPLE">
         <Row a="Comparable Events" b={data.summary?.sampleSize ?? 0} />
