@@ -874,7 +874,7 @@ function RunnerFingerprint() {
       <label>Historical Universe<input value={universe} onChange={e=>setUniverse(e.target.value.toUpperCase())} /></label>
       <button onClick={scanUniverse}>{loading ? "MINING PATTERNS..." : "SCAN UNIVERSE"}</button>
     </div>
-    <p><b>What changed:</b> the engine now mines expansion + failure events, separates timing regimes, compares a larger historical sample, and ranks the current setup against the historical pattern library. Alpha Vantage supplies OHLCV — not historical Level 2/tape. urlAlpha Vantage API documentationhttps://www.alphavantage.co/documentation/</p>
+    <p><b>What changed:</b> the engine now mines expansion + failure events, separates timing regimes, compares a larger historical sample, and ranks the current setup against the historical pattern library. Alpha Vantage supplies OHLCV — not historical Level 2/tape.</p>
     {error && <div className="newsCard"><strong className="bad">{error}</strong></div>}
 
     {data?.mode==="universe" && <div className="grid3">
