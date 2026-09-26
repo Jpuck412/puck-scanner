@@ -1,4 +1,4 @@
-import { fingerprintAt, findExpansionEvents, normalizeAlphaVantage, summarize } from "@/lib/runner-fingerprint";
+import { fingerprintAt, findExpansionEvents, normalizeAlphaVantage, summarize } from "../../../lib/runner-fingerprint";
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
