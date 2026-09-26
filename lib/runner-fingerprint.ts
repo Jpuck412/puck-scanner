@@ -53,7 +53,7 @@ export function fingerprintAt(bars:HistoricalBar[],i:number):Fingerprint|null{
   const priorLow=Math.min(...bars.slice(i-5,i).map(x=>x.low)),priorHigh=Math.max(...bars.slice(i-5,i).map(x=>x.high));
   const dayVwap=sessionVWAP(bars,i), body=Math.abs(b.close-b.open);
   const upper=b.high-Math.max(b.open,b.close),lower=Math.min(b.open,b.close)-b.low;
-  const pressure=b.rangePct?((b.close-b.open)/Math.max(0.000001,b.high-b.low))*100:0;
+  const pressure=((b.close-b.open)/Math.max(0.000001,b.high-b.low))*100;
   return {
     time:b.timestamp,price:b.close,return1:pct(b.close,prev.close),return5:pct(b.close,bars[i-5].close),
     volumeRatio:pv?rv/pv:0,volumeAcceleration:pv?(rv-pv)/pv*100:0,
