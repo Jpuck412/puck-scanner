@@ -1,4 +1,4 @@
-import { buildUniverseRank, findExpansionEvents, fingerprintAt, normalizeAlphaVantage } from "@/lib/runner-fingerprint";
+import { buildUniverseRank, findExpansionEvents, fingerprintAt, normalizeAlphaVantage } from "../../../../lib/runner-fingerprint";
 
 async function fetchSymbol(symbol:string,key:string){
   const url=new URL("https://www.alphavantage.co/query");
